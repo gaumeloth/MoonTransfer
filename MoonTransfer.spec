@@ -1,12 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-from __future__ import annotations
-
-import os
 from pathlib import Path
+import os
 
 
-ROOT = Path(__file__).resolve().parent
+# PyInstaller non garantisce __file__ dentro lo spec.
+# SPECPATH è la directory del file .spec.
+ROOT = Path(SPECPATH).resolve()
 SRC = ROOT / "src"
 
 if os.name == "nt":
