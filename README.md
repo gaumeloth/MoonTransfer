@@ -115,11 +115,9 @@ uv --version
 ## Clonare la repository
 
 ```bash
-git clone <REPO_URL>
+git clone https://github.com/gaumeloth/MoonTransfer.git
 cd MoonTransfer
 ```
-
-Sostituisci `<REPO_URL>` con l'URL reale della repository GitHub.
 
 ---
 
