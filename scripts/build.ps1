@@ -31,7 +31,7 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host ""
     Write-Host "Soluzioni possibili:"
     Write-Host "  uv python install 3.13"
-    Write-Host "  oppure installa Python 3.11+ da https://www.python.org/downloads/"
+    Write-Host "  oppure installa Python 3.13 da https://www.python.org/downloads/"
     exit 1
 }
 
