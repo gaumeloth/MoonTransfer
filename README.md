@@ -1,102 +1,129 @@
 # MoonTransfer
 
-MoonTransfer è una GUI cross-platform pensata per inviare e ricevere file in modo semplice usando `croc` sotto al cofano.
+MoonTransfer è una GUI per inviare e ricevere file tramite
+[`croc`](https://github.com/schollz/croc).
 
-L'obiettivo è rendere il trasferimento sicuro di file utilizzabile anche da persone non tecniche:
+L'obiettivo è offrire un trasferimento file semplice: chi invia sceglie un
+file, MoonTransfer mostra un codice, chi riceve incolla quel codice e salva il
+file nella cartella scelta.
 
-1. scegli un file;
-2. premi **Invia**;
-3. condividi il codice monouso;
-4. l'altra persona apre MoonTransfer, incolla il codice e riceve il file.
+MoonTransfer non implementa un protocollo crittografico proprio. La sicurezza,
+la connessione e il trasferimento sono gestiti da `croc`; MoonTransfer fornisce
+solo l'interfaccia grafica e include il binario `croc` nell'app buildata.
 
-MoonTransfer **non implementa un protocollo crittografico proprio**. Usa `croc` come motore di trasferimento e fornisce una GUI semplice per interagirci.
+## Stato di sviluppo
 
----
+MoonTransfer è in fase iniziale. Il flusso principale è già funzionante:
 
-## Stato del progetto
-
-Versione iniziale / MVP.
-
-Funzionalità già previste o implementate:
-
-- invio di file;
-- ricezione di file;
-- output stile terminale integrato nella GUI;
+- invio di un singolo file;
+- ricezione di un file tramite codice;
+- visualizzazione dell'output di `croc` nella GUI;
 - estrazione automatica del codice generato da `croc`;
-- ricezione tramite variabile d'ambiente `CROC_SECRET`;
-- gestione ambiente Python con `uv`;
-- build con PyInstaller;
-- download automatico di `croc` durante la build;
-- bundle del binario `croc` dentro l'applicazione finale.
+- build locale con PyInstaller;
+- download automatico del binario `croc` durante la build;
+- bundle finale con `croc` incluso.
 
-Funzionalità non ancora implementate:
+Al momento il progetto non fornisce ancora installer firmati o pacchetti di
+release già pronti. Per usarlo è necessario scaricare il codice sorgente e
+creare localmente la build per il proprio sistema operativo.
 
-- invio cartelle tramite GUI;
-- cronologia trasferimenti;
-- configurazione relay custom;
-- QR code;
-- installer firmati;
-- pipeline GitHub Actions per release automatiche;
-- pacchetti `.deb`, `.rpm`, AppImage, `.dmg` o installer Windows.
+La build produce una cartella portabile `MoonTransfer`: per spostarla su un
+altro computer bisogna copiare l'intera cartella generata, non solo
+l'eseguibile.
 
----
+## Roadmap
 
-## Come funziona
+Possibili miglioramenti futuri, in ordine indicativo:
 
-MoonTransfer avvia `croc` come processo esterno e mostra l'output nella GUI.
+- pubblicare release scaricabili già buildate per Linux, Windows e macOS;
+- mostrare messaggi di stato ed errore più chiari sopra all'output tecnico;
+- aggiungere drag and drop del file da inviare;
+- supportare l'invio di cartelle dalla GUI;
+- ricordare l'ultima cartella di destinazione usata;
+- aggiungere un pulsante per aprire la cartella del file ricevuto;
+- aggiungere impostazioni avanzate per relay custom di `croc`;
+- mantenere il codice di trasferimento fuori dagli argomenti del processo;
+- separare ulteriormente logica di trasferimento e interfaccia grafica;
+- aggiungere test automatici per parsing output, argomenti di `croc` e gestione
+  errori;
+- aggiungere una pipeline CI per controllare build e test sulle piattaforme
+  principali;
+- rendere più riproducibile la build fissando opzionalmente la versione di
+  `croc`.
 
-### Invio
+L'idea guida è restare vicini alla filosofia Unix: MoonTransfer deve fare una
+cosa sola, delegare bene a `croc`, mantenere il comportamento leggibile e non
+nascondere inutilmente gli errori.
 
-In modalità invio, MoonTransfer esegue concettualmente:
+## Scaricare il sorgente
 
-```text
-croc --disable-clipboard send <file>
-```
-
-`croc` genera un codice monouso. MoonTransfer intercetta la riga dell'output contenente il codice e lo mostra nella GUI.
-
-### Ricezione
-
-In modalità ricezione, MoonTransfer non passa il codice come argomento della riga di comando. Imposta invece la variabile d'ambiente:
-
-```text
-CROC_SECRET=<codice>
-```
-
-e poi esegue:
+La repository del progetto è:
 
 ```text
-croc --yes --overwrite
+https://github.com/gaumeloth/MoonTransfer
 ```
 
-Questo evita di esporre il codice direttamente negli argomenti del processo, cosa particolarmente utile su Linux/macOS dove gli argomenti dei processi possono essere ispezionabili da altri strumenti locali.
+Puoi scaricare MoonTransfer in due modi.
 
----
+### Con Git
 
-## Requisiti per lo sviluppo
+Questo metodo è consigliato se vuoi aggiornare facilmente la repository o
+contribuire al progetto. Se non hai Git, puoi installarlo dalla
+[pagina ufficiale di download](https://git-scm.com/downloads/).
 
-Per sviluppare o buildare MoonTransfer servono:
+```sh
+git clone https://github.com/gaumeloth/MoonTransfer.git
+cd MoonTransfer
+```
 
-- Git;
-- `uv`;
-- una versione di Python compatibile con `pyproject.toml`;
-- accesso a Internet durante la build, perché `tools/fetch_croc.py` scarica l'ultima versione disponibile di `croc`.
+### Come archivio ZIP
 
----
+Questo metodo non richiede Git.
+
+1. Apri la [pagina GitHub del progetto](https://github.com/gaumeloth/MoonTransfer).
+2. Premi **Code**.
+3. Scegli **Download ZIP**.
+4. Estrai l'archivio in una cartella.
+5. Apri un terminale dentro la cartella estratta.
+
+GitHub documenta anche il download degli archivi sorgente nella propria
+[documentazione ufficiale](https://docs.github.com/en/repositories/working-with-files/using-files/downloading-source-code-archives).
+
+## Requisiti
+
+Per creare la build servono:
+
+- [`uv`](https://docs.astral.sh/uv/);
+- accesso a Internet durante la prima build;
+- una piattaforma supportata da `tools/fetch_croc.py`: Linux x86_64/ARM64,
+  macOS Intel/Apple Silicon o Windows 64 bit.
+
+`uv` gestisce l'ambiente Python del progetto e installa le dipendenze indicate
+in `pyproject.toml`. Il progetto richiede Python 3.13. Se nel sistema manca una
+versione compatibile, installa Python 3.13 dalla
+[pagina ufficiale di Python](https://www.python.org/downloads/).
 
 ## Installare uv
 
+La documentazione ufficiale di `uv` è disponibile su
+[docs.astral.sh/uv](https://docs.astral.sh/uv/). Le istruzioni aggiornate per
+l'installazione sono nella pagina
+[Installing uv](https://docs.astral.sh/uv/getting-started/installation/).
+
 ### Arch Linux
 
-```bash
+```sh
 sudo pacman -S uv
 ```
 
-### Linux/macOS tramite installer ufficiale
+### Linux/macOS
 
-```bash
+```sh
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
+
+Se il comando `uv` non viene trovato dopo l'installazione, chiudi e riapri il
+terminale.
 
 ### Windows PowerShell
 
@@ -104,394 +131,240 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-Dopo l'installazione, verifica:
+Verifica l'installazione:
 
-```bash
+```sh
 uv --version
 ```
 
----
+## Build
 
-## Clonare la repository
+Durante la build vengono installate le dipendenze Python, viene scaricato il
+binario `croc` adatto alla piattaforma corrente e viene creato il pacchetto
+PyInstaller in `dist/`.
 
-```bash
-git clone https://github.com/gaumeloth/MoonTransfer.git
-cd MoonTransfer
+Il comando comune, valido su tutti i sistemi dopo aver preparato l'ambiente con
+`uv sync`, è:
+
+```sh
+uv run --frozen --dev python tools/build.py
 ```
 
----
+`tools/build.py` è l'orchestratore della build: esegue `tools/fetch_croc.py` e
+poi PyInstaller usando `MoonTransfer.spec`.
 
-## Setup ambiente di sviluppo
+Gli script in `scripts/` sono wrapper specifici per sistema operativo. Prima
+controllano i prerequisiti principali (`uv` e un Python compatibile risolto da
+`uv`), mostrano istruzioni di recupero se qualcosa manca, eseguono `uv sync` e
+poi chiamano `tools/build.py`.
 
-Dalla root del progetto:
+### Linux/macOS
 
-```bash
-uv sync
-```
+Dalla cartella del progetto:
 
-Questo comando crea/aggiorna l'ambiente virtuale `.venv` e installa le dipendenze definite in `pyproject.toml` e `uv.lock`.
-
----
-
-## Scaricare croc per lo sviluppo
-
-Prima di avviare la GUI in modalità sviluppo, esegui:
-
-```bash
-uv run python tools/fetch_croc.py
-```
-
-Questo script:
-
-1. controlla l'ultima release disponibile di `croc`;
-2. scarica l'asset corretto per il sistema operativo corrente;
-3. verifica il checksum;
-4. estrae il binario;
-5. lo posiziona in:
-
-```text
-third_party/croc/
-```
-
-Su Linux/macOS il binario sarà:
-
-```text
-third_party/croc/croc
-```
-
-Su Windows sarà:
-
-```text
-third_party/croc/croc.exe
-```
-
-Verrà creato anche un file:
-
-```text
-third_party/croc/VERSION
-```
-
-La cartella `third_party/croc/` è generata automaticamente e non dovrebbe essere committata in git.
-
----
-
-## Avviare MoonTransfer in sviluppo
-
-Dopo aver eseguito `uv sync` e `tools/fetch_croc.py`:
-
-```bash
-uv run moontransfer
-```
-
-In alternativa:
-
-```bash
-uv run python src/moontransfer/app.py
-```
-
----
-
-## Build da sorgente
-
-MoonTransfer usa PyInstaller per produrre un pacchetto eseguibile in modalità `onedir`.
-
-Durante la build:
-
-1. viene eseguito `tools/fetch_croc.py`;
-2. viene scaricata/aggiornata la versione di `croc`;
-3. PyInstaller include `croc` nel bundle finale;
-4. viene generata la cartella `dist/MoonTransfer/`.
-
----
-
-## Build su Linux/macOS
-
-Dalla root del progetto:
-
-```bash
+```sh
 ./scripts/build.sh
 ```
 
-Output atteso:
+Il comando può essere lanciato da fish, bash o zsh come `./scripts/build.sh`.
+Non eseguirlo come `fish scripts/build.sh`.
+
+Lo script verifica che `uv` sia disponibile e che `uv` riesca a trovare Python
+3.13. Se il controllo Python fallisce, installa Python 3.13 oppure lascia che
+`uv` installi la versione usata dal progetto:
+
+```sh
+uv python install 3.13
+```
+
+Output:
 
 ```text
 dist/MoonTransfer/
 ```
 
-Avvio dell'applicazione buildata:
+### Windows
 
-```bash
-./dist/MoonTransfer/MoonTransfer
-```
-
-Se lo script non è eseguibile:
-
-```bash
-chmod +x scripts/build.sh
-./scripts/build.sh
-```
-
----
-
-## Build su Windows
-
-Da PowerShell, nella root del progetto:
+Apri PowerShell nella cartella del progetto ed esegui:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1
 ```
 
-Output atteso:
+Lo script verifica che `uv` sia disponibile e che `uv` riesca a trovare Python
+3.13. Se il controllo Python fallisce, installa Python 3.13 oppure esegui:
+
+```powershell
+uv python install 3.13
+```
+
+Output:
 
 ```text
 dist\MoonTransfer\
 ```
 
-Avvio dell'applicazione buildata:
+## Avviare MoonTransfer
 
-```powershell
-.\dist\MoonTransfer\MoonTransfer.exe
-```
-
----
-
-## Struttura del progetto
+Dopo la build, apri la cartella generata:
 
 ```text
-MoonTransfer/
-├─ pyproject.toml
-├─ uv.lock
-├─ README.md
-├─ .gitignore
-├─ MoonTransfer.spec
-├─ THIRD_PARTY_NOTICES.md
-├─ src/
-│  └─ moontransfer/
-│     ├─ __init__.py
-│     └─ app.py
-├─ tools/
-│  ├─ fetch_croc.py
-│  └─ build.py
-├─ scripts/
-│  ├─ build.sh
-│  └─ build.ps1
-└─ third_party/
-   └─ croc/
-      ├─ croc / croc.exe
-      └─ VERSION
+dist/MoonTransfer/
 ```
 
-Nota: `third_party/croc/`, `.cache/`, `.venv/`, `build/` e `dist/` sono generati automaticamente e non dovrebbero essere versionati.
+### Linux
 
----
+Dal file manager, apri la cartella `dist/MoonTransfer/` e avvia il file
+`MoonTransfer`.
 
-## File importanti
+Se il file manager non lo avvia con doppio click, puoi usare il terminale:
 
-### `src/moontransfer/app.py`
-
-Contiene la GUI PySide6 e il wrapper intorno a `croc`.
-
-Responsabilità principali:
-
-- risolvere il percorso di `croc`;
-- gestire invio e ricezione;
-- avviare `croc` con `QProcess`;
-- mostrare stdout/stderr nella GUI;
-- intercettare il codice generato durante l'invio;
-- impostare `CROC_SECRET` durante la ricezione.
-
-### `tools/fetch_croc.py`
-
-Scarica e prepara il binario `croc` per la piattaforma corrente.
-
-Comportamento attuale:
-
-- usa sempre la latest release disponibile online;
-- verifica il checksum dell'archivio;
-- aggiorna il binario locale se necessario;
-- scrive `third_party/croc/VERSION`.
-
-### `tools/build.py`
-
-Orchestra la build:
-
-1. esegue `tools/fetch_croc.py`;
-2. esegue PyInstaller usando `MoonTransfer.spec`.
-
-### `MoonTransfer.spec`
-
-Specifica di PyInstaller.
-
-Include:
-
-- entrypoint Python;
-- path `src/`;
-- binario `croc`;
-- configurazione `onedir`.
-
-### `scripts/build.sh`
-
-Script di build per Linux/macOS basato su `uv`.
-
-### `scripts/build.ps1`
-
-Script di build per Windows PowerShell basato su `uv`.
-
----
-
-## Policy git consigliata
-
-### Da committare
-
-- `pyproject.toml`
-- `uv.lock`
-- `README.md`
-- `.gitignore`
-- `MoonTransfer.spec`
-- `THIRD_PARTY_NOTICES.md`
-- `src/`
-- `tools/`
-- `scripts/`
-
-### Da non committare
-
-- `.venv/`
-- `.cache/`
-- `build/`
-- `dist/`
-- `third_party/croc/`
-- `__pycache__/`
-
----
-
-## Esempio `.gitignore`
-
-```gitignore
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-*.egg-info/
-
-# uv / virtualenv
-.venv/
-
-# Build
-build/
-dist/
-*.spec.bak
-
-# Cache
-.cache/
-.pytest_cache/
-.ruff_cache/
-
-# Bundled third-party binaries generated by tools/fetch_croc.py
-third_party/croc/
-
-# OS/editor
-.DS_Store
-Thumbs.db
-.idea/
-.vscode/
+```sh
+./dist/MoonTransfer/MoonTransfer
 ```
 
----
+### macOS
 
-## Test consigliati
+Apri la cartella generata dalla build e avvia l'eseguibile `MoonTransfer`.
 
-### 1. Test download croc
+Se macOS blocca l'apertura perché l'app non è firmata, aprila dalle impostazioni
+di sicurezza del sistema oppure avviala da terminale dalla cartella del progetto:
 
-```bash
+```sh
+./dist/MoonTransfer/MoonTransfer
+```
+
+### Windows
+
+Apri:
+
+```text
+dist\MoonTransfer\
+```
+
+e fai doppio click su:
+
+```text
+MoonTransfer.exe
+```
+
+Non spostare solo `MoonTransfer.exe`: deve restare accanto ai file e alle
+cartelle generati da PyInstaller.
+
+## Usare il programma
+
+### Inviare un file
+
+1. Apri MoonTransfer.
+2. Vai nella scheda **Invia**.
+3. Premi **Sfoglia...**.
+4. Scegli il file da inviare.
+5. Premi **Invia**.
+6. Attendi che compaia il codice.
+7. Comunica il codice alla persona che deve ricevere il file.
+
+Il codice è monouso: serve per quel trasferimento e non va riutilizzato.
+
+### Ricevere un file
+
+1. Apri MoonTransfer.
+2. Vai nella scheda **Ricevi**.
+3. Incolla il codice ricevuto.
+4. Scegli la cartella di destinazione.
+5. Premi **Ricevi**.
+6. Attendi il completamento del trasferimento.
+
+Se il trasferimento non parte, verifica che entrambi i computer siano connessi a
+Internet e che eventuali firewall o reti aziendali non blocchino le connessioni
+usate da `croc`.
+
+## Per chi contribuisce
+
+### Avvio in sviluppo
+
+Dalla root del progetto:
+
+```sh
+uv sync
 uv run python tools/fetch_croc.py
-```
-
-Controlla che venga creata la cartella:
-
-```text
-third_party/croc/
-```
-
-### 2. Test GUI in sviluppo
-
-```bash
 uv run moontransfer
 ```
 
-La GUI dovrebbe aprirsi senza errori.
+`tools/fetch_croc.py` scarica la latest release di `croc`, verifica il checksum
+dell'archivio e copia il binario in `third_party/croc/`.
 
-### 3. Test build
+Riferimenti utili:
 
-Linux/macOS:
+- [`croc`](https://github.com/schollz/croc), motore di trasferimento;
+- [`uv`](https://docs.astral.sh/uv/), gestione ambiente Python e dipendenze;
+- [PySide6 / Qt for Python](https://doc.qt.io/qtforpython-6/), toolkit GUI;
+- [PyInstaller](https://pyinstaller.org/en/stable/), creazione del bundle.
 
-```bash
-./scripts/build.sh
-```
+### Test manuale di trasferimento
 
-Windows:
+Per verificare il flusso completo durante lo sviluppo puoi usare due istanze
+dell'app sulla stessa macchina:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1
-```
+1. apri due istanze di MoonTransfer;
+2. nella prima istanza invia un piccolo file;
+3. copia il codice mostrato;
+4. nella seconda istanza ricevi in una cartella diversa;
+5. controlla che il file sia stato creato nella cartella di destinazione.
 
-### 4. Test trasferimento locale
+Questo test è utile per lo sviluppo, ma non rappresenta il caso d'uso principale
+del programma, che resta il trasferimento tra due computer diversi.
 
-Puoi testare MoonTransfer anche su un singolo computer:
+### Scelte tecniche
 
-1. apri una prima istanza dell'app;
-2. vai su **Invia**;
-3. scegli un piccolo file di prova;
-4. premi **Invia**;
-5. copia il codice;
-6. apri una seconda istanza dell'app;
-7. vai su **Ricevi**;
-8. incolla il codice;
-9. scegli una cartella di destinazione diversa;
-10. premi **Ricevi**.
-
-Se il file viene trasferito correttamente, il wrapper GUI e `croc` stanno funzionando.
-
----
-
-## Note sulla riproducibilità della build
-
-MoonTransfer attualmente scarica sempre l'ultima versione disponibile di `croc` durante la build.
-
-Questo comportamento è comodo perché mantiene aggiornato il motore di trasferimento, ma significa che due build eseguite in momenti diversi potrebbero includere versioni diverse di `croc`.
-
-Per il momento questa è una scelta intenzionale del progetto.
-
----
-
-## Licenze e software terzi
-
-MoonTransfer usa e/o include software di terze parti.
-
-Vedi:
+- MoonTransfer avvia `croc` con `QProcess`, senza passare da shell come bash,
+  fish o PowerShell.
+- In invio usa:
 
 ```text
-THIRD_PARTY_NOTICES.md
+croc --ignore-stdin --disable-clipboard send --no-local <file>
 ```
 
-Componenti principali:
+`--no-local` evita il relay locale di `croc`, che nei test con due istanze sulla
+stessa macchina può rendere instabile la negoziazione.
 
-- `croc`, usato come motore di trasferimento;
-- PySide6 / Qt for Python, usato per la GUI.
+- In ricezione usa:
 
----
+```text
+CROC_SECRET=<codice> croc --ignore-stdin --yes --overwrite
+```
 
-## Roadmap
+Il codice viene passato al processo `croc` tramite variabile d'ambiente, non
+come argomento della riga di comando.
 
-Possibili miglioramenti futuri:
+### Struttura
 
-- supporto GUI per inviare cartelle;
-- supporto drag and drop;
-- QR code del codice di trasferimento;
-- impostazioni per relay custom;
-- profili relay;
-- cronologia trasferimenti;
-- verifica hash post-trasferimento;
-- GitHub Actions per build automatiche;
-- pacchetti release per Windows, Linux e macOS;
-- firma degli eseguibili.
+```text
+MoonTransfer/
+├─ src/moontransfer/app.py
+├─ tools/fetch_croc.py
+├─ tools/build.py
+├─ scripts/build.sh
+├─ scripts/build.ps1
+├─ MoonTransfer.spec
+├─ pyproject.toml
+├─ uv.lock
+└─ THIRD_PARTY_NOTICES.md
+```
+
+### File generati
+
+Questi percorsi sono generati localmente e non vanno committati:
+
+```text
+.venv/
+.cache/
+build/
+dist/
+third_party/croc/
+__pycache__/
+```
+
+## Licenze
+
+Vedi `THIRD_PARTY_NOTICES.md` per i componenti di terze parti, in particolare
+`croc` e PySide6/Qt for Python.
