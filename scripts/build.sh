@@ -31,8 +31,8 @@ if ! PYTHON_VERSION=$(uv python find --show-version 2>/dev/null); then
   echo "Errore: non trovo un Python compatibile con il progetto."
   echo
   echo "Soluzioni possibili:"
-  echo "  uv python install 3.13"
-  echo "  oppure installa Python 3.13 da https://www.python.org/downloads/"
+  echo "  uv python install '>=3.13,<3.15'"
+  echo "  oppure installa Python 3.13 o 3.14 da https://www.python.org/downloads/"
   exit 1
 fi
 
