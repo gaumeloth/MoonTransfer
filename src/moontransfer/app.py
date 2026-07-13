@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-import os
-import re
-import shlex
-import shutil
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -24,31 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-
-CODE_RE = re.compile(r"Code is:\s*(.+)\s*$")
-
-
-def find_croc_executable() -> str | None:
-    exe_name = "croc.exe" if os.name == "nt" else "croc"
-    candidates: list[Path] = []
-
-    bundle_dir = getattr(sys, "_MEIPASS", None)
-    if bundle_dir:
-        candidates.append(Path(bundle_dir) / exe_name)
-
-    root = Path(__file__).resolve().parents[2]
-    candidates.append(root / "third_party" / "croc" / exe_name)
-    candidates.append(Path(__file__).resolve().parent / exe_name)
-
-    for candidate in candidates:
-        if candidate.is_file():
-            return str(candidate)
-
-    return shutil.which(exe_name)
-
-
-def command_preview(program: str, args: list[str]) -> str:
-    return " ".join(shlex.quote(part) for part in [program, *args])
+from moontransfer import croc
 
 
 class TerminalView(QPlainTextEdit):
@@ -115,7 +87,9 @@ class CrocRunner:
         self.proc.setProcessEnvironment(process_env)
 
         self.terminal.append_line()
-        self.terminal.append_line(f"$ {preview or command_preview(self.croc_path, args)}")
+        self.terminal.append_line(
+            f"$ {preview or croc.command_preview(self.croc_path, args)}"
+        )
 
         self.proc.start(self.croc_path, args)
         if not self.proc.waitForStarted(3000):
@@ -249,17 +223,11 @@ class SendTab(QWidget):
         self.code_label.setText("Codice: -")
         self.copy_button.setEnabled(False)
 
-        args = [
-            "--ignore-stdin",
-            "--disable-clipboard",
-            "send",
-            "--no-local",
-            str(path),
-        ]
+        args = croc.build_send_args(path)
         self._set_running(True)
 
         try:
-            self.runner.start(args, unset_env=("CROC_SECRET",))
+            self.runner.start(args, unset_env=(croc.CROC_SECRET_ENV,))
         except Exception as exc:
             self._set_running(False)
             QMessageBox.critical(self, "Errore avvio croc", str(exc))
@@ -271,11 +239,7 @@ class SendTab(QWidget):
             self.terminal.append_line("[clipboard] codice copiato")
 
     def _on_croc_line(self, line: str) -> None:
-        match = CODE_RE.search(line)
-        if not match:
-            return
-
-        code = match.group(1).strip()
+        code = croc.parse_send_code(line)
         if not code:
             return
 
@@ -376,15 +340,15 @@ class ReceiveTab(QWidget):
             )
             return
 
-        args = ["--ignore-stdin", "--yes", "--overwrite"]
-        preview = f"CROC_SECRET=<hidden> {command_preview(self.croc_path, args)}"
+        args = croc.build_receive_args()
+        preview = croc.build_receive_preview(self.croc_path, args)
         self._set_running(True)
 
         try:
             self.runner.start(
                 args,
                 workdir=destination,
-                env={"CROC_SECRET": code},
+                env=croc.build_receive_environment(code),
                 preview=preview,
             )
         except Exception as exc:
@@ -405,7 +369,7 @@ class MainWindow(QWidget):
         self.setWindowTitle("MoonTransfer")
         self.resize(950, 650)
 
-        croc_path = find_croc_executable()
+        croc_path = croc.find_executable()
         if not croc_path:
             QMessageBox.critical(
                 self,
