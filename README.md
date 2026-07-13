@@ -11,7 +11,7 @@ MoonTransfer non implementa un protocollo crittografico proprio. La sicurezza,
 la connessione e il trasferimento sono gestiti da `croc`; MoonTransfer fornisce
 solo l'interfaccia grafica e include il binario `croc` nell'app buildata.
 
-## Stato di sviluppo
+## Stato attuale
 
 MoonTransfer è in fase iniziale. Il flusso principale è già funzionante:
 
@@ -31,29 +31,20 @@ La build produce una cartella portabile `MoonTransfer`: per spostarla su un
 altro computer bisogna copiare l'intera cartella generata, non solo
 l'eseguibile.
 
-## Roadmap
+## Guida rapida
 
-Possibili miglioramenti futuri, in ordine indicativo:
+Per usare MoonTransfer oggi, segui questi passaggi nell'ordine:
 
-- pubblicare release scaricabili già buildate per Linux, Windows e macOS;
-- mostrare messaggi di stato ed errore più chiari sopra all'output tecnico;
-- aggiungere drag and drop del file da inviare;
-- supportare l'invio di cartelle dalla GUI;
-- ricordare l'ultima cartella di destinazione usata;
-- aggiungere un pulsante per aprire la cartella del file ricevuto;
-- aggiungere impostazioni avanzate per relay custom di `croc`;
-- mantenere il codice di trasferimento fuori dagli argomenti del processo;
-- separare ulteriormente logica di trasferimento e interfaccia grafica;
-- aggiungere test automatici per parsing output, argomenti di `croc` e gestione
-  errori;
-- aggiungere una pipeline CI per controllare build e test sulle piattaforme
-  principali;
-- rendere più riproducibile la build fissando opzionalmente la versione di
-  `croc`.
+1. scarica il codice sorgente, con Git oppure come archivio ZIP;
+2. apri un terminale nella cartella del progetto;
+3. installa `uv`;
+4. lascia che `uv` trovi o installi Python 3.13.x/3.14.x;
+5. esegui lo script di build per il tuo sistema operativo;
+6. apri la cartella `dist/MoonTransfer/`;
+7. avvia MoonTransfer.
 
-L'idea guida è restare vicini alla filosofia Unix: MoonTransfer deve fare una
-cosa sola, delegare bene a `croc`, mantenere il comportamento leggibile e non
-nascondere inutilmente gli errori.
+Non devi installare `croc` a mano: viene scaricato automaticamente durante la
+build.
 
 ## Scaricare il sorgente
 
@@ -75,8 +66,7 @@ Espandi solo il metodo che vuoi usare.
 <details>
 <summary>Scaricare con Git</summary>
 
-Questo metodo è consigliato se vuoi aggiornare facilmente la repository o
-contribuire al progetto. Se non hai Git, puoi installarlo dalla
+Se non hai Git, installalo prima dalla
 [pagina ufficiale di download](https://git-scm.com/downloads/).
 
 Le istruzioni specifiche per sistema operativo sono inizialmente chiuse:
@@ -138,10 +128,15 @@ Dopo l'installazione chiudi e riapri il terminale, poi verifica:
 git --version
 ```
 
+Scarica la repository:
+
 ```sh
 git clone https://github.com/gaumeloth/MoonTransfer.git
 cd MoonTransfer
 ```
+
+Da questo momento tutti i comandi successivi vanno eseguiti da dentro la
+cartella `MoonTransfer`.
 
 </details>
 
@@ -154,14 +149,38 @@ Questo metodo non richiede Git.
 2. Premi **Code**.
 3. Scegli **Download ZIP**.
 4. Estrai l'archivio in una cartella.
-5. Apri un terminale dentro la cartella estratta.
+5. Apri la cartella estratta.
+
+La cartella estratta potrebbe chiamarsi `MoonTransfer-main` invece di
+`MoonTransfer`. Va bene: usa quella cartella per i comandi successivi.
+
+Ora apri un terminale dentro la cartella estratta.
+
+<details>
+<summary>Linux/macOS</summary>
+
+Puoi usare il file manager e scegliere **Apri nel terminale** oppure aprire un
+terminale e spostarti manualmente nella cartella estratta con `cd`.
+
+</details>
+
+<details>
+<summary>Windows</summary>
+
+Apri la cartella estratta in Esplora file. Poi usa uno di questi metodi:
+
+- fai click destro in uno spazio vuoto della cartella e scegli **Apri nel
+  terminale**;
+- oppure clicca nella barra del percorso, scrivi `powershell` e premi Invio.
+
+</details>
 
 GitHub documenta anche il download degli archivi sorgente nella propria
 [documentazione ufficiale](https://docs.github.com/en/repositories/working-with-files/using-files/downloading-source-code-archives).
 
 </details>
 
-## Requisiti
+## Preparare il sistema
 
 Per creare la build servono:
 
@@ -171,20 +190,79 @@ Per creare la build servono:
 - una piattaforma supportata da `tools/fetch_croc.py`: Linux x86_64/ARM64,
   macOS Intel/Apple Silicon o Windows 64 bit.
 
-`uv` gestisce l'ambiente Python del progetto e installa le dipendenze indicate
-in `pyproject.toml`. Il progetto richiede Python 3.13.x o 3.14.x. Se nel
-sistema manca una versione compatibile, installa Python 3.13 o 3.14 dalla
-[pagina ufficiale di Python](https://www.python.org/downloads/).
+Il modo più semplice è installare `uv` e lasciare che sia `uv` a gestire Python
+per il progetto.
 
-### Installare Python
+### Installare uv
 
-Python può essere installato manualmente nel sistema oppure gestito da `uv`.
+La documentazione ufficiale di `uv` è disponibile su
+[docs.astral.sh/uv](https://docs.astral.sh/uv/). Le istruzioni aggiornate per
+l'installazione sono nella pagina
+[Installing uv](https://docs.astral.sh/uv/getting-started/installation/).
 
-Se vuoi lasciare che sia `uv` a installare Python, installa prima `uv` seguendo
-la sezione successiva, poi esegui:
+Espandi solo il sistema operativo che stai usando.
+
+<details>
+<summary>Arch Linux</summary>
+
+```sh
+sudo pacman -S uv
+```
+
+</details>
+
+<details>
+<summary>Linux/macOS</summary>
+
+```sh
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Se il comando `uv` non viene trovato dopo l'installazione, chiudi e riapri il
+terminale.
+
+</details>
+
+<details>
+<summary>Windows PowerShell</summary>
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+Dopo l'installazione chiudi e riapri PowerShell.
+
+</details>
+
+Verifica l'installazione:
+
+```sh
+uv --version
+```
+
+### Preparare Python
+
+MoonTransfer richiede Python 3.13.x o 3.14.x. `uv` può usare una versione già
+installata nel sistema oppure installarne una compatibile.
+
+Dalla cartella del progetto, verifica quale Python viene trovato:
+
+```sh
+uv python find --show-version
+```
+
+Se il comando mostra una versione `3.13.x` o `3.14.x`, puoi proseguire.
+
+Se invece il comando fallisce, oppure non trova una versione compatibile, esegui:
 
 ```sh
 uv python install '>=3.13,<3.15'
+```
+
+Poi riprova:
+
+```sh
+uv python find --show-version
 ```
 
 Se preferisci installare Python manualmente, scegli una versione stabile di
@@ -192,7 +270,7 @@ Python 3.13 o 3.14 dalla
 [pagina ufficiale di download](https://www.python.org/downloads/).
 
 <details>
-<summary>Windows</summary>
+<summary>Windows: installare Python manualmente</summary>
 
 Su Windows hai due possibilità pratiche.
 
@@ -242,69 +320,13 @@ che interferiscono con l'installazione reale.
 
 </details>
 
-## Installare uv
+## Creare la build
 
-La documentazione ufficiale di `uv` è disponibile su
-[docs.astral.sh/uv](https://docs.astral.sh/uv/). Le istruzioni aggiornate per
-l'installazione sono nella pagina
-[Installing uv](https://docs.astral.sh/uv/getting-started/installation/).
+La build installa le dipendenze Python, scarica il binario `croc` adatto alla
+piattaforma corrente e crea il pacchetto PyInstaller in `dist/`.
 
-<details>
-<summary>Arch Linux</summary>
-
-```sh
-sudo pacman -S uv
-```
-
-</details>
-
-<details>
-<summary>Linux/macOS</summary>
-
-```sh
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-Se il comando `uv` non viene trovato dopo l'installazione, chiudi e riapri il
-terminale.
-
-</details>
-
-<details>
-<summary>Windows PowerShell</summary>
-
-```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
-
-</details>
-
-Verifica l'installazione:
-
-```sh
-uv --version
-```
-
-## Build
-
-Durante la build vengono installate le dipendenze Python, viene scaricato il
-binario `croc` adatto alla piattaforma corrente e viene creato il pacchetto
-PyInstaller in `dist/`.
-
-Il comando comune, valido su tutti i sistemi dopo aver preparato l'ambiente con
-`uv sync`, è:
-
-```sh
-uv run --frozen --dev python tools/build.py
-```
-
-`tools/build.py` è l'orchestratore della build: esegue `tools/fetch_croc.py` e
-poi PyInstaller usando `MoonTransfer.spec`.
-
-Gli script in `scripts/` sono wrapper specifici per sistema operativo. Prima
-controllano i prerequisiti principali (`uv` e un Python compatibile risolto da
-`uv`), mostrano istruzioni di recupero se qualcosa manca, eseguono `uv sync` e
-poi chiamano `tools/build.py`.
+Usa lo script adatto al tuo sistema operativo. Gli script controllano i
+prerequisiti principali, eseguono `uv sync` e poi chiamano `tools/build.py`.
 
 <details>
 <summary>Linux/macOS</summary>
@@ -318,15 +340,7 @@ Dalla cartella del progetto:
 Il comando può essere lanciato da fish, bash o zsh come `./scripts/build.sh`.
 Non eseguirlo come `fish scripts/build.sh`.
 
-Lo script verifica che `uv` sia disponibile e che `uv` riesca a trovare Python
-3.13.x o 3.14.x. Se il controllo Python fallisce, installa Python 3.13 o 3.14
-oppure lascia che `uv` installi una versione compatibile:
-
-```sh
-uv python install '>=3.13,<3.15'
-```
-
-Output:
+Se la build termina correttamente, troverai il programma in:
 
 ```text
 dist/MoonTransfer/
@@ -343,19 +357,26 @@ Apri PowerShell nella cartella del progetto ed esegui:
 powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1
 ```
 
-Lo script verifica che `uv` sia disponibile e che `uv` riesca a trovare Python
-3.13.x o 3.14.x. Se il controllo Python fallisce, installa Python 3.13 o 3.14
-oppure esegui:
-
-```powershell
-uv python install '>=3.13,<3.15'
-```
-
-Output:
+Se la build termina correttamente, troverai il programma in:
 
 ```text
 dist\MoonTransfer\
 ```
+
+</details>
+
+<details>
+<summary>Metodo avanzato</summary>
+
+Il comando comune, valido su tutti i sistemi dopo aver preparato l'ambiente con
+`uv sync`, è:
+
+```sh
+uv run --frozen --dev python tools/build.py
+```
+
+`tools/build.py` è l'orchestratore della build: esegue `tools/fetch_croc.py` e
+poi PyInstaller usando `MoonTransfer.spec`.
 
 </details>
 
@@ -366,6 +387,9 @@ Dopo la build, apri la cartella generata:
 ```text
 dist/MoonTransfer/
 ```
+
+Non spostare solo l'eseguibile: deve restare accanto ai file e alle cartelle
+generati da PyInstaller.
 
 <details>
 <summary>Linux</summary>
@@ -410,39 +434,72 @@ e fai doppio click su:
 MoonTransfer.exe
 ```
 
-Non spostare solo `MoonTransfer.exe`: deve restare accanto ai file e alle
-cartelle generati da PyInstaller.
-
 </details>
 
-## Usare il programma
+## Usare MoonTransfer
+
+Per completare un trasferimento servono due persone o due computer:
+
+- il mittente apre la scheda **Invia** e genera un codice;
+- il destinatario apre la scheda **Ricevi** e inserisce quel codice.
+
+Entrambi i computer devono essere connessi a Internet. Il codice va comunicato
+fuori da MoonTransfer, per esempio via chat, telefono o email.
 
 ### Inviare un file
 
-1. Apri MoonTransfer.
-2. Vai nella scheda **Invia**.
-3. Premi **Sfoglia...**.
-4. Scegli il file da inviare.
-5. Premi **Invia**.
-6. Attendi che compaia il codice.
-7. Comunica il codice alla persona che deve ricevere il file.
+Sul computer che possiede il file da inviare:
+
+1. apri MoonTransfer;
+2. vai nella scheda **Invia**;
+3. premi **Sfoglia...**;
+4. scegli il file da inviare;
+5. premi **Invia**;
+6. attendi che compaia il codice;
+7. comunica il codice alla persona che deve ricevere il file.
 
 Il codice è monouso: serve per quel trasferimento e non va riutilizzato.
 
 ### Ricevere un file
 
-1. Apri MoonTransfer.
-2. Vai nella scheda **Ricevi**.
-3. Incolla il codice ricevuto.
-4. Scegli la cartella di destinazione.
-5. Premi **Ricevi**.
-6. Attendi il completamento del trasferimento.
+Sul computer che deve ricevere il file:
+
+1. apri MoonTransfer;
+2. vai nella scheda **Ricevi**;
+3. incolla il codice ricevuto;
+4. scegli la cartella di destinazione;
+5. premi **Ricevi**;
+6. attendi il completamento del trasferimento.
 
 Se il trasferimento non parte, verifica che entrambi i computer siano connessi a
 Internet e che eventuali firewall o reti aziendali non blocchino le connessioni
 usate da `croc`.
 
 ## Per chi contribuisce
+
+### Roadmap
+
+Possibili miglioramenti futuri, in ordine indicativo:
+
+- pubblicare release scaricabili già buildate per Linux, Windows e macOS;
+- mostrare messaggi di stato ed errore più chiari sopra all'output tecnico;
+- aggiungere drag and drop del file da inviare;
+- supportare l'invio di cartelle dalla GUI;
+- ricordare l'ultima cartella di destinazione usata;
+- aggiungere un pulsante per aprire la cartella del file ricevuto;
+- aggiungere impostazioni avanzate per relay custom di `croc`;
+- mantenere il codice di trasferimento fuori dagli argomenti del processo;
+- separare ulteriormente logica di trasferimento e interfaccia grafica;
+- aggiungere altri test automatici per parsing output, argomenti di `croc` e
+  gestione errori;
+- aggiungere una pipeline CI per controllare build e test sulle piattaforme
+  principali;
+- rendere più riproducibile la build fissando opzionalmente la versione di
+  `croc`.
+
+L'idea guida è restare vicini alla filosofia Unix: MoonTransfer deve fare una
+cosa sola, delegare bene a `croc`, mantenere il comportamento leggibile e non
+nascondere inutilmente gli errori.
 
 ### Avvio in sviluppo
 
