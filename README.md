@@ -464,6 +464,17 @@ Riferimenti utili:
 - [PySide6 / Qt for Python](https://doc.qt.io/qtforpython-6/), toolkit GUI;
 - [PyInstaller](https://pyinstaller.org/en/stable/), creazione del bundle.
 
+### Test automatici
+
+I test unitari coprono la logica non-GUI collegata a `croc`, come parsing del
+codice, argomenti di invio/ricezione e gestione della variabile `CROC_SECRET`.
+
+Dalla root del progetto:
+
+```sh
+uv run --frozen python -m unittest discover -s tests
+```
+
 ### Test manuale di trasferimento
 
 Per verificare il flusso completo durante lo sviluppo puoi usare due istanze
@@ -482,6 +493,8 @@ del programma, che resta il trasferimento tra due computer diversi.
 
 - MoonTransfer avvia `croc` con `QProcess`, senza passare da shell come bash,
   fish o PowerShell.
+- La GUI resta in `src/moontransfer/app.py`; la logica riutilizzabile legata a
+  `croc` vive in `src/moontransfer/croc.py`.
 - In invio usa:
 
 ```text
@@ -505,10 +518,12 @@ come argomento della riga di comando.
 ```text
 MoonTransfer/
 ├─ src/moontransfer/app.py
+├─ src/moontransfer/croc.py
 ├─ tools/fetch_croc.py
 ├─ tools/build.py
 ├─ scripts/build.sh
 ├─ scripts/build.ps1
+├─ tests/test_croc.py
 ├─ MoonTransfer.spec
 ├─ pyproject.toml
 ├─ uv.lock
