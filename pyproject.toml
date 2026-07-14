@@ -16,6 +16,17 @@ dev = [
     "pyinstaller>=6.0",
 ]
 
+[tool.moontransfer.croc]
+version = "10.4.13"
+
+[tool.moontransfer.croc.hashes]
+"croc_v10.4.13_Linux-64bit.tar.gz" = "sha256:656125605320b424ca37594cb5caf3860a6c9fd7081b9ba385f5c4548838cfb3"
+"croc_v10.4.13_Linux-ARM64.tar.gz" = "sha256:e84f088cb67e204fe23425ca58e2f4c0eeb9e221fd154cff6f4301c1f48e73c4"
+"croc_v10.4.13_macOS-64bit.tar.gz" = "sha256:34cc265e655238e41eba3c77de9ee436752d8c8422c92dc62fc5daf611df7c34"
+"croc_v10.4.13_macOS-ARM64.tar.gz" = "sha256:1613fb661cb04d497f16aeb3ecf359c269dc586ed9a45ece982c6c874048044f"
+"croc_v10.4.13_Windows-64bit.zip" = "sha256:abd6357f03fec4c0cb1e7de4d671a7ea6a70c6d03b436416603d8daefc5a613b"
+"croc_v10.4.13_Windows-ARM64.zip" = "sha256:6f6745299c1570d8cdd5572659dfb7d6bd6311ff8c02b831909263b772ee68d6"
+
 [build-system]
 requires = ["uv_build>=0.10.0,<0.11.0"]
 build-backend = "uv_build"

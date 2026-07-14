@@ -10,7 +10,9 @@ Project: <https://github.com/schollz/croc>
 License: MIT License
 
 The `croc` binary is downloaded during the build process by `tools/fetch_croc.py`
-and bundled into the final application package.
+and bundled into the final application package. The bundled version and the
+expected SHA-256 hashes for supported release archives are declared in
+`pyproject.toml` under `[tool.moontransfer.croc]`.
 
 ## PySide6 / Qt for Python
 
