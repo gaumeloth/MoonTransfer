@@ -470,6 +470,10 @@ On the computer that has the file to send:
 6. wait for the code to appear;
 7. share the code with the person who needs to receive the file.
 
+During the transfer, MoonTransfer shows progress, transferred size, current
+speed, elapsed time, and estimated remaining time when `croc` provides enough
+progress information.
+
 The code is one-time use: it is valid for that transfer and should not be
 reused.
 
@@ -481,8 +485,13 @@ On the computer that needs to receive the file:
 2. go to the **Ricevi** tab;
 3. paste the received code;
 4. choose the destination folder;
-5. press **Ricevi**;
-6. wait for the transfer to complete.
+5. confirm that files with the same name in the destination may be overwritten;
+6. press **Ricevi**;
+7. wait for the transfer to complete.
+
+During the transfer, MoonTransfer shows progress, downloaded size, current
+speed, elapsed time, and estimated remaining time when `croc` provides enough
+progress information.
 
 If the transfer does not start, check that both computers are connected to the
 Internet and that any firewall or corporate network is not blocking the
@@ -495,11 +504,9 @@ connections used by `croc`.
 Possible future improvements, in indicative order:
 
 - publish ready-made releases for Linux, Windows, and macOS;
-- show clearer status and error messages above the technical output;
 - add drag and drop for the file to send;
 - support sending folders from the GUI;
 - remember the last destination folder used;
-- add a button to open the received file's folder;
 - add advanced settings for custom `croc` relays;
 - keep the transfer code out of process arguments;
 - further separate transfer logic and graphical interface;

@@ -473,6 +473,10 @@ Sul computer che possiede il file da inviare:
 6. attendi che compaia il codice;
 7. comunica il codice alla persona che deve ricevere il file.
 
+Durante il trasferimento, MoonTransfer mostra avanzamento, dimensione inviata,
+velocità attuale, tempo trascorso e tempo stimato rimanente quando `croc`
+fornisce informazioni di progresso sufficienti.
+
 Il codice è monouso: serve per quel trasferimento e non va riutilizzato.
 
 ### Ricevere un file
@@ -483,8 +487,14 @@ Sul computer che deve ricevere il file:
 2. vai nella scheda **Ricevi**;
 3. incolla il codice ricevuto;
 4. scegli la cartella di destinazione;
-5. premi **Ricevi**;
-6. attendi il completamento del trasferimento.
+5. conferma che file con lo stesso nome nella destinazione possono essere
+   sovrascritti;
+6. premi **Ricevi**;
+7. attendi il completamento del trasferimento.
+
+Durante il trasferimento, MoonTransfer mostra avanzamento, dimensione scaricata,
+velocità attuale, tempo trascorso e tempo stimato rimanente quando `croc`
+fornisce informazioni di progresso sufficienti.
 
 Se il trasferimento non parte, verifica che entrambi i computer siano connessi a
 Internet e che eventuali firewall o reti aziendali non blocchino le connessioni
@@ -497,11 +507,9 @@ usate da `croc`.
 Possibili miglioramenti futuri, in ordine indicativo:
 
 - pubblicare release scaricabili già buildate per Linux, Windows e macOS;
-- mostrare messaggi di stato ed errore più chiari sopra all'output tecnico;
 - aggiungere drag and drop del file da inviare;
 - supportare l'invio di cartelle dalla GUI;
 - ricordare l'ultima cartella di destinazione usata;
-- aggiungere un pulsante per aprire la cartella del file ricevuto;
 - aggiungere impostazioni avanzate per relay custom di `croc`;
 - mantenere il codice di trasferimento fuori dagli argomenti del processo;
 - separare ulteriormente logica di trasferimento e interfaccia grafica;
