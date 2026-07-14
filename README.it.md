@@ -23,6 +23,7 @@ MoonTransfer è in fase iniziale. Il flusso principale è già funzionante:
 - estrazione automatica del codice generato da `croc`;
 - build locale con PyInstaller;
 - download automatico del binario `croc` durante la build;
+- versione `croc` fissata e verifica SHA-256 per le piattaforme supportate;
 - bundle finale con `croc` incluso.
 
 Al momento il progetto non fornisce ancora installer firmati o pacchetti di
@@ -190,7 +191,7 @@ Per creare la build servono:
 - Python 3.13.x o 3.14.x, installato manualmente o gestito da `uv`;
 - accesso a Internet durante la build;
 - una piattaforma supportata da `tools/fetch_croc.py`: Linux x86_64/ARM64,
-  macOS Intel/Apple Silicon o Windows 64 bit.
+  macOS Intel/Apple Silicon o Windows x64/ARM64.
 
 Il modo più semplice è installare `uv` e lasciare che sia `uv` a gestire Python
 per il progetto.
@@ -327,6 +328,11 @@ che interferiscono con l'installazione reale.
 La build installa le dipendenze Python, scarica il binario `croc` adatto alla
 piattaforma corrente e crea il pacchetto PyInstaller in `dist/`.
 
+La versione di `croc` e gli hash SHA-256 attesi sono dichiarati in
+`[tool.moontransfer.croc]` in `pyproject.toml`. Una build normale usa quella
+versione fissata; non passa automaticamente all'ultima release upstream di
+`croc`.
+
 Usa lo script adatto al tuo sistema operativo. Gli script controllano i
 prerequisiti principali, eseguono `uv sync` e poi chiamano `tools/build.py`.
 
@@ -379,6 +385,13 @@ uv run --frozen --dev python tools/build.py
 
 `tools/build.py` è l'orchestratore della build: esegue `tools/fetch_croc.py` e
 poi PyInstaller usando `MoonTransfer.spec`.
+
+Per controllare l'ultima release upstream di `croc` senza cambiare il pin di
+build:
+
+```sh
+uv run --frozen python tools/fetch_croc.py --latest
+```
 
 </details>
 
@@ -496,8 +509,8 @@ Possibili miglioramenti futuri, in ordine indicativo:
   gestione errori;
 - aggiungere una pipeline CI per controllare build e test sulle piattaforme
   principali;
-- rendere più riproducibile la build fissando opzionalmente la versione di
-  `croc`.
+- eseguire automaticamente sui sistemi principali il controllo di compatibilità
+  con l'ultima release di `croc`.
 
 L'idea guida è restare vicini alla filosofia Unix: MoonTransfer deve fare una
 cosa sola, delegare bene a `croc`, mantenere il comportamento leggibile e non
@@ -513,8 +526,8 @@ uv run python tools/fetch_croc.py
 uv run moontransfer
 ```
 
-`tools/fetch_croc.py` scarica la latest release di `croc`, verifica il checksum
-dell'archivio e copia il binario in `third_party/croc/`.
+`tools/fetch_croc.py` scarica la release di `croc` fissata in `pyproject.toml`,
+verifica il checksum dell'archivio e copia il binario in `third_party/croc/`.
 
 Riferimenti utili:
 
@@ -523,10 +536,56 @@ Riferimenti utili:
 - [PySide6 / Qt for Python](https://doc.qt.io/qtforpython-6/), toolkit GUI;
 - [PyInstaller](https://pyinstaller.org/en/stable/), creazione del bundle.
 
+### Controllare l'ultima release di croc
+
+Le build normali restano intenzionalmente riproducibili: usano la versione di
+`croc` e gli hash SHA-256 fissati in `pyproject.toml`. Chi contribuisce può
+controllare separatamente se esiste una release upstream più recente di `croc`
+e se MoonTransfer riesce ancora a usarla correttamente.
+
+Dalla root del progetto:
+
+```sh
+uv run --frozen python tools/check_latest_croc.py
+```
+
+Il comando:
+
+- legge da `pyproject.toml` la versione di `croc` fissata;
+- chiede a GitHub qual è l'ultima release upstream di `croc`;
+- si ferma subito se la versione fissata è già aggiornata;
+- se esiste una versione più recente, scarica il file dei checksum della
+  release e l'archivio per la piattaforma corrente;
+- verifica lo SHA-256 dell'archivio prima di estrarlo;
+- esegue smoke test sui flag di `croc` usati da MoonTransfer.
+
+Per eseguire gli smoke test anche quando l'ultima release è già quella fissata:
+
+```sh
+uv run --frozen python tools/check_latest_croc.py --force
+```
+
+Esiste anche un controllo end-to-end opzionale del trasferimento:
+
+```sh
+uv run --frozen python tools/check_latest_croc.py --force --transfer
+```
+
+Il controllo di trasferimento avvia un mittente e un destinatario con il
+binario `croc` più recente, trasferisce un piccolo file temporaneo e verifica il
+contenuto ricevuto. Richiede accesso a Internet e un relay `croc` raggiungibile,
+quindi non fa parte del controllo predefinito.
+
+Se il controllo passa per una nuova release, aggiorna `[tool.moontransfer.croc]`
+in `pyproject.toml` con la nuova versione e gli hash ufficiali, poi esegui la
+suite di test normale prima del commit.
+
 ### Test automatici
 
 I test unitari coprono la logica non-GUI collegata a `croc`, come parsing del
-codice, argomenti di invio/ricezione e gestione della variabile `CROC_SECRET`.
+codice, argomenti di invio/ricezione, gestione della variabile `CROC_SECRET`,
+selezione degli archivi `croc` fissati e helper per il controllo dell'ultima
+release.
 
 Dalla root del progetto:
 
@@ -554,6 +613,9 @@ del programma, che resta il trasferimento tra due computer diversi.
   fish o PowerShell.
 - La GUI resta in `src/moontransfer/app.py`; la logica riutilizzabile legata a
   `croc` vive in `src/moontransfer/croc.py`.
+- La versione di `croc` inclusa nel bundle è fissata in `pyproject.toml`; gli
+  archivi supportati della release sono verificati con hash SHA-256 versionati
+  prima dell'estrazione.
 - In invio usa:
 
 ```text
@@ -578,10 +640,13 @@ come argomento della riga di comando.
 MoonTransfer/
 ├─ src/moontransfer/app.py
 ├─ src/moontransfer/croc.py
+├─ tools/check_latest_croc.py
 ├─ tools/fetch_croc.py
 ├─ tools/build.py
 ├─ scripts/build.sh
 ├─ scripts/build.ps1
+├─ tests/test_check_latest_croc.py
+├─ tests/test_fetch_croc.py
 ├─ tests/test_croc.py
 ├─ README.md
 ├─ README.it.md
