@@ -650,8 +650,12 @@ program, which remains transferring between two different computers.
 
 - MoonTransfer starts `croc` with `QProcess`, without going through shells such
   as bash, fish, or PowerShell.
-- The GUI remains in `src/moontransfer/app.py`; reusable logic related to
-  `croc` lives in `src/moontransfer/croc.py`.
+- `src/moontransfer/app.py` keeps the application entry point, main window, and
+  send/receive tabs. Reusable behavior is split into smaller modules:
+  `croc.py` for `croc` command construction, `progress.py` for transfer output
+  parsing, `messages.py` for user-facing status text, `desktop.py` for file
+  manager integration, `runner.py` for `QProcess` handling, and `widgets.py`
+  for shared Qt widgets.
 - The bundled `croc` version is pinned in `pyproject.toml`; supported release
   archives are verified with versioned SHA-256 hashes before extraction.
 - When sending, it uses:
@@ -676,16 +680,30 @@ as a command-line argument.
 
 ```text
 MoonTransfer/
-├─ src/moontransfer/app.py
-├─ src/moontransfer/croc.py
-├─ tools/check_latest_croc.py
-├─ tools/fetch_croc.py
-├─ tools/build.py
-├─ scripts/build.sh
-├─ scripts/build.ps1
-├─ tests/test_check_latest_croc.py
-├─ tests/test_fetch_croc.py
-├─ tests/test_croc.py
+├─ src/
+│  └─ moontransfer/
+│     ├─ app.py
+│     ├─ croc.py
+│     ├─ desktop.py
+│     ├─ messages.py
+│     ├─ progress.py
+│     ├─ runner.py
+│     └─ widgets.py
+├─ tools/
+│  ├─ build.py
+│  ├─ check_latest_croc.py
+│  └─ fetch_croc.py
+├─ scripts/
+│  ├─ build.ps1
+│  └─ build.sh
+├─ tests/
+│  ├─ test_check_latest_croc.py
+│  ├─ test_croc.py
+│  ├─ test_desktop.py
+│  ├─ test_fetch_croc.py
+│  ├─ test_messages.py
+│  ├─ test_progress.py
+│  └─ test_runner.py
 ├─ README.md
 ├─ README.it.md
 ├─ LICENSE

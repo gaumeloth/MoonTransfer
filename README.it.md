@@ -654,8 +654,13 @@ del programma, che resta il trasferimento tra due computer diversi.
 
 - MoonTransfer avvia `croc` con `QProcess`, senza passare da shell come bash,
   fish o PowerShell.
-- La GUI resta in `src/moontransfer/app.py`; la logica riutilizzabile legata a
-  `croc` vive in `src/moontransfer/croc.py`.
+- `src/moontransfer/app.py` mantiene l'entry point dell'applicazione, la
+  finestra principale e i tab di invio/ricezione. Il comportamento riutilizzabile
+  è separato in moduli più piccoli: `croc.py` per costruire i comandi `croc`,
+  `progress.py` per il parsing dell'output di trasferimento, `messages.py` per i
+  messaggi di stato, `desktop.py` per l'integrazione con il file manager,
+  `runner.py` per la gestione di `QProcess` e `widgets.py` per i widget Qt
+  condivisi.
 - La versione di `croc` inclusa nel bundle è fissata in `pyproject.toml`; gli
   archivi supportati della release sono verificati con hash SHA-256 versionati
   prima dell'estrazione.
@@ -681,16 +686,30 @@ come argomento della riga di comando.
 
 ```text
 MoonTransfer/
-├─ src/moontransfer/app.py
-├─ src/moontransfer/croc.py
-├─ tools/check_latest_croc.py
-├─ tools/fetch_croc.py
-├─ tools/build.py
-├─ scripts/build.sh
-├─ scripts/build.ps1
-├─ tests/test_check_latest_croc.py
-├─ tests/test_fetch_croc.py
-├─ tests/test_croc.py
+├─ src/
+│  └─ moontransfer/
+│     ├─ app.py
+│     ├─ croc.py
+│     ├─ desktop.py
+│     ├─ messages.py
+│     ├─ progress.py
+│     ├─ runner.py
+│     └─ widgets.py
+├─ tools/
+│  ├─ build.py
+│  ├─ check_latest_croc.py
+│  └─ fetch_croc.py
+├─ scripts/
+│  ├─ build.ps1
+│  └─ build.sh
+├─ tests/
+│  ├─ test_check_latest_croc.py
+│  ├─ test_croc.py
+│  ├─ test_desktop.py
+│  ├─ test_fetch_croc.py
+│  ├─ test_messages.py
+│  ├─ test_progress.py
+│  └─ test_runner.py
 ├─ README.md
 ├─ README.it.md
 ├─ LICENSE
