@@ -40,7 +40,7 @@ echo "[ok] Python $PYTHON_VERSION"
 
 echo
 echo "[sync] preparo l'ambiente Python"
-uv sync || fail "uv sync non riuscito. Controlla la connessione Internet e la configurazione di uv."
+uv sync --frozen --dev || fail "uv sync --frozen --dev non riuscito. Controlla uv.lock, la connessione Internet e la configurazione di uv."
 
 echo
 echo "[build] creo il pacchetto MoonTransfer"

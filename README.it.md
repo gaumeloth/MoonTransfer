@@ -334,7 +334,8 @@ versione fissata; non passa automaticamente all'ultima release upstream di
 `croc`.
 
 Usa lo script adatto al tuo sistema operativo. Gli script controllano i
-prerequisiti principali, eseguono `uv sync` e poi chiamano `tools/build.py`.
+prerequisiti principali, eseguono `uv sync --frozen --dev` usando `uv.lock`
+committato e poi chiamano `tools/build.py`.
 
 <details>
 <summary>Linux/macOS</summary>
@@ -377,7 +378,7 @@ dist\MoonTransfer\
 <summary>Metodo avanzato</summary>
 
 Il comando comune, valido su tutti i sistemi dopo aver preparato l'ambiente con
-`uv sync`, è:
+`uv sync --frozen --dev`, è:
 
 ```sh
 uv run --frozen --dev python tools/build.py
@@ -451,6 +452,40 @@ MoonTransfer.exe
 
 </details>
 
+## Risoluzione problemi
+
+### Warning Qt sulle icone SVG in Linux
+
+Quando MoonTransfer viene avviato da terminale, Qt può stampare warning come:
+
+```text
+qt.svg: Cannot read file '/usr/share/icons/BeautyLine/places/16/folder-new.svg',
+because: Start tag expected. (line 1)
+```
+
+Significa che Qt ha provato a caricare un'icona SVG dal tema icone di sistema,
+ma quel file non è SVG valido. Di solito indica un file icona corrotto, vuoto,
+troncato o comunque non valido nel tema grafico. Non riguarda il trasferimento
+dei file, `croc`, la cifratura o il contenuto ricevuto. Al massimo può mancare
+o apparire male un'icona del file dialog o di una cartella.
+
+Per controllare il file icona sul sistema interessato:
+
+```sh
+file /usr/share/icons/BeautyLine/places/16/folder-new.svg
+head -n 5 /usr/share/icons/BeautyLine/places/16/folder-new.svg
+```
+
+Su sistemi basati su Arch, come Garuda, puoi anche controllare quale pacchetto
+possiede il file:
+
+```sh
+pacman -Qo /usr/share/icons/BeautyLine/places/16/folder-new.svg
+```
+
+La correzione corretta è reinstallare o aggiornare il pacchetto del tema icone,
+scegliere un altro tema icone o correggere il file SVG non valido.
+
 ## Usare MoonTransfer
 
 Per completare un trasferimento servono due persone o due computer:
@@ -511,8 +546,8 @@ Possibili miglioramenti futuri, in ordine indicativo:
 - supportare l'invio di cartelle dalla GUI;
 - ricordare l'ultima cartella di destinazione usata;
 - aggiungere impostazioni avanzate per relay custom di `croc`;
-- mantenere il codice di trasferimento fuori dagli argomenti del processo;
-- separare ulteriormente logica di trasferimento e interfaccia grafica;
+- separare ulteriormente logica di trasferimento, parsing del progresso e
+  interfaccia grafica;
 - aggiungere altri test automatici per parsing output, argomenti di `croc` e
   gestione errori;
 - aggiungere una pipeline CI per controllare build e test sulle piattaforme
@@ -529,7 +564,7 @@ nascondere inutilmente gli errori.
 Dalla root del progetto:
 
 ```sh
-uv sync
+uv sync --frozen
 uv run python tools/fetch_croc.py
 uv run moontransfer
 ```

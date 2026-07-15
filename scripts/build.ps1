@@ -39,9 +39,9 @@ Write-Host "[ok] Python $PythonVersion"
 
 Write-Host ""
 Write-Host "[sync] preparo l'ambiente Python"
-& uv sync
+& uv sync --frozen --dev
 if ($LASTEXITCODE -ne 0) {
-    Stop-Build "uv sync non riuscito. Controlla la connessione Internet e la configurazione di uv."
+    Stop-Build "uv sync --frozen --dev non riuscito. Controlla uv.lock, la connessione Internet e la configurazione di uv."
 }
 
 Write-Host ""
