@@ -537,7 +537,13 @@ usate da `croc`.
 
 ## Per chi contribuisce
 
-### Roadmap
+### Stato del progetto e roadmap
+
+MoonTransfer è in una fase di sviluppo iniziale attiva. Offre già un flusso
+grafico di invio/ricezione, include nella build un binario `croc` fissato e
+verificato tramite checksum, e contiene test unitari per la logica non-GUI. Le
+release già pronte non sono ancora pubblicate, quindi al momento gli utenti
+buildano l'applicazione localmente.
 
 Possibili miglioramenti futuri, in ordine indicativo:
 
@@ -559,18 +565,103 @@ L'idea guida è restare vicini alla filosofia Unix: MoonTransfer deve fare una
 cosa sola, delegare bene a `croc`, mantenere il comportamento leggibile e non
 nascondere inutilmente gli errori.
 
-### Avvio in sviluppo
+### Modello di contribuzione
 
-Dalla root del progetto:
+Le contribuzioni esterne devono essere proposte tramite pull request. Non è
+previsto l'accesso diretto in push alla repository originale.
+
+Flusso Git consigliato:
+
+1. fai un fork della repository su GitHub;
+2. clona localmente il tuo fork;
+3. aggiungi la repository originale come `upstream`;
+4. crea un branch dedicato alla modifica;
+5. committa un insieme di modifiche coerente e circoscritto;
+6. fai push del branch sul tuo fork;
+7. apri una pull request dal branch del tuo fork verso
+   `gaumeloth/MoonTransfer:main`.
+
+Esempio:
 
 ```sh
-uv sync --frozen
+git clone https://github.com/<tuo-utente>/MoonTransfer.git
+cd MoonTransfer
+git remote add upstream https://github.com/gaumeloth/MoonTransfer.git
+git switch -c breve-descrizione-modifica
+```
+
+Prima di iniziare un nuovo lavoro, aggiorna il tuo `main` locale dalla
+repository originale:
+
+```sh
+git fetch upstream
+git switch main
+git merge --ff-only upstream/main
+```
+
+Mantieni le pull request focalizzate. Se una modifica mescola codice,
+documentazione, formattazione, dipendenze e build senza un legame diretto,
+dividila prima di aprire la pull request. Le modifiche più grandi andrebbero
+discusse prima dell'implementazione.
+
+### Flusso di contribuzione
+
+Per una normale sessione di sviluppo:
+
+1. prepara l'ambiente di sviluppo;
+2. scarica il binario `croc` fissato;
+3. avvia MoonTransfer e applica la modifica;
+4. esegui i controlli automatici;
+5. esegui un test manuale di trasferimento se la modifica riguarda il
+   comportamento di trasferimento o il flusso della GUI;
+6. committa solo modifiche intenzionali a sorgenti, documentazione,
+   configurazione e lockfile;
+7. fai push del branch sul tuo fork e apri una pull request.
+
+Se modifichi documentazione per utenti o contributori, mantieni allineati
+`README.md` e `README.it.md`: non devono essere traduzioni letterali, ma devono
+avere la stessa struttura e le stesse informazioni.
+
+### Preparazione sviluppo
+
+Prepara l'ambiente Python con le dipendenze bloccate e gli strumenti di sviluppo
+necessari anche per il lavoro legato alla build:
+
+```sh
+uv sync --frozen --dev
+```
+
+Scarica il binario `croc` fissato usato durante l'avvio in sviluppo:
+
+```sh
 uv run python tools/fetch_croc.py
-uv run moontransfer
 ```
 
 `tools/fetch_croc.py` scarica la release di `croc` fissata in `pyproject.toml`,
 verifica il checksum dell'archivio e copia il binario in `third_party/croc/`.
+
+### Modifiche alle dipendenze
+
+`uv.lock` è committato intenzionalmente. Rende riproducibile la risoluzione
+delle dipendenze per sviluppo, test e build locali.
+
+Se cambi le dipendenze Python:
+
+1. modifica `pyproject.toml`;
+2. aggiorna `uv.lock` con `uv lock`;
+3. esegui `uv sync --frozen --dev`;
+4. esegui i controlli automatici;
+5. committa sia `pyproject.toml` sia `uv.lock`.
+
+Non modificare `uv.lock` manualmente.
+
+### Avvio in sviluppo
+
+Avvia MoonTransfer dalla root del progetto:
+
+```sh
+uv run moontransfer
+```
 
 Riferimenti utili:
 
@@ -579,7 +670,61 @@ Riferimenti utili:
 - [PySide6 / Qt for Python](https://doc.qt.io/qtforpython-6/), toolkit GUI;
 - [PyInstaller](https://pyinstaller.org/en/stable/), creazione del bundle.
 
-### Controllare l'ultima release di croc
+### Test automatici
+
+I test unitari coprono la logica non-GUI separata nei moduli runtime e negli
+strumenti di manutenzione: costruzione dei comandi, parsing dell'output di
+trasferimento, messaggi di stato, helper di integrazione desktop, separazione
+dell'output dei processi, selezione degli archivi `croc` fissati e helper per il
+controllo dell'ultima release.
+
+Non esercitano l'interazione reale con la GUI e non eseguono un trasferimento
+reale per impostazione predefinita. Usa il test manuale di trasferimento per
+questi controlli.
+
+Esegui la suite di test:
+
+```sh
+uv run --frozen python -m unittest discover -s tests
+```
+
+Controlla che i moduli Python compilino:
+
+```sh
+uv run --frozen python -m py_compile src/moontransfer/*.py tools/*.py
+```
+
+### Test manuale di trasferimento
+
+Per verificare il flusso completo durante lo sviluppo puoi usare due istanze
+dell'app sulla stessa macchina:
+
+1. apri due istanze di MoonTransfer;
+2. nella prima istanza invia un piccolo file;
+3. copia il codice mostrato;
+4. nella seconda istanza ricevi in una cartella diversa;
+5. controlla che il file sia stato creato nella cartella di destinazione.
+
+Questo test è utile per lo sviluppo, ma non rappresenta il caso d'uso principale
+del programma, che resta il trasferimento tra due computer diversi.
+
+### Prima del commit
+
+Esegui questi controlli prima di committare:
+
+```sh
+uv lock --check
+uv run --frozen python -m unittest discover -s tests
+uv run --frozen python -m py_compile src/moontransfer/*.py tools/*.py
+git diff --check
+```
+
+Se tocchi script di build, packaging o `MoonTransfer.spec`, esegui anche lo
+script di build per la piattaforma modificata.
+
+### Attività di manutenzione
+
+#### Controllare l'ultima release di croc
 
 Le build normali restano intenzionalmente riproducibili: usano la versione di
 `croc` e gli hash SHA-256 fissati in `pyproject.toml`. Chi contribuisce può
@@ -623,34 +768,7 @@ Se il controllo passa per una nuova release, aggiorna `[tool.moontransfer.croc]`
 in `pyproject.toml` con la nuova versione e gli hash ufficiali, poi esegui la
 suite di test normale prima del commit.
 
-### Test automatici
-
-I test unitari coprono la logica non-GUI collegata a `croc`, come parsing del
-codice, argomenti di invio/ricezione, gestione della variabile `CROC_SECRET`,
-selezione degli archivi `croc` fissati e helper per il controllo dell'ultima
-release.
-
-Dalla root del progetto:
-
-```sh
-uv run --frozen python -m unittest discover -s tests
-```
-
-### Test manuale di trasferimento
-
-Per verificare il flusso completo durante lo sviluppo puoi usare due istanze
-dell'app sulla stessa macchina:
-
-1. apri due istanze di MoonTransfer;
-2. nella prima istanza invia un piccolo file;
-3. copia il codice mostrato;
-4. nella seconda istanza ricevi in una cartella diversa;
-5. controlla che il file sia stato creato nella cartella di destinazione.
-
-Questo test è utile per lo sviluppo, ma non rappresenta il caso d'uso principale
-del programma, che resta il trasferimento tra due computer diversi.
-
-### Scelte tecniche
+### Note architetturali
 
 - MoonTransfer avvia `croc` con `QProcess`, senza passare da shell come bash,
   fish o PowerShell.
@@ -681,6 +799,9 @@ CROC_SECRET=<codice> croc --ignore-stdin --yes --overwrite
 
 Il codice viene passato al processo `croc` tramite variabile d'ambiente, non
 come argomento della riga di comando.
+
+- La riproducibilità della build dipende da `uv.lock`, dalla versione di `croc`
+  fissata e dagli hash SHA-256 versionati in `pyproject.toml`.
 
 ### Struttura
 
@@ -731,6 +852,8 @@ dist/
 third_party/croc/
 __pycache__/
 ```
+
+Se uno di questi percorsi appare in `git status`, lascialo fuori dal commit.
 
 ## Licenze
 
