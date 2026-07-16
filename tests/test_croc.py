@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -28,26 +29,11 @@ class CrocCommandTests(unittest.TestCase):
         self.assertEqual(
             croc.build_send_args(path),
             [
+                "--classic=false",
                 "--ignore-stdin",
                 "--disable-clipboard",
                 "send",
                 "--no-local",
-                str(path),
-            ],
-        )
-
-    def test_build_send_args_with_custom_code(self) -> None:
-        path = Path("/tmp/example file.txt")
-
-        self.assertEqual(
-            croc.build_send_args(path, code="moon-secret"),
-            [
-                "--ignore-stdin",
-                "--disable-clipboard",
-                "send",
-                "--no-local",
-                "--code",
-                "moon-secret",
                 str(path),
             ],
         )
@@ -55,29 +41,37 @@ class CrocCommandTests(unittest.TestCase):
     def test_build_receive_args(self) -> None:
         self.assertEqual(
             croc.build_receive_args(),
-            ["--ignore-stdin", "--yes", "--overwrite"],
+            ["--classic=false", "--ignore-stdin", "--yes", "--overwrite"],
         )
 
-    def test_build_receive_args_with_code(self) -> None:
+    def test_build_prompted_receive_args(self) -> None:
         self.assertEqual(
-            croc.build_receive_args("secret-code"),
-            ["--ignore-stdin", "--yes", "--overwrite", "secret-code"],
+            croc.build_prompted_receive_args(),
+            ["--classic=false", "--overwrite"],
         )
 
-    def test_build_prompted_receive_args_with_code(self) -> None:
-        self.assertEqual(
-            croc.build_prompted_receive_args("secret-code"),
-            ["--overwrite", "secret-code"],
-        )
-
-    def test_hidden_code_receive_preview_hides_positional_code(self) -> None:
-        preview = croc.build_hidden_code_receive_preview(
+    def test_secret_preview_hides_environment_secret(self) -> None:
+        preview = croc.build_secret_preview(
             "/usr/bin/croc",
-            croc.build_receive_args("secret-code"),
+            croc.build_receive_args(),
         )
 
-        self.assertIn("<hidden>", preview)
-        self.assertNotIn("secret-code", preview)
+        self.assertIn("CROC_SECRET=<hidden>", preview)
+
+    def test_build_process_environment_isolates_config_and_sets_secret(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_dir = Path(tmp) / "croc-config"
+
+            env = croc.build_process_environment(
+                config_dir,
+                secret="secret-code",
+            )
+
+            self.assertEqual(env[croc.CROC_SECRET_ENV], "secret-code")
+            self.assertTrue(env["XDG_CONFIG_HOME"].startswith(str(config_dir)))
+            self.assertTrue(env["APPDATA"].startswith(str(config_dir)))
+            self.assertTrue(env["LOCALAPPDATA"].startswith(str(config_dir)))
+            self.assertTrue(env["HOME"].startswith(str(config_dir)))
 
 
 if __name__ == "__main__":

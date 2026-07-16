@@ -132,8 +132,23 @@ def smoke_command_args(binary: Path) -> list[list[str]]:
     program = str(binary)
     return [
         [program, "--version"],
-        [program, "--ignore-stdin", "--disable-clipboard", "send", "--no-local", "--help"],
-        [program, "--ignore-stdin", "--yes", "--overwrite", "--help"],
+        [
+            program,
+            "--classic=false",
+            "--ignore-stdin",
+            "--disable-clipboard",
+            "send",
+            "--no-local",
+            "--help",
+        ],
+        [
+            program,
+            "--classic=false",
+            "--ignore-stdin",
+            "--yes",
+            "--overwrite",
+            "--help",
+        ],
     ]
 
 
@@ -156,7 +171,7 @@ def run_smoke_tests(binary: Path, version: str) -> None:
     if "--overwrite" not in receive_help:
         raise RuntimeError("Latest croc help does not mention --overwrite")
 
-    preview = croc.build_receive_preview(str(binary), croc.build_receive_args())
+    preview = croc.build_secret_preview(str(binary), croc.build_receive_args())
     if "CROC_SECRET=<hidden>" not in preview:
         raise RuntimeError("MoonTransfer receive preview no longer hides CROC_SECRET")
 
@@ -197,7 +212,14 @@ def run_transfer_test(binary: Path, *, timeout: int = DEFAULT_TIMEOUT) -> None:
             stderr=subprocess.STDOUT,
             text=True,
             cwd=str(source_dir),
-            env={key: value for key, value in os.environ.items() if key != croc.CROC_SECRET_ENV},
+            env={
+                **{
+                    key: value
+                    for key, value in os.environ.items()
+                    if key != croc.CROC_SECRET_ENV
+                },
+                **croc.build_process_environment(base / "sender-croc-config"),
+            },
         )
 
         assert sender.stdout is not None
@@ -234,7 +256,12 @@ def run_transfer_test(binary: Path, *, timeout: int = DEFAULT_TIMEOUT) -> None:
                 )
 
             receiver_env = os.environ.copy()
-            receiver_env.update(croc.build_receive_environment(code))
+            receiver_env.update(
+                croc.build_process_environment(
+                    base / "receiver-croc-config",
+                    secret=code,
+                )
+            )
             receiver = subprocess.Popen(
                 [str(binary), *croc.build_receive_args()],
                 stdout=subprocess.PIPE,

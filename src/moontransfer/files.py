@@ -29,6 +29,7 @@ class DestinationCheck:
 @dataclass(frozen=True)
 class SessionPaths:
     root: Path
+    croc_config: Path
     metadata_send: Path
     metadata_receive: Path
     main_receive: Path
@@ -38,12 +39,14 @@ def create_session_paths() -> SessionPaths:
     root = Path(tempfile.mkdtemp(prefix="moontransfer-"))
     paths = SessionPaths(
         root=root,
+        croc_config=root / "croc-config",
         metadata_send=root / "metadata-send",
         metadata_receive=root / "metadata-receive",
         main_receive=root / "main-receive",
     )
 
     for directory in (
+        paths.croc_config,
         paths.metadata_send,
         paths.metadata_receive,
         paths.main_receive,

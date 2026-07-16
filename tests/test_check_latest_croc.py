@@ -60,11 +60,12 @@ class LatestCrocCheckTests(unittest.TestCase):
         flattened = [" ".join(command) for command in commands]
         self.assertIn("/tmp/croc --version", flattened)
         self.assertIn(
-            "/tmp/croc --ignore-stdin --disable-clipboard send --no-local --help",
+            "/tmp/croc --classic=false --ignore-stdin --disable-clipboard "
+            "send --no-local --help",
             flattened,
         )
         self.assertIn(
-            "/tmp/croc --ignore-stdin --yes --overwrite --help",
+            "/tmp/croc --classic=false --ignore-stdin --yes --overwrite --help",
             flattened,
         )
 

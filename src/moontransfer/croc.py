@@ -9,6 +9,7 @@ from pathlib import Path
 
 
 CROC_SECRET_ENV = "CROC_SECRET"
+NON_CLASSIC_ARG = "--classic=false"
 CODE_RE = re.compile(r"Code is:\s*(.+)\s*$")
 
 
@@ -48,32 +49,47 @@ def parse_send_code(line: str) -> str | None:
     return code or None
 
 
-def build_send_args(path: Path, *, code: str | None = None) -> list[str]:
-    args = [
+def build_send_args(path: Path) -> list[str]:
+    return [
+        NON_CLASSIC_ARG,
         "--ignore-stdin",
         "--disable-clipboard",
         "send",
         "--no-local",
+        str(path),
     ]
 
-    if code:
-        args.extend(["--code", code])
 
-    args.append(str(path))
-    return args
+def build_receive_args() -> list[str]:
+    return [NON_CLASSIC_ARG, "--ignore-stdin", "--yes", "--overwrite"]
 
 
-def build_receive_args(code: str | None = None) -> list[str]:
-    args = ["--ignore-stdin", "--yes", "--overwrite"]
-    if code:
-        args.append(code)
-    return args
+def build_prompted_receive_args() -> list[str]:
+    return [NON_CLASSIC_ARG, "--overwrite"]
 
 
-def build_prompted_receive_args(code: str) -> list[str]:
-    return ["--overwrite", code]
+def build_process_environment(
+    config_dir: Path,
+    *,
+    secret: str | None = None,
+) -> dict[str, str]:
+    home = config_dir / "home"
+    xdg_config = config_dir / "xdg"
+    appdata = config_dir / "appdata"
+    localappdata = config_dir / "localappdata"
+    for directory in (home, xdg_config, appdata, localappdata):
+        directory.mkdir(parents=True, exist_ok=True)
+
+    env = {
+        "XDG_CONFIG_HOME": str(xdg_config),
+        "APPDATA": str(appdata),
+        "LOCALAPPDATA": str(localappdata),
+        "HOME": str(home),
+    }
+    if secret is not None:
+        env[CROC_SECRET_ENV] = secret
+    return env
 
 
-def build_hidden_code_receive_preview(program: str, args: list[str]) -> str:
-    hidden_args = [*args[:-1], "<hidden>"] if args else args
-    return command_preview(program, hidden_args)
+def build_secret_preview(program: str, args: list[str]) -> str:
+    return f"{CROC_SECRET_ENV}=<hidden> {command_preview(program, args)}"

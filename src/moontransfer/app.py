@@ -278,22 +278,27 @@ class SendTab(QWidget):
             self._abort_session("Impossibile avviare il trasferimento.", exc)
 
     def _start_metadata_sender(self, metadata_path: Path) -> None:
-        if not self.metadata_code:
+        if not self.metadata_code or not self.paths:
             raise RuntimeError("Codice metadata mancante.")
 
         self.terminal.append_line(
             f"[metadata] invio informazioni file (code-id={code_id(self.metadata_code)})"
         )
+        args = croc.build_send_args(metadata_path)
         self.runners["metadata_send"].start(
-            croc.build_send_args(metadata_path, code=self.metadata_code),
-            unset_env=(croc.CROC_SECRET_ENV,),
+            args,
+            env=croc.build_process_environment(
+                self.paths.croc_config,
+                secret=self.metadata_code,
+            ),
+            preview=croc.build_secret_preview(self.croc_path, args),
         )
 
     def _start_main_sender(self) -> None:
         if not self.session_active:
             return
 
-        if not self.source_path or not self.proposal:
+        if not self.source_path or not self.proposal or not self.paths:
             self._abort_session("Sessione di invio incompleta.")
             return
 
@@ -301,16 +306,15 @@ class SendTab(QWidget):
             f"[main] invio file principale (code-id={code_id(self.proposal.main_code)})"
         )
         self.progress.start(total_bytes=self.proposal.size, exact_total=True)
-        args = croc.build_send_args(self.source_path, code=self.proposal.main_code)
-        preview = croc.command_preview(
-            self.croc_path,
-            croc.build_send_args(self.source_path, code="<hidden>"),
-        )
+        args = croc.build_send_args(self.source_path)
         try:
             self.runners["main_send"].start(
                 args,
-                unset_env=(croc.CROC_SECRET_ENV,),
-                preview=preview,
+                env=croc.build_process_environment(
+                    self.paths.croc_config,
+                    secret=self.proposal.main_code,
+                ),
+                preview=croc.build_secret_preview(self.croc_path, args),
             )
             self._start_control_timeout(
                 "attesa connessione destinatario",
@@ -654,14 +658,18 @@ class ReceiveTab(QWidget):
         if not self.paths:
             raise RuntimeError("Sessione di ricezione non inizializzata.")
 
-        args = croc.build_receive_args(code)
+        args = croc.build_receive_args()
         self.terminal.append_line(
             f"[metadata] ricezione informazioni file (code-id={code_id(code)})"
         )
         self.runners["metadata_receive"].start(
             args,
             workdir=self.paths.metadata_receive,
-            preview=croc.build_hidden_code_receive_preview(self.croc_path, args),
+            env=croc.build_process_environment(
+                self.paths.croc_config,
+                secret=code,
+            ),
+            preview=croc.build_secret_preview(self.croc_path, args),
         )
 
     def _schedule_main_response(self, accepted: bool) -> None:
@@ -684,7 +692,7 @@ class ReceiveTab(QWidget):
             self._abort_session("Sessione di ricezione incompleta.")
             return
 
-        args = croc.build_prompted_receive_args(self.proposal.main_code)
+        args = croc.build_prompted_receive_args()
         self.terminal.append_line(
             f"[main] ricezione file principale (code-id={code_id(self.proposal.main_code)})"
         )
@@ -694,7 +702,11 @@ class ReceiveTab(QWidget):
             self.runners["main_receive"].start(
                 args,
                 workdir=self.paths.main_receive,
-                preview=croc.build_hidden_code_receive_preview(self.croc_path, args),
+                env=croc.build_process_environment(
+                    self.paths.croc_config,
+                    secret=self.proposal.main_code,
+                ),
+                preview=croc.build_secret_preview(self.croc_path, args),
             )
             answer = "y\n" if accepted else "n\n"
             self.runners["main_receive"].write_stdin(answer, close=True)
@@ -771,9 +783,11 @@ class ReceiveTab(QWidget):
             return
 
         try:
-            self.proposal = read_proposal(
-                self.paths.metadata_receive / CONTROL_METADATA_NAME
-            )
+            metadata_path = self.paths.metadata_receive / CONTROL_METADATA_NAME
+            if not metadata_path.is_file():
+                raise FileNotFoundError(self._missing_metadata_message(metadata_path))
+
+            self.proposal = read_proposal(metadata_path)
             self.progress.set_total_preview(self.proposal.size)
             accepted, target, overwrite = self._choose_transfer_action(self.proposal)
             if not accepted:
@@ -784,6 +798,21 @@ class ReceiveTab(QWidget):
             self._schedule_main_response(True)
         except Exception as exc:
             self._abort_session("Metadati ricevuti non validi.", exc)
+
+    def _missing_metadata_message(self, metadata_path: Path) -> str:
+        directory = metadata_path.parent
+        try:
+            files = sorted(path.name for path in directory.iterdir())
+        except OSError:
+            files = []
+
+        found = ", ".join(files) if files else "nessun file"
+        return (
+            f"File metadati atteso non trovato: {metadata_path}\n"
+            f"Contenuto della directory temporanea: {found}\n"
+            "Possibili cause: codice non valido, trasferimento interrotto o "
+            "configurazione croc incompatibile."
+        )
 
     def _choose_transfer_action(
         self,
