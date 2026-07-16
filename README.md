@@ -489,8 +489,8 @@ icon theme, or repair the invalid SVG file.
 
 To complete a transfer, you need two people or two computers:
 
-- the sender opens the **Invia** tab and generates a code;
-- the receiver opens the **Ricevi** tab and enters that code.
+- the sender opens the **Invia** (Send) tab and generates a code;
+- the receiver opens the **Ricevi** (Receive) tab and enters that code.
 
 Both computers must be connected to the Internet. The code must be shared
 outside MoonTransfer, for example via chat, phone, or email.
@@ -500,10 +500,10 @@ outside MoonTransfer, for example via chat, phone, or email.
 On the computer that has the file to send:
 
 1. open MoonTransfer;
-2. go to the **Invia** tab;
-3. press **Sfoglia...**;
+2. go to the **Invia** (Send) tab;
+3. press **Sfoglia...** (Browse);
 4. choose the file to send;
-5. press **Invia**;
+5. press **Invia** (Send);
 6. wait for the code to appear;
 7. share the code with the person who needs to receive the file.
 
@@ -523,10 +523,10 @@ reused.
 On the computer that needs to receive the file:
 
 1. open MoonTransfer;
-2. go to the **Ricevi** tab;
+2. go to the **Ricevi** (Receive) tab;
 3. paste the received code;
 4. choose the destination folder;
-5. press **Ricevi**;
+5. press **Ricevi** (Receive);
 6. review the filename, size, and SHA-256 hash shown by MoonTransfer;
 7. accept or reject the transfer;
 8. if a file with the same name already exists, choose whether to skip,
@@ -574,6 +574,31 @@ The guiding idea is to stay close to the Unix philosophy: MoonTransfer should
 do one thing, delegate well to `croc`, keep behavior readable, and avoid hiding
 errors unnecessarily.
 
+### Design constraints
+
+Contributions should preserve the current scope of the project:
+
+- MoonTransfer is a graphical wrapper around `croc`, not a replacement for it.
+  File transfer, relay negotiation, encryption, and the final data channel
+  should remain delegated to `croc` unless there is a strong reason to do
+  otherwise.
+- Avoid adding mandatory external services. The normal transfer flow should not
+  require a MoonTransfer-owned server or account system.
+- Keep `croc` command construction centralized in `src/moontransfer/croc.py`.
+  This makes transfer flags, environment handling, and command previews easier
+  to audit.
+- Start external commands through structured process APIs, not through shell
+  strings. The application currently uses `QProcess`, which avoids depending on
+  bash, fish, PowerShell, or platform-specific quoting rules.
+- Prefer clear errors and visible technical output over silently hiding failures.
+  The GUI can present friendly messages, but the technical details should still
+  help diagnose `croc`, network, packaging, and desktop-integration problems.
+- Keep local builds reproducible. Normal builds should use the committed
+  `uv.lock`, the pinned `croc` version, and the SHA-256 hashes declared in
+  `pyproject.toml`.
+- Do not commit generated files or bundled binaries such as `dist/`, `build/`,
+  `.venv/`, cache directories, or `third_party/croc/`.
+
 ### Contribution model
 
 External contributions should be proposed through pull requests. Direct push
@@ -611,6 +636,33 @@ Keep pull requests focused. If a change mixes unrelated code, documentation,
 formatting, dependency, and build changes, split it before opening the pull
 request. Larger changes should be discussed before implementation.
 
+### Bug reports and technical logs
+
+Useful bug reports should make the problem reproducible without exposing private
+transfer information.
+
+When reporting a problem, include:
+
+- the operating system and version for the sender and receiver when both are
+  involved;
+- whether MoonTransfer was started with `uv run moontransfer` or from the
+  packaged `dist/MoonTransfer/` bundle;
+- the branch, commit, or release used;
+- whether the bundle was rebuilt after the latest code change or branch switch;
+- the exact steps that led to the problem;
+- what you expected to happen and what actually happened;
+- relevant messages from the GUI technical details panel or terminal output.
+
+Do not paste complete transfer codes, raw `CROC_SECRET` values, or private file
+paths unless they are necessary and safe to share. MoonTransfer logs short
+`code-id` values for internal transfer codes; those are usually safer to share
+than full codes.
+
+For transfer failures, include logs from both sides when possible. It is useful
+to state which side was sending, which side was receiving, whether both builds
+came from the same commit, and whether a firewall, VPN, proxy, or corporate
+network could be involved.
+
 ### Contributor workflow
 
 For a normal development session:
@@ -628,6 +680,90 @@ For a normal development session:
 If you change user or contributor documentation, keep `README.md` and
 `README.it.md` aligned: they do not need to be literal translations, but they
 should keep the same structure and the same information.
+
+If you test the packaged application in `dist/`, rebuild it after code changes
+or after switching branches. The generated bundle is not updated automatically
+and may still contain older code.
+
+### Documentation maintenance
+
+User and contributor documentation should change together with the behavior it
+describes. A pull request should update both `README.md` and `README.it.md` when
+it changes:
+
+- user-visible workflows, labels, dialogs, warnings, or error messages;
+- installation, prerequisite, build, or startup commands;
+- supported Python versions, dependency management, or `uv.lock` handling;
+- `croc` command arguments, transfer-code handling, relay behavior, metadata
+  flow, or transfer verification;
+- generated files, repository layout, ignored paths, or packaging behavior;
+- test commands, manual verification steps, or contributor workflow;
+- license information or bundled third-party components.
+
+The two README files should keep the same section order and the same facts. They
+do not need to be word-for-word translations: prefer clear wording for each
+language, especially where a literal translation would be awkward.
+
+When documenting commands, keep examples copy-pasteable and check that paths,
+script names, and flags exist in the repository. Avoid documenting planned
+behavior as if it already exists; future ideas belong in the roadmap or in an
+issue.
+
+### Future CONTRIBUTING.md
+
+For now, the README is the canonical contributor guide. This keeps the project
+small and avoids splitting essential setup instructions across multiple files.
+
+If the contributor documentation becomes too large, it can be moved into a
+separate `CONTRIBUTING.md`. In that case:
+
+- keep the user-facing README focused on download, build, startup, usage,
+  troubleshooting, license, and a short contributor entry point;
+- move detailed pull request workflow, testing policy, architecture notes, and
+  maintenance tasks into `CONTRIBUTING.md`;
+- link `CONTRIBUTING.md` from both README files;
+- keep English and Italian documentation aligned, either with equivalent
+  translated files or with a clear note about which file is authoritative.
+
+### Where to change things
+
+Use the existing module boundaries when choosing where to make a change:
+
+- `src/moontransfer/app.py`: application entry point, main window, send tab,
+  receive tab, high-level GUI flow, user dialogs, and coordination between
+  transfer steps.
+- `src/moontransfer/widgets.py`: reusable Qt widgets such as the status label,
+  technical output panel, terminal-like output view, and transfer progress
+  widget.
+- `src/moontransfer/croc.py`: `croc` executable discovery, command arguments,
+  transfer-code environment variables, isolated `croc` configuration, and safe
+  command previews for logs.
+- `src/moontransfer/protocol.py`: MoonTransfer control metadata format, protocol
+  version, generated codes, filename validation, SHA-256 validation, and
+  metadata JSON read/write rules.
+- `src/moontransfer/files.py`: temporary session directories, destination
+  conflict checks, SHA-256 hashing, received-file verification, unique filenames,
+  and final file placement.
+- `src/moontransfer/progress.py`: parsing `croc` progress output and formatting
+  file sizes, transfer rates, elapsed time, and remaining time.
+- `src/moontransfer/messages.py`: user-facing status messages derived from
+  process output and process results.
+- `src/moontransfer/runner.py`: `QProcess` lifecycle, stdout/stderr splitting,
+  process termination, and stdin replies to `croc` prompts.
+- `src/moontransfer/desktop.py`: opening folders through the platform file
+  manager and cleaning the environment used for external desktop commands.
+- `tools/build.py`: common PyInstaller build orchestration.
+- `tools/fetch_croc.py`: pinned `croc` release selection, download, checksum
+  verification, archive extraction, and bundled binary installation.
+- `tools/check_latest_croc.py`: compatibility checks against the latest upstream
+  `croc` release.
+- `scripts/build.sh` and `scripts/build.ps1`: user-facing build wrappers and
+  prerequisite checks.
+- `MoonTransfer.spec`: PyInstaller packaging configuration.
+
+When changing a runtime module, update or add the matching test file under
+`tests/` whenever practical. The test names already mirror most runtime and
+maintenance modules.
 
 ### Development setup
 
@@ -647,6 +783,30 @@ uv run python tools/fetch_croc.py
 `tools/fetch_croc.py` downloads the pinned `croc` release declared in
 `pyproject.toml`, verifies the archive checksum, and copies the binary into
 `third_party/croc/`.
+
+### Python version policy
+
+Python compatibility is declared in two places:
+
+- `pyproject.toml`, through `requires-python`;
+- `.python-version`, used by tools such as `uv` to select a compatible runtime.
+
+Keep both files aligned. At the moment MoonTransfer supports Python
+`>=3.13,<3.15`, meaning Python 3.13.x and 3.14.x are accepted.
+
+If the supported Python range changes:
+
+1. update `requires-python` in `pyproject.toml`;
+2. update `.python-version` with the same range;
+3. update the Python instructions in both README files;
+4. run `uv lock` if dependency resolution can be affected;
+5. run `uv sync --frozen --dev`;
+6. run the automatic checks;
+7. run a build if the change can affect packaging.
+
+Do not narrow the supported Python range without a concrete reason, such as a
+dependency constraint, an unsupported Python release, or a runtime behavior that
+cannot be handled cleanly.
 
 ### Dependency changes
 
@@ -700,6 +860,38 @@ Check that the Python modules compile:
 ```sh
 uv run --frozen python -m py_compile src/moontransfer/*.py tools/*.py
 ```
+
+### Testing expectations by change type
+
+Use the smallest test set that covers the risk of the change, then broaden it
+when the behavior crosses module or platform boundaries.
+
+- Documentation-only changes: run `git diff --check`. If the documentation
+  describes commands or paths, also verify them against the repository.
+- Changes to `croc` arguments, `CROC_SECRET`, command previews, or isolated
+  configuration: run `tests/test_croc.py`, `tests/test_check_latest_croc.py`,
+  and the full unit test suite.
+- Changes to metadata JSON, generated codes, filename validation, hash
+  validation, or protocol versioning: run `tests/test_protocol.py` and
+  `tests/test_files.py`.
+- Changes to destination handling, overwrite/rename behavior, hashing, or final
+  file placement: run `tests/test_files.py` and perform a manual receive test.
+- Changes to progress parsing or displayed transfer statistics: run
+  `tests/test_progress.py` with representative `croc` output samples.
+- Changes to user-facing status text: run `tests/test_messages.py` and check the
+  GUI wording manually.
+- Changes to process lifecycle, stdin replies, cancellation, or stdout/stderr
+  parsing: run `tests/test_runner.py` and perform a manual transfer test.
+- Changes to opening folders or desktop integration: run `tests/test_desktop.py`
+  and manually test the affected platform if possible.
+- Changes to `tools/fetch_croc.py`, `tools/check_latest_croc.py`, pinned `croc`
+  versions, or release hashes: run the related tool tests and the latest-`croc`
+  check when network access is available.
+- Changes to build wrappers, PyInstaller configuration, or packaged resources:
+  run the build script for the affected platform and start the generated bundle
+  from `dist/MoonTransfer/`.
+- Changes to the main transfer flow or GUI coordination: run the full unit test
+  suite, start MoonTransfer manually, and perform a manual transfer test.
 
 ### Manual transfer test
 
@@ -790,15 +982,18 @@ test suite before committing.
 - The bundled `croc` version is pinned in `pyproject.toml`; supported release
   archives are verified with versioned SHA-256 hashes before extraction.
 - When sending, MoonTransfer generates metadata and main file codes itself. The
-  visible code is only the metadata code. Each transfer still uses `croc send
-  --code`, for example:
+  visible code is only the metadata code. Transfer codes are passed through
+  `CROC_SECRET`, because modern non-classic `croc` does not accept custom send
+  codes through `--code` on Unix systems:
 
 ```text
-croc --ignore-stdin --disable-clipboard send --no-local --code <code> <file>
+CROC_SECRET=<hidden> croc --classic=false --ignore-stdin --disable-clipboard send --no-local <file>
 ```
 
 `--no-local` avoids `croc`'s local relay, which can make negotiation unstable
 in tests with two instances on the same machine.
+`--classic=false` keeps MoonTransfer on `croc`'s modern transfer mode even if
+the user's global `croc` configuration has remembered classic mode.
 
 After the metadata transfer, the sender starts the main `croc send` process and
 waits. The receiver starts the main `croc` process without `--yes`, then
@@ -808,18 +1003,23 @@ decision transfer. If the receiver rejects the file, the main transfer is
 refused and no file content is downloaded.
 
 - When receiving metadata, control files are received into temporary session
-  directories first:
+  directories first. Transfer codes are passed through `CROC_SECRET`, not as
+  positional command-line arguments:
 
 ```text
-croc --ignore-stdin --yes --overwrite <code>
+CROC_SECRET=<hidden> croc --classic=false --ignore-stdin --yes --overwrite
 ```
 
 The main file receive process intentionally keeps stdin open and does not use
 `--yes`, so MoonTransfer can answer `croc`'s prompt:
 
 ```text
-croc --overwrite <code>
+CROC_SECRET=<hidden> croc --classic=false --overwrite
 ```
+
+Each transfer session also gives `croc` an isolated temporary configuration
+directory, so MoonTransfer does not depend on or modify the user's global
+`croc` settings.
 
 The command preview shown in the technical details masks internal transfer
 codes. The final file is moved to the selected destination only after the
