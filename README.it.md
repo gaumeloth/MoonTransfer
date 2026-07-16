@@ -18,9 +18,15 @@ solo l'interfaccia grafica e include il binario `croc` nell'app buildata.
 MoonTransfer è in fase iniziale. Il flusso principale è già funzionante:
 
 - invio di un singolo file;
-- ricezione di un file tramite codice;
+- ricezione dei metadati del file tramite codice prima di accettare il download
+  principale;
+- invio di una risposta esplicita di accettazione/rifiuto prima del
+  trasferimento principale;
 - visualizzazione dell'output di `croc` nella GUI;
-- estrazione automatica del codice generato da `croc`;
+- generazione di un solo codice visibile all'utente, con codici di controllo
+  interni nascosti;
+- visualizzazione di nome file, dimensione e SHA-256 prima del download
+  principale;
 - build locale con PyInstaller;
 - download automatico del binario `croc` durante la build;
 - versione `croc` fissata e verifica SHA-256 per le piattaforme supportate;
@@ -508,9 +514,14 @@ Sul computer che possiede il file da inviare:
 6. attendi che compaia il codice;
 7. comunica il codice alla persona che deve ricevere il file.
 
-Durante il trasferimento, MoonTransfer mostra avanzamento, dimensione inviata,
-velocità attuale, tempo trascorso e tempo stimato rimanente quando `croc`
-fornisce informazioni di progresso sufficienti.
+Il codice permette prima al destinatario di scaricare un piccolo file di
+metadati. Il destinatario può quindi accettare o rifiutare il trasferimento.
+MoonTransfer avvia il trasferimento principale solo dopo che il mittente ha
+ricevuto la risposta del destinatario.
+
+Durante il trasferimento del file principale, MoonTransfer mostra avanzamento,
+dimensione inviata, velocità attuale, tempo trascorso e tempo stimato rimanente
+quando `croc` fornisce informazioni di progresso sufficienti.
 
 Il codice è monouso: serve per quel trasferimento e non va riutilizzato.
 
@@ -522,14 +533,21 @@ Sul computer che deve ricevere il file:
 2. vai nella scheda **Ricevi**;
 3. incolla il codice ricevuto;
 4. scegli la cartella di destinazione;
-5. conferma che file con lo stesso nome nella destinazione possono essere
-   sovrascritti;
-6. premi **Ricevi**;
-7. attendi il completamento del trasferimento.
+5. premi **Ricevi**;
+6. controlla nome file, dimensione e hash SHA-256 mostrati da MoonTransfer;
+7. accetta o rifiuta il trasferimento;
+8. se esiste già un file con lo stesso nome, scegli se non scaricarlo,
+   sovrascriverlo o salvare il file in arrivo con un altro nome;
+9. attendi il completamento del trasferimento.
 
-Durante il trasferimento, MoonTransfer mostra avanzamento, dimensione scaricata,
-velocità attuale, tempo trascorso e tempo stimato rimanente quando `croc`
-fornisce informazioni di progresso sufficienti.
+Il file principale viene scaricato solo dopo che MoonTransfer ha inviato la
+risposta di accettazione al mittente. Al termine MoonTransfer verifica
+dimensione e hash SHA-256 ricevuti prima di salvare il file nella destinazione
+finale.
+
+Durante il trasferimento del file principale, MoonTransfer mostra avanzamento,
+dimensione scaricata, velocità attuale, tempo trascorso e tempo stimato
+rimanente quando `croc` fornisce informazioni di progresso sufficienti.
 
 Se il trasferimento non parte, verifica che entrambi i computer siano connessi a
 Internet e che eventuali firewall o reti aziendali non blocchino le connessioni
@@ -775,30 +793,44 @@ suite di test normale prima del commit.
 - `src/moontransfer/app.py` mantiene l'entry point dell'applicazione, la
   finestra principale e i tab di invio/ricezione. Il comportamento riutilizzabile
   è separato in moduli più piccoli: `croc.py` per costruire i comandi `croc`,
-  `progress.py` per il parsing dell'output di trasferimento, `messages.py` per i
-  messaggi di stato, `desktop.py` per l'integrazione con il file manager,
-  `runner.py` per la gestione di `QProcess` e `widgets.py` per i widget Qt
-  condivisi.
+  `protocol.py` per i messaggi JSON di controllo di MoonTransfer, `files.py`
+  per hashing, directory temporanee, controllo conflitti e posizionamento finale
+  del file, `progress.py` per il parsing dell'output di trasferimento,
+  `messages.py` per i messaggi di stato, `desktop.py` per l'integrazione con il
+  file manager, `runner.py` per la gestione di `QProcess` e `widgets.py` per i
+  widget Qt condivisi.
 - La versione di `croc` inclusa nel bundle è fissata in `pyproject.toml`; gli
   archivi supportati della release sono verificati con hash SHA-256 versionati
   prima dell'estrazione.
-- In invio usa:
+- In invio MoonTransfer genera direttamente i codici per metadati, decisione e
+  file principale. Il codice visibile è solo quello dei metadati. Ogni
+  trasferimento usa comunque `croc send --code`, per esempio:
 
 ```text
-croc --ignore-stdin --disable-clipboard send --no-local <file>
+croc --ignore-stdin --disable-clipboard send --no-local --code <codice> <file>
 ```
 
 `--no-local` evita il relay locale di `croc`, che nei test con due istanze sulla
 stessa macchina può rendere instabile la negoziazione.
 
-- In ricezione usa:
+Dopo il trasferimento dei metadati, il mittente attende un piccolo file di
+decisione dal destinatario. Entrambi i lati ritentano il trasferimento della
+decisione con lo stesso codice nascosto finché la risposta viene consegnata o la
+sessione va in timeout. Se il destinatario rifiuta il file, il mittente non
+avvia il processo `croc send` principale. Se il destinatario accetta, il
+mittente avvia il trasferimento del file e il destinatario avvia il download
+principale.
+
+- In ricezione, i file di controllo e il file principale vengono prima ricevuti
+  in directory temporanee di sessione:
 
 ```text
-CROC_SECRET=<codice> croc --ignore-stdin --yes --overwrite
+croc --ignore-stdin --yes --overwrite <codice>
 ```
 
-Il codice viene passato al processo `croc` tramite variabile d'ambiente, non
-come argomento della riga di comando.
+Il comando mostrato nei dettagli tecnici maschera i codici di trasferimento
+interni. Il file finale viene spostato nella destinazione scelta solo dopo la
+verifica della dimensione e dell'hash SHA-256 attesi.
 
 - La riproducibilità della build dipende da `uv.lock`, dalla versione di `croc`
   fissata e dagli hash SHA-256 versionati in `pyproject.toml`.
@@ -812,7 +844,9 @@ MoonTransfer/
 │     ├─ app.py
 │     ├─ croc.py
 │     ├─ desktop.py
+│     ├─ files.py
 │     ├─ messages.py
+│     ├─ protocol.py
 │     ├─ progress.py
 │     ├─ runner.py
 │     └─ widgets.py
@@ -828,7 +862,9 @@ MoonTransfer/
 │  ├─ test_croc.py
 │  ├─ test_desktop.py
 │  ├─ test_fetch_croc.py
+│  ├─ test_files.py
 │  ├─ test_messages.py
+│  ├─ test_protocol.py
 │  ├─ test_progress.py
 │  └─ test_runner.py
 ├─ README.md
