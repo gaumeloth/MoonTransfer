@@ -36,22 +36,41 @@ class CrocCommandTests(unittest.TestCase):
             ],
         )
 
+    def test_build_send_args_with_custom_code(self) -> None:
+        path = Path("/tmp/example file.txt")
+
+        self.assertEqual(
+            croc.build_send_args(path, code="moon-secret"),
+            [
+                "--ignore-stdin",
+                "--disable-clipboard",
+                "send",
+                "--no-local",
+                "--code",
+                "moon-secret",
+                str(path),
+            ],
+        )
+
     def test_build_receive_args(self) -> None:
         self.assertEqual(
             croc.build_receive_args(),
             ["--ignore-stdin", "--yes", "--overwrite"],
         )
 
-    def test_build_receive_environment(self) -> None:
+    def test_build_receive_args_with_code(self) -> None:
         self.assertEqual(
-            croc.build_receive_environment("secret-code"),
-            {croc.CROC_SECRET_ENV: "secret-code"},
+            croc.build_receive_args("secret-code"),
+            ["--ignore-stdin", "--yes", "--overwrite", "secret-code"],
         )
 
-    def test_receive_preview_hides_secret(self) -> None:
-        preview = croc.build_receive_preview("/usr/bin/croc", croc.build_receive_args())
+    def test_hidden_code_receive_preview_hides_positional_code(self) -> None:
+        preview = croc.build_hidden_code_receive_preview(
+            "/usr/bin/croc",
+            croc.build_receive_args("secret-code"),
+        )
 
-        self.assertIn("CROC_SECRET=<hidden>", preview)
+        self.assertIn("<hidden>", preview)
         self.assertNotIn("secret-code", preview)
 
 

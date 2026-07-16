@@ -3,10 +3,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QProcess
+from PySide6.QtCore import QProcess, QTimer
 from PySide6.QtWidgets import (
     QApplication,
-    QCheckBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -21,11 +20,32 @@ from PySide6.QtWidgets import (
 
 from moontransfer import croc
 from moontransfer.desktop import open_folder
-from moontransfer.messages import croc_status_from_line, process_result_message
+from moontransfer.files import (
+    CONTROL_METADATA_NAME,
+    DestinationConflict,
+    SessionPaths,
+    check_destination,
+    cleanup_session_paths,
+    create_session_paths,
+    move_verified_file,
+    received_path,
+    sha256_file,
+    unique_destination_path,
+    verify_received_file,
+)
+from moontransfer.messages import croc_status_from_line
 from moontransfer.progress import (
     format_file_size,
     parse_announced_transfer_total,
     parse_transfer_progress,
+)
+from moontransfer.protocol import (
+    TransferProposal,
+    code_id,
+    create_proposal,
+    generate_croc_code,
+    read_proposal,
+    write_control_file,
 )
 from moontransfer.runner import CrocRunner
 from moontransfer.widgets import (
@@ -37,9 +57,19 @@ from moontransfer.widgets import (
 
 
 class SendTab(QWidget):
+    CONTROL_TIMEOUT_MS = 15 * 60 * 1000
+
     def __init__(self, croc_path: str) -> None:
         super().__init__()
+        self.croc_path = croc_path
         self.last_code: str | None = None
+        self.metadata_code: str | None = None
+        self.source_path: Path | None = None
+        self.paths: SessionPaths | None = None
+        self.proposal: TransferProposal | None = None
+        self.session_active = False
+        self.stopping = False
+        self.timeout_stage = ""
 
         self.status_label = StatusLabel("Pronto a inviare un file.")
         self.file_edit = QLineEdit()
@@ -64,13 +94,13 @@ class SendTab(QWidget):
         self.progress = TransferProgressWidget("Inviato")
         self.output = TechnicalOutput()
         self.terminal = self.output.terminal
-        self.runner = CrocRunner(
-            croc_path,
-            append_text=self.terminal.append_text,
-            append_line=self.terminal.append_line,
-        )
-        self.runner.on_line = self._on_croc_line
-        self.runner.on_finished = self._on_finished
+        self.runners = {
+            "metadata_send": self._make_runner("metadata_send"),
+            "main_send": self._make_runner("main_send"),
+        }
+        self.control_timer = QTimer(self)
+        self.control_timer.setSingleShot(True)
+        self.control_timer.timeout.connect(self._on_control_timeout)
 
         file_row = QHBoxLayout()
         file_row.addWidget(self.file_edit, 1)
@@ -99,6 +129,36 @@ class SendTab(QWidget):
         self.copy_button.clicked.connect(self._copy_code)
         self._refresh_file_info()
 
+    def stop_active_transfers(self) -> None:
+        if self._any_running():
+            self.stopping = True
+            for runner in self.runners.values():
+                runner.stop()
+            self.stopping = False
+
+        if self.session_active:
+            self.session_active = False
+            self._stop_control_timeout()
+            self._cleanup_session()
+            self.progress.finish(success=False)
+            self._set_running(False)
+
+    def _make_runner(self, name: str) -> CrocRunner:
+        runner = CrocRunner(
+            self.croc_path,
+            append_text=self.terminal.append_text,
+            append_line=self.terminal.append_line,
+        )
+        runner.on_line = lambda line, role=name: self._on_croc_line(role, line)
+        runner.on_finished = (
+            lambda exit_code, exit_status, role=name: self._on_runner_finished(
+                role,
+                exit_code,
+                exit_status,
+            )
+        )
+        return runner
+
     def _browse_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self,
@@ -118,6 +178,9 @@ class SendTab(QWidget):
     def _has_valid_file(self) -> bool:
         path = self._selected_file()
         return bool(path and path.is_file())
+
+    def _any_running(self) -> bool:
+        return any(runner.is_running() for runner in self.runners.values())
 
     def _refresh_file_info(self) -> None:
         path = self._selected_file()
@@ -142,7 +205,7 @@ class SendTab(QWidget):
 
         self.file_info_label.setText(f"File: {path.name} - {size}")
         self.progress.set_total_preview(size_bytes)
-        if not self.runner.is_running():
+        if not self._any_running():
             self.start_button.setEnabled(True)
             self.status_label.setText("File selezionato. Premi Invia per generare il codice.")
 
@@ -151,10 +214,12 @@ class SendTab(QWidget):
         self.stop_button.setEnabled(running)
         self.browse_button.setEnabled(not running)
         self.file_edit.setEnabled(not running)
+        self.copy_button.setEnabled(bool(self.last_code))
 
     def _stop_send(self) -> None:
         self.status_label.setText("Interruzione dell'invio in corso...")
-        self.runner.stop()
+        self.stop_active_transfers()
+        self.status_label.setText("Invio interrotto.")
 
     def _start_send(self) -> None:
         path = self._selected_file()
@@ -164,31 +229,92 @@ class SendTab(QWidget):
             QMessageBox.warning(self, "File non valido", "Seleziona un file valido.")
             return
 
-        self._refresh_file_info()
-        try:
-            total_bytes = path.stat().st_size
-        except OSError:
-            total_bytes = None
-
+        self._cleanup_session()
+        self.source_path = path
         self.last_code = None
+        self.metadata_code = None
+        self.proposal = None
         self.code_edit.clear()
         self.copy_button.setEnabled(False)
-        self.progress.start(
-            total_bytes=total_bytes,
-            exact_total=total_bytes is not None,
-        )
-        self.status_label.setText("Invio avviato. Attendo il codice generato da croc...")
-
-        args = croc.build_send_args(path)
         self._set_running(True)
 
+        self.status_label.setText("Calcolo hash SHA-256 del file...")
+        QApplication.processEvents()
+
         try:
-            self.runner.start(args, unset_env=(croc.CROC_SECRET_ENV,))
+            size = path.stat().st_size
+            digest = sha256_file(path)
+            self.proposal = create_proposal(
+                filename=path.name,
+                size=size,
+                sha256=digest,
+            )
+            self.metadata_code = generate_croc_code()
+            self.paths = create_session_paths()
+            metadata_path = self.paths.metadata_send / CONTROL_METADATA_NAME
+            write_control_file(metadata_path, self.proposal)
         except Exception as exc:
-            self._set_running(False)
+            self._abort_session("Impossibile preparare il trasferimento.", exc)
+            return
+
+        self.session_active = True
+        self.last_code = self.metadata_code
+        self.code_edit.setText(self.metadata_code)
+        self.copy_button.setEnabled(True)
+        self.progress.set_total_preview(self.proposal.size)
+        self.status_label.setText(
+            "Codice generato. Comunicalo al destinatario."
+        )
+
+        try:
+            self._start_metadata_sender(metadata_path)
+            self._start_control_timeout(
+                "invio metadati",
+                self.CONTROL_TIMEOUT_MS,
+            )
+        except Exception as exc:
+            self._abort_session("Impossibile avviare il trasferimento.", exc)
+
+    def _start_metadata_sender(self, metadata_path: Path) -> None:
+        if not self.metadata_code:
+            raise RuntimeError("Codice metadata mancante.")
+
+        self.terminal.append_line(
+            f"[metadata] invio informazioni file (code-id={code_id(self.metadata_code)})"
+        )
+        self.runners["metadata_send"].start(
+            croc.build_send_args(metadata_path, code=self.metadata_code),
+            unset_env=(croc.CROC_SECRET_ENV,),
+        )
+
+    def _start_main_sender(self) -> None:
+        if not self.source_path or not self.proposal:
+            self._abort_session("Sessione di invio incompleta.")
+            return
+
+        self.terminal.append_line(
+            f"[main] invio file principale (code-id={code_id(self.proposal.main_code)})"
+        )
+        self.progress.start(total_bytes=self.proposal.size, exact_total=True)
+        args = croc.build_send_args(self.source_path, code=self.proposal.main_code)
+        preview = croc.command_preview(
+            self.croc_path,
+            croc.build_send_args(self.source_path, code="<hidden>"),
+        )
+        try:
+            self.runners["main_send"].start(
+                args,
+                unset_env=(croc.CROC_SECRET_ENV,),
+                preview=preview,
+            )
+            self._start_control_timeout(
+                "attesa accettazione destinatario",
+                self.CONTROL_TIMEOUT_MS,
+            )
+        except Exception as exc:
             self.progress.finish(success=False)
-            self.status_label.setText("Impossibile avviare l'invio.")
-            QMessageBox.critical(self, "Errore avvio croc", str(exc))
+            self._abort_session("Impossibile avviare l'invio principale.", exc)
+            return
 
     def _copy_code(self) -> None:
         if self.last_code:
@@ -197,12 +323,12 @@ class SendTab(QWidget):
             self.terminal.append_line()
             self.terminal.append_line("[clipboard] codice copiato")
 
-    def _on_croc_line(self, line: str) -> None:
-        code = croc.parse_send_code(line)
-        if code:
-            self.last_code = code
-            self.code_edit.setText(code)
-            self.copy_button.setEnabled(True)
+    def _on_croc_line(self, runner_name: str, line: str) -> None:
+        if runner_name != "main_send":
+            return
+
+        if "Sending (->" in line:
+            self._stop_control_timeout()
 
         status = croc_status_from_line(line, role="send")
         if status:
@@ -214,29 +340,88 @@ class SendTab(QWidget):
 
         sample = parse_transfer_progress(line)
         if sample:
+            self._stop_control_timeout()
             self.progress.apply_sample(sample)
 
-    def _on_finished(
+    def _on_runner_finished(
         self,
+        runner_name: str,
         exit_code: int,
         exit_status: QProcess.ExitStatus,
     ) -> None:
-        self._set_running(False)
+        if self.stopping or not self.session_active:
+            return
+
         success = exit_status == QProcess.ExitStatus.NormalExit and exit_code == 0
-        self.progress.finish(success=success)
-        self.status_label.setText(
-            process_result_message(
-                action="Invio",
-                exit_code=exit_code,
-                crashed=exit_status == QProcess.ExitStatus.CrashExit,
+        if not success:
+            if runner_name == "main_send":
+                self.progress.finish(success=False)
+            self._abort_session(
+                f"Processo {runner_name} terminato con errore.",
             )
-        )
+            return
+
+        if runner_name == "metadata_send":
+            self._stop_control_timeout()
+            self.status_label.setText(
+                "Informazioni inviate. Attendo che il destinatario accetti."
+            )
+            self._start_main_sender()
+            return
+
+        if runner_name == "main_send":
+            self._stop_control_timeout()
+            self.progress.finish(success=True)
+            self.status_label.setText("Invio completato.")
+            self.session_active = False
+            self._cleanup_session()
+            self._set_running(False)
+
+    def _abort_session(self, message: str, exc: Exception | None = None) -> None:
+        self.stopping = True
+        self._stop_control_timeout()
+        for runner in self.runners.values():
+            runner.stop()
+        self.stopping = False
+        self.session_active = False
+        self._cleanup_session()
+        self._set_running(False)
+        self.status_label.setText(message)
+        if exc is not None:
+            QMessageBox.critical(self, "Errore trasferimento", f"{message}\n\n{exc}")
+
+    def _start_control_timeout(self, stage: str, milliseconds: int) -> None:
+        self.timeout_stage = stage
+        self.control_timer.start(milliseconds)
+
+    def _stop_control_timeout(self) -> None:
+        self.timeout_stage = ""
+        self.control_timer.stop()
+
+    def _on_control_timeout(self) -> None:
+        stage = self.timeout_stage or "operazione di controllo"
+        self._abort_session(f"Timeout durante {stage}.")
+
+    def _cleanup_session(self) -> None:
+        cleanup_session_paths(self.paths)
+        self.paths = None
+        self.proposal = None
+        self.metadata_code = None
 
 
 class ReceiveTab(QWidget):
+    CONTROL_TIMEOUT_MS = 15 * 60 * 1000
+
     def __init__(self, croc_path: str) -> None:
         super().__init__()
         self.croc_path = croc_path
+        self.paths: SessionPaths | None = None
+        self.proposal: TransferProposal | None = None
+        self.target_path: Path | None = None
+        self.target_overwrite = False
+        self.session_active = False
+        self.stopping = False
+        self.timeout_stage = ""
 
         self.status_label = StatusLabel("Pronto a ricevere un file.")
         self.code_edit = QLineEdit()
@@ -244,11 +429,6 @@ class ReceiveTab(QWidget):
         self.dest_edit = QLineEdit(str(Path.home() / "Downloads"))
         self.dest_button = QPushButton("Scegli...")
         self.open_dest_button = QPushButton("Apri cartella")
-        self.overwrite_checkbox = QCheckBox("Consenti sovrascrittura")
-        self.overwrite_checkbox.setToolTip(
-            "Se nella cartella di destinazione esiste già un file con lo stesso "
-            "nome, croc può sovrascriverlo durante la ricezione."
-        )
         self.start_button = QPushButton("Ricevi")
         self.start_button.setEnabled(False)
         self.stop_button = QPushButton("Stop")
@@ -257,13 +437,13 @@ class ReceiveTab(QWidget):
         self.progress = TransferProgressWidget("Scaricato")
         self.output = TechnicalOutput()
         self.terminal = self.output.terminal
-        self.runner = CrocRunner(
-            croc_path,
-            append_text=self.terminal.append_text,
-            append_line=self.terminal.append_line,
-        )
-        self.runner.on_line = self._on_croc_line
-        self.runner.on_finished = self._on_finished
+        self.runners = {
+            "metadata_receive": self._make_runner("metadata_receive"),
+            "main_receive": self._make_runner("main_receive"),
+        }
+        self.control_timer = QTimer(self)
+        self.control_timer.setSingleShot(True)
+        self.control_timer.timeout.connect(self._on_control_timeout)
 
         code_row = QHBoxLayout()
         code_row.addWidget(QLabel("Codice:"))
@@ -284,19 +464,47 @@ class ReceiveTab(QWidget):
         layout.addWidget(self.status_label)
         layout.addLayout(code_row)
         layout.addLayout(dest_row)
-        layout.addWidget(self.overwrite_checkbox)
         layout.addLayout(control_row)
         layout.addWidget(self.progress)
         add_expandable_output(layout, self.output)
 
         self.code_edit.textChanged.connect(self._refresh_receive_actions)
         self.dest_edit.textChanged.connect(self._refresh_receive_actions)
-        self.overwrite_checkbox.toggled.connect(self._refresh_receive_actions)
         self.dest_button.clicked.connect(self._choose_destination)
         self.open_dest_button.clicked.connect(self._open_destination)
         self.start_button.clicked.connect(self._start_receive)
         self.stop_button.clicked.connect(self._stop_receive)
         self._refresh_receive_actions()
+
+    def stop_active_transfers(self) -> None:
+        if self._any_running():
+            self.stopping = True
+            for runner in self.runners.values():
+                runner.stop()
+            self.stopping = False
+
+        if self.session_active:
+            self.session_active = False
+            self._stop_control_timeout()
+            self._cleanup_session()
+            self.progress.finish(success=False)
+            self._set_running(False)
+
+    def _make_runner(self, name: str) -> CrocRunner:
+        runner = CrocRunner(
+            self.croc_path,
+            append_text=self.terminal.append_text,
+            append_line=self.terminal.append_line,
+        )
+        runner.on_line = lambda line, role=name: self._on_croc_line(role, line)
+        runner.on_finished = (
+            lambda exit_code, exit_status, role=name: self._on_runner_finished(
+                role,
+                exit_code,
+                exit_status,
+            )
+        )
+        return runner
 
     def _choose_destination(self) -> None:
         path = QFileDialog.getExistingDirectory(
@@ -317,14 +525,13 @@ class ReceiveTab(QWidget):
         return bool(destination_text and Path(destination_text).is_dir())
 
     def _can_start_receive(self) -> bool:
-        return bool(
-            self.code_edit.text().strip()
-            and self.dest_edit.text().strip()
-            and self.overwrite_checkbox.isChecked()
-        )
+        return bool(self.code_edit.text().strip() and self.dest_edit.text().strip())
+
+    def _any_running(self) -> bool:
+        return any(runner.is_running() for runner in self.runners.values())
 
     def _refresh_receive_actions(self) -> None:
-        running = self.runner.is_running()
+        running = self._any_running()
         self.start_button.setEnabled(not running and self._can_start_receive())
         self.open_dest_button.setEnabled(
             self._can_open_destination() and not running
@@ -361,12 +568,12 @@ class ReceiveTab(QWidget):
         self.code_edit.setEnabled(not running)
         self.dest_edit.setEnabled(not running)
         self.dest_button.setEnabled(not running)
-        self.overwrite_checkbox.setEnabled(not running)
         self.open_dest_button.setEnabled(not running and self._can_open_destination())
 
     def _stop_receive(self) -> None:
         self.status_label.setText("Interruzione della ricezione in corso...")
-        self.runner.stop()
+        self.stop_active_transfers()
+        self.status_label.setText("Ricezione interrotta.")
 
     def _start_receive(self) -> None:
         code = self.code_edit.text().strip()
@@ -386,21 +593,11 @@ class ReceiveTab(QWidget):
             )
             return
 
-        if not self.overwrite_checkbox.isChecked():
-            self.status_label.setText("Conferma il comportamento di sovrascrittura prima di ricevere.")
-            QMessageBox.warning(
-                self,
-                "Conferma sovrascrittura",
-                "MoonTransfer usa croc in modalità automatica. Se nella cartella "
-                "di destinazione esiste già un file con lo stesso nome, quel file "
-                "può essere sovrascritto.",
-            )
-            return
-
         destination = Path(destination_text)
 
         try:
             destination.mkdir(parents=True, exist_ok=True)
+            self.paths = create_session_paths()
         except Exception as exc:
             QMessageBox.critical(
                 self,
@@ -411,27 +608,61 @@ class ReceiveTab(QWidget):
             self._refresh_receive_actions()
             return
 
-        self._refresh_receive_actions()
-        args = croc.build_receive_args()
-        preview = croc.build_receive_preview(self.croc_path, args)
+        self.proposal = None
+        self.target_path = None
+        self.target_overwrite = False
+        self.session_active = True
+        self.progress.set_total_preview(None)
         self._set_running(True)
-        self.progress.start()
-        self.status_label.setText("Ricezione avviata. Attendo il trasferimento da croc...")
+        self.status_label.setText("Ricezione informazioni file...")
 
         try:
-            self.runner.start(
-                args,
-                workdir=destination,
-                env=croc.build_receive_environment(code),
-                preview=preview,
+            self._start_metadata_receiver(code)
+            self._start_control_timeout(
+                "ricezione metadati",
+                self.CONTROL_TIMEOUT_MS,
             )
         except Exception as exc:
-            self._set_running(False)
-            self.progress.finish(success=False)
-            self.status_label.setText("Impossibile avviare la ricezione.")
-            QMessageBox.critical(self, "Errore avvio croc", str(exc))
+            self._abort_session("Impossibile avviare la ricezione dei metadati.", exc)
 
-    def _on_croc_line(self, line: str) -> None:
+    def _start_metadata_receiver(self, code: str) -> None:
+        if not self.paths:
+            raise RuntimeError("Sessione di ricezione non inizializzata.")
+
+        args = croc.build_receive_args(code)
+        self.terminal.append_line(
+            f"[metadata] ricezione informazioni file (code-id={code_id(code)})"
+        )
+        self.runners["metadata_receive"].start(
+            args,
+            workdir=self.paths.metadata_receive,
+            preview=croc.build_hidden_code_receive_preview(self.croc_path, args),
+        )
+
+    def _start_main_receiver(self) -> None:
+        if not self.paths or not self.proposal:
+            self._abort_session("Sessione di ricezione incompleta.")
+            return
+
+        args = croc.build_receive_args(self.proposal.main_code)
+        self.terminal.append_line(
+            f"[main] ricezione file principale (code-id={code_id(self.proposal.main_code)})"
+        )
+        self.progress.start(total_bytes=self.proposal.size, exact_total=True)
+        try:
+            self.runners["main_receive"].start(
+                args,
+                workdir=self.paths.main_receive,
+                preview=croc.build_hidden_code_receive_preview(self.croc_path, args),
+            )
+        except Exception as exc:
+            self.progress.finish(success=False)
+            self._abort_session("Impossibile avviare la ricezione principale.", exc)
+
+    def _on_croc_line(self, runner_name: str, line: str) -> None:
+        if runner_name != "main_receive":
+            return
+
         status = croc_status_from_line(line, role="receive")
         if status:
             self.status_label.setText(status)
@@ -444,22 +675,196 @@ class ReceiveTab(QWidget):
         if sample:
             self.progress.apply_sample(sample)
 
-    def _on_finished(
+    def _on_runner_finished(
         self,
+        runner_name: str,
         exit_code: int,
         exit_status: QProcess.ExitStatus,
     ) -> None:
-        self._set_running(False)
-        self._refresh_receive_actions()
+        if self.stopping or not self.session_active:
+            return
+
         success = exit_status == QProcess.ExitStatus.NormalExit and exit_code == 0
-        self.progress.finish(success=success)
-        self.status_label.setText(
-            process_result_message(
-                action="Ricezione",
-                exit_code=exit_code,
-                crashed=exit_status == QProcess.ExitStatus.CrashExit,
+        if not success:
+            if runner_name == "main_receive":
+                self.progress.finish(success=False)
+            self._abort_session(
+                f"Processo {runner_name} terminato con errore.",
             )
+            return
+
+        if runner_name == "metadata_receive":
+            self._stop_control_timeout()
+            self._handle_received_metadata()
+            return
+
+        if runner_name == "main_receive":
+            self._stop_control_timeout()
+            self._handle_main_received()
+
+    def _handle_received_metadata(self) -> None:
+        if not self.paths:
+            self._abort_session("Metadati ricevuti ma sessione non disponibile.")
+            return
+
+        try:
+            self.proposal = read_proposal(
+                self.paths.metadata_receive / CONTROL_METADATA_NAME
+            )
+            self.progress.set_total_preview(self.proposal.size)
+            accepted, target, overwrite = self._choose_transfer_action(self.proposal)
+            if not accepted:
+                self.status_label.setText("Trasferimento rifiutato.")
+                self.session_active = False
+                self._cleanup_session()
+                self._set_running(False)
+                return
+            self.target_path = target
+            self.target_overwrite = overwrite
+            self.status_label.setText("Trasferimento accettato. Attendo il file...")
+            self._start_main_receiver()
+        except Exception as exc:
+            self._abort_session("Metadati ricevuti non validi.", exc)
+
+    def _choose_transfer_action(
+        self,
+        proposal: TransferProposal,
+    ) -> tuple[bool, Path | None, bool]:
+        destination = self._destination()
+        details = (
+            f"Nome: {proposal.filename}\n"
+            f"Dimensione: {format_file_size(proposal.size)}\n"
+            f"SHA-256: {proposal.sha256}"
         )
+        check = check_destination(proposal, destination)
+
+        if check.conflict == DestinationConflict.NONE:
+            answer = QMessageBox.question(
+                self,
+                "Accetta trasferimento",
+                f"{details}\n\nVuoi ricevere questo file?",
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                return True, check.path, False
+            return False, None, False
+
+        if check.conflict == DestinationConflict.IDENTICAL:
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Icon.Information)
+            box.setWindowTitle("File già presente")
+            box.setText(
+                f"{details}\n\nNella destinazione esiste già lo stesso file."
+            )
+            skip_button = box.addButton(
+                "Non scaricare",
+                QMessageBox.ButtonRole.RejectRole,
+            )
+            receive_button = box.addButton(
+                "Scarica comunque",
+                QMessageBox.ButtonRole.AcceptRole,
+            )
+            box.setDefaultButton(skip_button)
+            box.exec()
+
+            if box.clickedButton() is receive_button:
+                return True, check.path, True
+            return False, None, False
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("File già esistente")
+        box.setText(
+            f"{details}\n\n"
+            "Nella destinazione esiste già un file con lo stesso nome, "
+            "ma il contenuto è diverso."
+        )
+        overwrite_button = box.addButton(
+            "Sovrascrivi",
+            QMessageBox.ButtonRole.DestructiveRole,
+        )
+        rename_button = box.addButton(
+            "Salva con altro nome",
+            QMessageBox.ButtonRole.AcceptRole,
+        )
+        box.addButton(
+            "Rifiuta",
+            QMessageBox.ButtonRole.RejectRole,
+        )
+        box.setDefaultButton(rename_button)
+        box.exec()
+
+        clicked = box.clickedButton()
+        if clicked is overwrite_button:
+            return True, check.path, True
+
+        if clicked is rename_button:
+            suggested = unique_destination_path(check.path)
+            selected, _ = QFileDialog.getSaveFileName(
+                self,
+                "Salva file come",
+                str(suggested),
+            )
+            if selected:
+                target = Path(selected)
+                return True, target, target.exists()
+
+        return False, None, False
+
+    def _handle_main_received(self) -> None:
+        if not self.paths or not self.proposal or not self.target_path:
+            self._abort_session("File ricevuto ma sessione non disponibile.")
+            return
+
+        source = received_path(self.paths.main_receive, self.proposal.filename)
+        try:
+            verify_received_file(source, self.proposal)
+            saved_path = move_verified_file(
+                source,
+                self.target_path,
+                overwrite=self.target_overwrite,
+            )
+        except Exception as exc:
+            self.progress.finish(success=False)
+            self._abort_session("Verifica o salvataggio del file non riusciti.", exc)
+            return
+
+        self.progress.finish(success=True)
+        self.status_label.setText(f"Ricezione completata: {saved_path}")
+        self.session_active = False
+        self._cleanup_session()
+        self._set_running(False)
+
+    def _abort_session(self, message: str, exc: Exception | None = None) -> None:
+        self.stopping = True
+        self._stop_control_timeout()
+        for runner in self.runners.values():
+            runner.stop()
+        self.stopping = False
+        self.session_active = False
+        self._cleanup_session()
+        self._set_running(False)
+        self.status_label.setText(message)
+        if exc is not None:
+            QMessageBox.critical(self, "Errore trasferimento", f"{message}\n\n{exc}")
+
+    def _start_control_timeout(self, stage: str, milliseconds: int) -> None:
+        self.timeout_stage = stage
+        self.control_timer.start(milliseconds)
+
+    def _stop_control_timeout(self) -> None:
+        self.timeout_stage = ""
+        self.control_timer.stop()
+
+    def _on_control_timeout(self) -> None:
+        stage = self.timeout_stage or "operazione di controllo"
+        self._abort_session(f"Timeout durante {stage}.")
+
+    def _cleanup_session(self) -> None:
+        cleanup_session_paths(self.paths)
+        self.paths = None
+        self.proposal = None
+        self.target_path = None
+        self.target_overwrite = False
 
 
 class MainWindow(QWidget):
@@ -477,12 +882,19 @@ class MainWindow(QWidget):
             raise SystemExit(1)
 
         tabs = QTabWidget()
-        tabs.addTab(SendTab(croc_path), "Invia")
-        tabs.addTab(ReceiveTab(croc_path), "Ricevi")
+        self.send_tab = SendTab(croc_path)
+        self.receive_tab = ReceiveTab(croc_path)
+        tabs.addTab(self.send_tab, "Invia")
+        tabs.addTab(self.receive_tab, "Ricevi")
 
         layout = QVBoxLayout(self)
         layout.addWidget(tabs)
         self.resize(900, self.sizeHint().height())
+
+    def closeEvent(self, event) -> None:  # noqa: ANN001
+        self.send_tab.stop_active_transfers()
+        self.receive_tab.stop_active_transfers()
+        event.accept()
 
 
 def main() -> None:

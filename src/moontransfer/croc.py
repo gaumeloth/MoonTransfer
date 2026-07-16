@@ -48,23 +48,28 @@ def parse_send_code(line: str) -> str | None:
     return code or None
 
 
-def build_send_args(path: Path) -> list[str]:
-    return [
+def build_send_args(path: Path, *, code: str | None = None) -> list[str]:
+    args = [
         "--ignore-stdin",
         "--disable-clipboard",
         "send",
         "--no-local",
-        str(path),
     ]
 
+    if code:
+        args.extend(["--code", code])
 
-def build_receive_args() -> list[str]:
-    return ["--ignore-stdin", "--yes", "--overwrite"]
-
-
-def build_receive_environment(code: str) -> dict[str, str]:
-    return {CROC_SECRET_ENV: code}
+    args.append(str(path))
+    return args
 
 
-def build_receive_preview(program: str, args: list[str]) -> str:
-    return f"{CROC_SECRET_ENV}=<hidden> {command_preview(program, args)}"
+def build_receive_args(code: str | None = None) -> list[str]:
+    args = ["--ignore-stdin", "--yes", "--overwrite"]
+    if code:
+        args.append(code)
+    return args
+
+
+def build_hidden_code_receive_preview(program: str, args: list[str]) -> str:
+    hidden_args = [*args[:-1], "<hidden>"] if args else args
+    return command_preview(program, hidden_args)
