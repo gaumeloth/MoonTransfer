@@ -20,7 +20,7 @@ MoonTransfer is in an early stage. The main flow is already working:
 
 - sending a single file;
 - receiving file metadata through a code before accepting the main download;
-- sending an explicit accept/reject response before the main transfer starts;
+- using `croc`'s native accept/reject prompt for the main transfer;
 - showing `croc` output in the GUI;
 - generating one user-facing code while keeping internal control codes hidden;
 - showing filename, size, and SHA-256 before downloading the main file;
@@ -507,9 +507,9 @@ On the computer that has the file to send:
 6. wait for the code to appear;
 7. share the code with the person who needs to receive the file.
 
-The code first lets the receiver download a small metadata file. The receiver
-can then accept or reject the transfer. MoonTransfer starts the main file
-transfer only after the sender has received the receiver's response.
+The code first lets the receiver download a small metadata file. After that,
+MoonTransfer opens the main `croc` transfer and waits for the receiver to accept
+or reject it through `croc`'s native prompt.
 
 During the main file transfer, MoonTransfer shows progress, transferred size,
 current speed, elapsed time, and estimated remaining time when `croc` provides
@@ -533,9 +533,11 @@ On the computer that needs to receive the file:
    overwrite, or save the incoming file with another name;
 9. wait for the transfer to complete.
 
-The main file is downloaded only after MoonTransfer has sent the acceptance
-response back to the sender. At the end MoonTransfer verifies the received size
-and SHA-256 hash before saving the file in the final destination.
+The main file is downloaded only after MoonTransfer accepts `croc`'s main
+transfer prompt. If you reject the transfer, MoonTransfer connects only to
+refuse the main transfer and does not download the file content. At the end
+MoonTransfer verifies the received size and SHA-256 hash before saving the file
+in the final destination.
 
 During the main file transfer, MoonTransfer shows progress, downloaded size,
 current speed, elapsed time, and estimated remaining time when `croc` provides
@@ -787,9 +789,9 @@ test suite before committing.
   handling, and `widgets.py` for shared Qt widgets.
 - The bundled `croc` version is pinned in `pyproject.toml`; supported release
   archives are verified with versioned SHA-256 hashes before extraction.
-- When sending, MoonTransfer generates metadata, decision, and main file codes
-  itself. The visible code is only the metadata code. Each transfer still uses
-  `croc send --code`, for example:
+- When sending, MoonTransfer generates metadata and main file codes itself. The
+  visible code is only the metadata code. Each transfer still uses `croc send
+  --code`, for example:
 
 ```text
 croc --ignore-stdin --disable-clipboard send --no-local --code <code> <file>
@@ -798,18 +800,25 @@ croc --ignore-stdin --disable-clipboard send --no-local --code <code> <file>
 `--no-local` avoids `croc`'s local relay, which can make negotiation unstable
 in tests with two instances on the same machine.
 
-After the metadata transfer, the sender waits for a small decision file from
-the receiver. Both sides retry the decision transfer with the same hidden
-decision code until the response is delivered or the session times out. If the
-receiver rejects the file, the sender does not start the main `croc send`
-process. If the receiver accepts, the sender starts the main file transfer and
-the receiver starts the main download.
+After the metadata transfer, the sender starts the main `croc send` process and
+waits. The receiver starts the main `croc` process without `--yes`, then
+MoonTransfer writes `y` or `n` to that process based on the user's GUI choice.
+This uses `croc`'s own accept/reject prompt instead of a separate MoonTransfer
+decision transfer. If the receiver rejects the file, the main transfer is
+refused and no file content is downloaded.
 
-- When receiving, control files and the main file are received into temporary
-  session directories first:
+- When receiving metadata, control files are received into temporary session
+  directories first:
 
 ```text
 croc --ignore-stdin --yes --overwrite <code>
+```
+
+The main file receive process intentionally keeps stdin open and does not use
+`--yes`, so MoonTransfer can answer `croc`'s prompt:
+
+```text
+croc --overwrite <code>
 ```
 
 The command preview shown in the technical details masks internal transfer

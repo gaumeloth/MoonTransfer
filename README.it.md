@@ -20,8 +20,8 @@ MoonTransfer è in fase iniziale. Il flusso principale è già funzionante:
 - invio di un singolo file;
 - ricezione dei metadati del file tramite codice prima di accettare il download
   principale;
-- invio di una risposta esplicita di accettazione/rifiuto prima del
-  trasferimento principale;
+- uso del prompt nativo di `croc` per accettare o rifiutare il trasferimento
+  principale;
 - visualizzazione dell'output di `croc` nella GUI;
 - generazione di un solo codice visibile all'utente, con codici di controllo
   interni nascosti;
@@ -515,9 +515,9 @@ Sul computer che possiede il file da inviare:
 7. comunica il codice alla persona che deve ricevere il file.
 
 Il codice permette prima al destinatario di scaricare un piccolo file di
-metadati. Il destinatario può quindi accettare o rifiutare il trasferimento.
-MoonTransfer avvia il trasferimento principale solo dopo che il mittente ha
-ricevuto la risposta del destinatario.
+metadati. Dopo questo passaggio MoonTransfer apre il trasferimento `croc`
+principale e attende che il destinatario lo accetti o lo rifiuti tramite il
+prompt nativo di `croc`.
 
 Durante il trasferimento del file principale, MoonTransfer mostra avanzamento,
 dimensione inviata, velocità attuale, tempo trascorso e tempo stimato rimanente
@@ -540,10 +540,11 @@ Sul computer che deve ricevere il file:
    sovrascriverlo o salvare il file in arrivo con un altro nome;
 9. attendi il completamento del trasferimento.
 
-Il file principale viene scaricato solo dopo che MoonTransfer ha inviato la
-risposta di accettazione al mittente. Al termine MoonTransfer verifica
-dimensione e hash SHA-256 ricevuti prima di salvare il file nella destinazione
-finale.
+Il file principale viene scaricato solo dopo che MoonTransfer accetta il prompt
+del trasferimento principale di `croc`. Se rifiuti il trasferimento,
+MoonTransfer si collega solo per rifiutare il trasferimento principale e non
+scarica il contenuto del file. Al termine MoonTransfer verifica dimensione e
+hash SHA-256 ricevuti prima di salvare il file nella destinazione finale.
 
 Durante il trasferimento del file principale, MoonTransfer mostra avanzamento,
 dimensione scaricata, velocità attuale, tempo trascorso e tempo stimato
@@ -802,9 +803,9 @@ suite di test normale prima del commit.
 - La versione di `croc` inclusa nel bundle è fissata in `pyproject.toml`; gli
   archivi supportati della release sono verificati con hash SHA-256 versionati
   prima dell'estrazione.
-- In invio MoonTransfer genera direttamente i codici per metadati, decisione e
-  file principale. Il codice visibile è solo quello dei metadati. Ogni
-  trasferimento usa comunque `croc send --code`, per esempio:
+- In invio MoonTransfer genera direttamente i codici per metadati e file
+  principale. Il codice visibile è solo quello dei metadati. Ogni trasferimento
+  usa comunque `croc send --code`, per esempio:
 
 ```text
 croc --ignore-stdin --disable-clipboard send --no-local --code <codice> <file>
@@ -813,19 +814,26 @@ croc --ignore-stdin --disable-clipboard send --no-local --code <codice> <file>
 `--no-local` evita il relay locale di `croc`, che nei test con due istanze sulla
 stessa macchina può rendere instabile la negoziazione.
 
-Dopo il trasferimento dei metadati, il mittente attende un piccolo file di
-decisione dal destinatario. Entrambi i lati ritentano il trasferimento della
-decisione con lo stesso codice nascosto finché la risposta viene consegnata o la
-sessione va in timeout. Se il destinatario rifiuta il file, il mittente non
-avvia il processo `croc send` principale. Se il destinatario accetta, il
-mittente avvia il trasferimento del file e il destinatario avvia il download
-principale.
+Dopo il trasferimento dei metadati, il mittente avvia il processo `croc send`
+principale e rimane in attesa. Il destinatario avvia il processo `croc`
+principale senza `--yes`, poi MoonTransfer scrive `y` o `n` su quel processo in
+base alla scelta fatta nella GUI. In questo modo viene usato il prompt
+accetta/rifiuta di `croc` invece di un trasferimento di decisione separato di
+MoonTransfer. Se il destinatario rifiuta il file, il trasferimento principale
+viene rifiutato e il contenuto del file non viene scaricato.
 
-- In ricezione, i file di controllo e il file principale vengono prima ricevuti
-  in directory temporanee di sessione:
+- In ricezione dei metadati, i file di controllo vengono prima ricevuti in
+  directory temporanee di sessione:
 
 ```text
 croc --ignore-stdin --yes --overwrite <codice>
+```
+
+Il processo di ricezione del file principale mantiene invece stdin aperto e non
+usa `--yes`, così MoonTransfer può rispondere al prompt di `croc`:
+
+```text
+croc --overwrite <codice>
 ```
 
 Il comando mostrato nei dettagli tecnici maschera i codici di trasferimento
