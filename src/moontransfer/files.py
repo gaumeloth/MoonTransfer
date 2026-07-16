@@ -12,7 +12,6 @@ from moontransfer.protocol import TransferProposal
 
 
 CONTROL_METADATA_NAME = "moontransfer-metadata.json"
-CONTROL_DECISION_NAME = "moontransfer-decision.json"
 
 
 class DestinationConflict(Enum):
@@ -32,8 +31,6 @@ class SessionPaths:
     root: Path
     metadata_send: Path
     metadata_receive: Path
-    decision_send: Path
-    decision_receive: Path
     main_receive: Path
 
 
@@ -43,16 +40,12 @@ def create_session_paths() -> SessionPaths:
         root=root,
         metadata_send=root / "metadata-send",
         metadata_receive=root / "metadata-receive",
-        decision_send=root / "decision-send",
-        decision_receive=root / "decision-receive",
         main_receive=root / "main-receive",
     )
 
     for directory in (
         paths.metadata_send,
         paths.metadata_receive,
-        paths.decision_send,
-        paths.decision_receive,
         paths.main_receive,
     ):
         directory.mkdir(parents=True, exist_ok=True)
@@ -63,11 +56,6 @@ def create_session_paths() -> SessionPaths:
 def cleanup_session_paths(paths: SessionPaths | None) -> None:
     if paths:
         shutil.rmtree(paths.root, ignore_errors=True)
-
-
-def reset_directory(path: Path) -> None:
-    shutil.rmtree(path, ignore_errors=True)
-    path.mkdir(parents=True, exist_ok=True)
 
 
 def sha256_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:

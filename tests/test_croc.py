@@ -64,6 +64,12 @@ class CrocCommandTests(unittest.TestCase):
             ["--ignore-stdin", "--yes", "--overwrite", "secret-code"],
         )
 
+    def test_build_prompted_receive_args_with_code(self) -> None:
+        self.assertEqual(
+            croc.build_prompted_receive_args("secret-code"),
+            ["--overwrite", "secret-code"],
+        )
+
     def test_hidden_code_receive_preview_hides_positional_code(self) -> None:
         preview = croc.build_hidden_code_receive_preview(
             "/usr/bin/croc",

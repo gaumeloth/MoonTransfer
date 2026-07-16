@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
 from moontransfer import croc
 from moontransfer.desktop import open_folder
 from moontransfer.files import (
-    CONTROL_DECISION_NAME,
     CONTROL_METADATA_NAME,
     DestinationConflict,
     SessionPaths,
@@ -30,7 +29,6 @@ from moontransfer.files import (
     create_session_paths,
     move_verified_file,
     received_path,
-    reset_directory,
     sha256_file,
     unique_destination_path,
     verify_received_file,
@@ -44,10 +42,8 @@ from moontransfer.progress import (
 from moontransfer.protocol import (
     TransferProposal,
     code_id,
-    create_decision,
     create_proposal,
     generate_croc_code,
-    read_decision,
     read_proposal,
     write_control_file,
 )
@@ -62,8 +58,6 @@ from moontransfer.widgets import (
 
 class SendTab(QWidget):
     CONTROL_TIMEOUT_MS = 15 * 60 * 1000
-    DECISION_ATTEMPT_TIMEOUT_MS = 8 * 1000
-    DECISION_RETRY_DELAY_MS = 1000
 
     def __init__(self, croc_path: str) -> None:
         super().__init__()
@@ -76,8 +70,7 @@ class SendTab(QWidget):
         self.session_active = False
         self.stopping = False
         self.timeout_stage = ""
-        self.waiting_for_decision = False
-        self.decision_attempt = 0
+        self.main_rejected_by_receiver = False
 
         self.status_label = StatusLabel("Pronto a inviare un file.")
         self.file_edit = QLineEdit()
@@ -104,20 +97,11 @@ class SendTab(QWidget):
         self.terminal = self.output.terminal
         self.runners = {
             "metadata_send": self._make_runner("metadata_send"),
-            "decision_receive": self._make_runner("decision_receive"),
             "main_send": self._make_runner("main_send"),
         }
         self.control_timer = QTimer(self)
         self.control_timer.setSingleShot(True)
         self.control_timer.timeout.connect(self._on_control_timeout)
-        self.decision_retry_timer = QTimer(self)
-        self.decision_retry_timer.setSingleShot(True)
-        self.decision_retry_timer.timeout.connect(self._start_decision_receive_attempt)
-        self.decision_attempt_timer = QTimer(self)
-        self.decision_attempt_timer.setSingleShot(True)
-        self.decision_attempt_timer.timeout.connect(
-            self._on_decision_receive_attempt_timeout
-        )
 
         file_row = QHBoxLayout()
         file_row.addWidget(self.file_edit, 1)
@@ -156,7 +140,6 @@ class SendTab(QWidget):
         if self.session_active:
             self.session_active = False
             self._stop_control_timeout()
-            self._stop_decision_wait()
             self._cleanup_session()
             self.progress.finish(success=False)
             self._set_running(False)
@@ -252,8 +235,7 @@ class SendTab(QWidget):
         self.last_code = None
         self.metadata_code = None
         self.proposal = None
-        self.waiting_for_decision = False
-        self.decision_attempt = 0
+        self.main_rejected_by_receiver = False
         self.code_edit.clear()
         self.copy_button.setEnabled(False)
         self._set_running(True)
@@ -307,104 +289,6 @@ class SendTab(QWidget):
             unset_env=(croc.CROC_SECRET_ENV,),
         )
 
-    def _start_decision_wait(self) -> None:
-        if not self.proposal:
-            self._abort_session("Sessione di invio incompleta.")
-            return
-
-        self.waiting_for_decision = True
-        self.decision_attempt = 0
-        self.status_label.setText(
-            "Informazioni inviate. Attendo accettazione o rifiuto..."
-        )
-        self._start_control_timeout(
-            "attesa risposta destinatario",
-            self.CONTROL_TIMEOUT_MS,
-        )
-        self._start_decision_receive_attempt()
-
-    def _start_decision_receive_attempt(self) -> None:
-        if (
-            not self.session_active
-            or not self.waiting_for_decision
-            or not self.paths
-            or not self.proposal
-        ):
-            return
-
-        if self.runners["decision_receive"].is_running():
-            return
-
-        self.decision_attempt += 1
-        reset_directory(self.paths.decision_receive)
-        args = croc.build_receive_args(self.proposal.decision_code)
-        self.terminal.append_line(
-            "[decision] attesa risposta destinatario "
-            f"(attempt={self.decision_attempt}, "
-            f"code-id={code_id(self.proposal.decision_code)})"
-        )
-
-        try:
-            self.runners["decision_receive"].start(
-                args,
-                workdir=self.paths.decision_receive,
-                preview=croc.build_hidden_code_receive_preview(self.croc_path, args),
-            )
-        except Exception as exc:
-            self._schedule_decision_receive_retry(f"avvio fallito: {exc}")
-            return
-
-        self.decision_attempt_timer.start(self.DECISION_ATTEMPT_TIMEOUT_MS)
-
-    def _on_decision_receive_attempt_timeout(self) -> None:
-        if not self.waiting_for_decision:
-            return
-
-        runner = self.runners["decision_receive"]
-        if runner.is_running():
-            self.terminal.append_line(
-                "[decision] nessuna risposta ricevuta, nuovo tentativo..."
-            )
-            runner.stop()
-            return
-
-        self._schedule_decision_receive_retry("tentativo scaduto")
-
-    def _schedule_decision_receive_retry(self, reason: str) -> None:
-        if not self.session_active or not self.waiting_for_decision:
-            return
-
-        self.terminal.append_line(f"[decision] {reason}; riprovo...")
-        self.decision_retry_timer.start(self.DECISION_RETRY_DELAY_MS)
-
-    def _handle_received_decision(self) -> None:
-        if not self.paths or not self.proposal:
-            self._abort_session("Decisione ricevuta ma sessione non disponibile.")
-            return
-
-        try:
-            decision = read_decision(
-                self.paths.decision_receive / CONTROL_DECISION_NAME,
-                expected_session_id=self.proposal.session_id,
-            )
-        except Exception as exc:
-            self._schedule_decision_receive_retry(f"decisione non valida: {exc}")
-            return
-
-        self.waiting_for_decision = False
-        self._stop_decision_wait()
-        self._stop_control_timeout()
-
-        if not decision.accepted:
-            self.status_label.setText("Trasferimento rifiutato dal destinatario.")
-            self.session_active = False
-            self._cleanup_session()
-            self._set_running(False)
-            return
-
-        self.status_label.setText("Trasferimento accettato. Avvio invio file...")
-        self._start_main_sender()
-
     def _start_main_sender(self) -> None:
         if not self.session_active:
             return
@@ -448,6 +332,10 @@ class SendTab(QWidget):
         if runner_name != "main_send":
             return
 
+        lowered = line.lower()
+        if any(token in lowered for token in ("declin", "reject", "refus", "cancel")):
+            self.main_rejected_by_receiver = True
+
         if "Sending (->" in line:
             self._stop_control_timeout()
 
@@ -474,31 +362,36 @@ class SendTab(QWidget):
             return
 
         success = exit_status == QProcess.ExitStatus.NormalExit and exit_code == 0
-        if runner_name == "decision_receive":
-            self.decision_attempt_timer.stop()
-            if success:
-                self._handle_received_decision()
-            else:
-                self._schedule_decision_receive_retry(
-                    "risposta non ricevuta in questo tentativo"
-                )
-            return
-
         if not success:
             if runner_name == "main_send":
                 self.progress.finish(success=False)
-            self._abort_session(
-                f"Processo {runner_name} terminato con errore.",
-            )
+                self._abort_session(
+                    "Invio non completato. Il destinatario potrebbe aver rifiutato "
+                    "il file oppure la connessione potrebbe essere fallita."
+                )
+            else:
+                self._abort_session(
+                    f"Processo {runner_name} terminato con errore.",
+                )
             return
 
         if runner_name == "metadata_send":
             self._stop_control_timeout()
-            self._start_decision_wait()
+            self.status_label.setText(
+                "Informazioni inviate. Attendo decisione del destinatario..."
+            )
+            self._start_main_sender()
             return
 
         if runner_name == "main_send":
             self._stop_control_timeout()
+            if self.main_rejected_by_receiver:
+                self.progress.finish(success=False)
+                self.status_label.setText("Trasferimento rifiutato dal destinatario.")
+                self.session_active = False
+                self._cleanup_session()
+                self._set_running(False)
+                return
             self.progress.finish(success=True)
             self.status_label.setText("Invio completato.")
             self.session_active = False
@@ -508,7 +401,6 @@ class SendTab(QWidget):
     def _abort_session(self, message: str, exc: Exception | None = None) -> None:
         self.stopping = True
         self._stop_control_timeout()
-        self._stop_decision_wait()
         for runner in self.runners.values():
             runner.stop()
         self.stopping = False
@@ -527,11 +419,6 @@ class SendTab(QWidget):
         self.timeout_stage = ""
         self.control_timer.stop()
 
-    def _stop_decision_wait(self) -> None:
-        self.waiting_for_decision = False
-        self.decision_retry_timer.stop()
-        self.decision_attempt_timer.stop()
-
     def _on_control_timeout(self) -> None:
         stage = self.timeout_stage or "operazione di controllo"
         self._abort_session(f"Timeout durante {stage}.")
@@ -541,14 +428,11 @@ class SendTab(QWidget):
         self.paths = None
         self.proposal = None
         self.metadata_code = None
-        self.waiting_for_decision = False
-        self.decision_attempt = 0
+        self.main_rejected_by_receiver = False
 
 
 class ReceiveTab(QWidget):
     CONTROL_TIMEOUT_MS = 15 * 60 * 1000
-    DECISION_ATTEMPT_TIMEOUT_MS = 8 * 1000
-    DECISION_RETRY_DELAY_MS = 1000
     MAIN_RECEIVE_DELAY_MS = 750
 
     def __init__(self, croc_path: str) -> None:
@@ -561,9 +445,7 @@ class ReceiveTab(QWidget):
         self.session_active = False
         self.stopping = False
         self.timeout_stage = ""
-        self.sending_decision = False
-        self.decision_attempt = 0
-        self.pending_decision_accepted: bool | None = None
+        self.main_response_accepted: bool | None = None
 
         self.status_label = StatusLabel("Pronto a ricevere un file.")
         self.code_edit = QLineEdit()
@@ -581,20 +463,11 @@ class ReceiveTab(QWidget):
         self.terminal = self.output.terminal
         self.runners = {
             "metadata_receive": self._make_runner("metadata_receive"),
-            "decision_send": self._make_runner("decision_send"),
             "main_receive": self._make_runner("main_receive"),
         }
         self.control_timer = QTimer(self)
         self.control_timer.setSingleShot(True)
         self.control_timer.timeout.connect(self._on_control_timeout)
-        self.decision_retry_timer = QTimer(self)
-        self.decision_retry_timer.setSingleShot(True)
-        self.decision_retry_timer.timeout.connect(self._start_decision_send_attempt)
-        self.decision_attempt_timer = QTimer(self)
-        self.decision_attempt_timer.setSingleShot(True)
-        self.decision_attempt_timer.timeout.connect(
-            self._on_decision_send_attempt_timeout
-        )
 
         code_row = QHBoxLayout()
         code_row.addWidget(QLabel("Codice:"))
@@ -637,7 +510,6 @@ class ReceiveTab(QWidget):
         if self.session_active:
             self.session_active = False
             self._stop_control_timeout()
-            self._stop_decision_send()
             self._cleanup_session()
             self.progress.finish(success=False)
             self._set_running(False)
@@ -763,9 +635,7 @@ class ReceiveTab(QWidget):
         self.proposal = None
         self.target_path = None
         self.target_overwrite = False
-        self.sending_decision = False
-        self.decision_attempt = 0
-        self.pending_decision_accepted = None
+        self.main_response_accepted = None
         self.session_active = True
         self.progress.set_total_preview(None)
         self._set_running(True)
@@ -794,107 +664,19 @@ class ReceiveTab(QWidget):
             preview=croc.build_hidden_code_receive_preview(self.croc_path, args),
         )
 
-    def _start_decision_send(self, accepted: bool) -> None:
-        if not self.paths or not self.proposal:
-            self._abort_session("Sessione di ricezione incompleta.")
-            return
-
-        self.sending_decision = True
-        self.pending_decision_accepted = accepted
-        self.decision_attempt = 0
+    def _schedule_main_response(self, accepted: bool) -> None:
+        self.main_response_accepted = accepted
         if accepted:
-            self.status_label.setText("Invio accettazione al mittente...")
+            self.status_label.setText("Trasferimento accettato. Attendo il file...")
         else:
-            self.status_label.setText("Invio rifiuto al mittente...")
+            self.status_label.setText("Comunico il rifiuto al mittente...")
 
-        self._start_control_timeout(
-            "invio risposta al mittente",
-            self.CONTROL_TIMEOUT_MS,
-        )
-        self._start_decision_send_attempt()
-
-    def _start_decision_send_attempt(self) -> None:
-        if (
-            not self.session_active
-            or not self.sending_decision
-            or not self.paths
-            or not self.proposal
-            or self.pending_decision_accepted is None
-        ):
-            return
-
-        if self.runners["decision_send"].is_running():
-            return
-
-        self.decision_attempt += 1
-        reset_directory(self.paths.decision_send)
-        decision_path = self.paths.decision_send / CONTROL_DECISION_NAME
-        decision = create_decision(
-            session_id=self.proposal.session_id,
-            accepted=self.pending_decision_accepted,
-        )
-        write_control_file(decision_path, decision)
-
-        args = croc.build_send_args(decision_path, code=self.proposal.decision_code)
-        preview = croc.command_preview(
-            self.croc_path,
-            croc.build_send_args(decision_path, code="<hidden>"),
-        )
-        self.terminal.append_line(
-            "[decision] invio risposta al mittente "
-            f"(attempt={self.decision_attempt}, "
-            f"code-id={code_id(self.proposal.decision_code)})"
+        QTimer.singleShot(
+            self.MAIN_RECEIVE_DELAY_MS,
+            lambda: self._start_main_receiver(accepted),
         )
 
-        try:
-            self.runners["decision_send"].start(
-                args,
-                unset_env=(croc.CROC_SECRET_ENV,),
-                preview=preview,
-            )
-        except Exception as exc:
-            self._schedule_decision_send_retry(f"avvio fallito: {exc}")
-            return
-
-        self.decision_attempt_timer.start(self.DECISION_ATTEMPT_TIMEOUT_MS)
-
-    def _on_decision_send_attempt_timeout(self) -> None:
-        if not self.sending_decision:
-            return
-
-        runner = self.runners["decision_send"]
-        if runner.is_running():
-            self.terminal.append_line(
-                "[decision] risposta non consegnata, nuovo tentativo..."
-            )
-            runner.stop()
-            return
-
-        self._schedule_decision_send_retry("tentativo scaduto")
-
-    def _schedule_decision_send_retry(self, reason: str) -> None:
-        if not self.session_active or not self.sending_decision:
-            return
-
-        self.terminal.append_line(f"[decision] {reason}; riprovo...")
-        self.decision_retry_timer.start(self.DECISION_RETRY_DELAY_MS)
-
-    def _handle_decision_sent(self) -> None:
-        accepted = self.pending_decision_accepted
-        self._stop_decision_send()
-        self._stop_control_timeout()
-
-        if not accepted:
-            self.status_label.setText("Trasferimento rifiutato.")
-            self.session_active = False
-            self._cleanup_session()
-            self._set_running(False)
-            return
-
-        self.status_label.setText("Accettazione inviata. Attendo il file...")
-        QTimer.singleShot(self.MAIN_RECEIVE_DELAY_MS, self._start_main_receiver)
-
-    def _start_main_receiver(self) -> None:
+    def _start_main_receiver(self, accepted: bool) -> None:
         if not self.session_active:
             return
 
@@ -902,23 +684,38 @@ class ReceiveTab(QWidget):
             self._abort_session("Sessione di ricezione incompleta.")
             return
 
-        args = croc.build_receive_args(self.proposal.main_code)
+        args = croc.build_prompted_receive_args(self.proposal.main_code)
         self.terminal.append_line(
             f"[main] ricezione file principale (code-id={code_id(self.proposal.main_code)})"
         )
-        self.progress.start(total_bytes=self.proposal.size, exact_total=True)
+        if accepted:
+            self.progress.start(total_bytes=self.proposal.size, exact_total=True)
         try:
             self.runners["main_receive"].start(
                 args,
                 workdir=self.paths.main_receive,
                 preview=croc.build_hidden_code_receive_preview(self.croc_path, args),
             )
+            answer = "y\n" if accepted else "n\n"
+            self.runners["main_receive"].write_stdin(answer, close=True)
+            self.terminal.append_line(
+                "[prompt] risposta inviata a croc: "
+                + ("accetta" if accepted else "rifiuta")
+            )
+            self._start_control_timeout(
+                "trasferimento principale",
+                self.CONTROL_TIMEOUT_MS,
+            )
         except Exception as exc:
-            self.progress.finish(success=False)
+            if accepted:
+                self.progress.finish(success=False)
             self._abort_session("Impossibile avviare la ricezione principale.", exc)
 
     def _on_croc_line(self, runner_name: str, line: str) -> None:
         if runner_name != "main_receive":
+            return
+
+        if self.main_response_accepted is False:
             return
 
         status = croc_status_from_line(line, role="receive")
@@ -943,14 +740,12 @@ class ReceiveTab(QWidget):
             return
 
         success = exit_status == QProcess.ExitStatus.NormalExit and exit_code == 0
-        if runner_name == "decision_send":
-            self.decision_attempt_timer.stop()
-            if success:
-                self._handle_decision_sent()
-            else:
-                self._schedule_decision_send_retry(
-                    "risposta non consegnata in questo tentativo"
-                )
+        if runner_name == "main_receive" and self.main_response_accepted is False:
+            self._stop_control_timeout()
+            self.status_label.setText("Trasferimento rifiutato.")
+            self.session_active = False
+            self._cleanup_session()
+            self._set_running(False)
             return
 
         if not success:
@@ -982,11 +777,11 @@ class ReceiveTab(QWidget):
             self.progress.set_total_preview(self.proposal.size)
             accepted, target, overwrite = self._choose_transfer_action(self.proposal)
             if not accepted:
-                self._start_decision_send(False)
+                self._schedule_main_response(False)
                 return
             self.target_path = target
             self.target_overwrite = overwrite
-            self._start_decision_send(True)
+            self._schedule_main_response(True)
         except Exception as exc:
             self._abort_session("Metadati ricevuti non validi.", exc)
 
@@ -1101,7 +896,6 @@ class ReceiveTab(QWidget):
     def _abort_session(self, message: str, exc: Exception | None = None) -> None:
         self.stopping = True
         self._stop_control_timeout()
-        self._stop_decision_send()
         for runner in self.runners.values():
             runner.stop()
         self.stopping = False
@@ -1120,11 +914,6 @@ class ReceiveTab(QWidget):
         self.timeout_stage = ""
         self.control_timer.stop()
 
-    def _stop_decision_send(self) -> None:
-        self.sending_decision = False
-        self.decision_retry_timer.stop()
-        self.decision_attempt_timer.stop()
-
     def _on_control_timeout(self) -> None:
         stage = self.timeout_stage or "operazione di controllo"
         self._abort_session(f"Timeout durante {stage}.")
@@ -1135,9 +924,7 @@ class ReceiveTab(QWidget):
         self.proposal = None
         self.target_path = None
         self.target_overwrite = False
-        self.sending_decision = False
-        self.decision_attempt = 0
-        self.pending_decision_accepted = None
+        self.main_response_accepted = None
 
 
 class MainWindow(QWidget):

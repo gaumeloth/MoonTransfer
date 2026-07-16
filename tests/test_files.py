@@ -12,7 +12,6 @@ from moontransfer.files import (
     cleanup_session_paths,
     create_session_paths,
     move_verified_file,
-    reset_directory,
     sha256_file,
     unique_destination_path,
     verify_received_file,
@@ -133,25 +132,12 @@ class FileHelperTests(unittest.TestCase):
             self.assertTrue(paths.root.is_dir())
             self.assertTrue(paths.metadata_send.is_dir())
             self.assertTrue(paths.metadata_receive.is_dir())
-            self.assertTrue(paths.decision_send.is_dir())
-            self.assertTrue(paths.decision_receive.is_dir())
             self.assertTrue(paths.main_receive.is_dir())
         finally:
             root = paths.root
             cleanup_session_paths(paths)
 
         self.assertFalse(root.exists())
-
-    def test_reset_directory_removes_existing_content(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            directory = Path(tmp) / "control"
-            directory.mkdir()
-            (directory / "stale.json").write_text("stale", encoding="utf-8")
-
-            reset_directory(directory)
-
-            self.assertTrue(directory.is_dir())
-            self.assertEqual(list(directory.iterdir()), [])
 
 
 if __name__ == "__main__":

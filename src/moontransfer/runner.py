@@ -85,6 +85,15 @@ class CrocRunner:
             self.append_line("[stop] terminazione forzata")
             self.proc.kill()
 
+    def write_stdin(self, text: str, *, close: bool = False) -> None:
+        if not self.is_running():
+            return
+
+        self.proc.write(text.encode("utf-8"))
+        self.proc.waitForBytesWritten(1000)
+        if close:
+            self.proc.closeWriteChannel()
+
     def _on_started(self) -> None:
         self.append_line("[process] avviato")
 

@@ -70,6 +70,10 @@ def build_receive_args(code: str | None = None) -> list[str]:
     return args
 
 
+def build_prompted_receive_args(code: str) -> list[str]:
+    return ["--overwrite", code]
+
+
 def build_hidden_code_receive_preview(program: str, args: list[str]) -> str:
     hidden_args = [*args[:-1], "<hidden>"] if args else args
     return command_preview(program, hidden_args)
