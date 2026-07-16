@@ -13,6 +13,7 @@ HASH_ALGORITHM = "sha256"
 MAX_CONTROL_FILE_BYTES = 64 * 1024
 
 PROPOSAL_TYPE = "proposal"
+DECISION_TYPE = "decision"
 
 
 class ProtocolError(ValueError):
@@ -29,6 +30,15 @@ class TransferProposal:
     hash_algorithm: str
     sha256: str
     main_code: str
+    decision_code: str
+
+
+@dataclass(frozen=True)
+class TransferDecision:
+    version: int
+    type: str
+    session_id: str
+    accepted: bool
 
 
 def generate_croc_code() -> str:
@@ -86,6 +96,16 @@ def create_proposal(
         hash_algorithm=HASH_ALGORITHM,
         sha256=validate_sha256(sha256),
         main_code=generate_croc_code(),
+        decision_code=generate_croc_code(),
+    )
+
+
+def create_decision(*, session_id: str, accepted: bool) -> TransferDecision:
+    return TransferDecision(
+        version=PROTOCOL_VERSION,
+        type=DECISION_TYPE,
+        session_id=session_id,
+        accepted=accepted,
     )
 
 
@@ -118,6 +138,31 @@ def read_proposal(path: Path) -> TransferProposal:
         hash_algorithm=hash_algorithm,
         sha256=validate_sha256(_validate_text("sha256", data.get("sha256"))),
         main_code=_validate_text("main_code", data.get("main_code")),
+        decision_code=_validate_text("decision_code", data.get("decision_code")),
+    )
+
+
+def read_decision(
+    path: Path,
+    *,
+    expected_session_id: str,
+) -> TransferDecision:
+    data = _read_control_json(path)
+    _expect_common(data, DECISION_TYPE)
+
+    session_id = _validate_text("session_id", data.get("session_id"))
+    if session_id != expected_session_id:
+        raise ProtocolError("La decisione non appartiene a questa sessione.")
+
+    accepted = data.get("accepted")
+    if not isinstance(accepted, bool):
+        raise ProtocolError("Decisione mancante o non valida.")
+
+    return TransferDecision(
+        version=PROTOCOL_VERSION,
+        type=DECISION_TYPE,
+        session_id=session_id,
+        accepted=accepted,
     )
 
 
