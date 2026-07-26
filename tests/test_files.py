@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from moontransfer.cancellation import OperationCancelled
 from moontransfer.files import (
     DestinationConflict,
     check_destination,
@@ -13,6 +14,8 @@ from moontransfer.files import (
     create_session_paths,
     directory_payload_size,
     ensure_receive_capacity,
+    ensure_file_unchanged,
+    fingerprint_file,
     move_verified_file,
     sha256_file,
     unique_destination_path,
@@ -31,6 +34,28 @@ class FileHelperTests(unittest.TestCase):
                 sha256_file(path),
                 "a636bd7cd42060a4d07fa1bfbcc010eb7794c2ba721e1e3e4c20335a15b66eaf",
             )
+
+    def test_sha256_file_can_be_cancelled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "example.bin"
+            path.write_bytes(b"content")
+
+            with self.assertRaises(OperationCancelled):
+                sha256_file(path, cancel_requested=lambda: True)
+
+    def test_fingerprint_detects_file_changes_after_hashing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "example.bin"
+            path.write_bytes(b"content")
+            fingerprint = fingerprint_file(path)
+
+            self.assertEqual(fingerprint.size, 7)
+            self.assertEqual(fingerprint.sha256, sha256_file(path))
+            ensure_file_unchanged(path, fingerprint)
+
+            path.write_bytes(b"changed content")
+            with self.assertRaisesRegex(OSError, "è cambiato"):
+                ensure_file_unchanged(path, fingerprint)
 
     def test_check_destination_detects_identical_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -147,6 +172,34 @@ class FileHelperTests(unittest.TestCase):
             self.assertEqual(moved, target)
             self.assertEqual(target.read_text(encoding="utf-8"), "incoming")
             self.assertFalse(source.exists())
+
+    def test_cross_device_copy_can_be_cancelled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            source = directory / "source.txt"
+            target = directory / "target.txt"
+            source.write_text("incoming", encoding="utf-8")
+
+            with (
+                mock.patch.object(
+                    Path,
+                    "replace",
+                    side_effect=OSError(
+                        errno.EXDEV,
+                        "Invalid cross-device link",
+                    ),
+                ),
+                self.assertRaises(OperationCancelled),
+            ):
+                move_verified_file(
+                    source,
+                    target,
+                    overwrite=False,
+                    cancel_requested=lambda: True,
+                )
+
+            self.assertTrue(source.exists())
+            self.assertFalse(target.exists())
 
     def test_create_session_paths_creates_and_cleans_directories(self) -> None:
         paths = create_session_paths()

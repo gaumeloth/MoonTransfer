@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import errno
 import hashlib
+import os
 import shutil
 import stat
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
+from moontransfer.cancellation import OperationCancelled
 from moontransfer.protocol import TransferProposal
 
 
@@ -34,6 +37,15 @@ class SessionPaths:
     metadata_send: Path
     metadata_receive: Path
     main_receive: Path
+
+
+@dataclass(frozen=True)
+class FileFingerprint:
+    size: int
+    sha256: str
+    device: int
+    inode: int
+    modified_ns: int
 
 
 def create_session_paths(
@@ -85,15 +97,107 @@ def cleanup_session_paths(paths: SessionPaths | None) -> None:
         shutil.rmtree(paths.root, ignore_errors=True)
 
 
-def sha256_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
+def sha256_file(
+    path: Path,
+    *,
+    chunk_size: int = 1024 * 1024,
+    cancel_requested: Callable[[], bool] | None = None,
+) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(chunk_size), b""):
+        while True:
+            if cancel_requested and cancel_requested():
+                raise OperationCancelled
+            chunk = handle.read(chunk_size)
+            if not chunk:
+                break
             digest.update(chunk)
+    if cancel_requested and cancel_requested():
+        raise OperationCancelled
     return digest.hexdigest()
 
 
-def check_destination(proposal: TransferProposal, destination_dir: Path) -> DestinationCheck:
+def fingerprint_file(
+    path: Path,
+    *,
+    chunk_size: int = 1024 * 1024,
+    cancel_requested: Callable[[], bool] | None = None,
+) -> FileFingerprint:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        initial = os.fstat(source.fileno())
+        if not stat.S_ISREG(initial.st_mode):
+            raise OSError(f"Il percorso sorgente non è un file regolare: {path}")
+
+        while True:
+            if cancel_requested and cancel_requested():
+                raise OperationCancelled
+            chunk = source.read(chunk_size)
+            if not chunk:
+                break
+            digest.update(chunk)
+        final = os.fstat(source.fileno())
+
+    if cancel_requested and cancel_requested():
+        raise OperationCancelled
+
+    current = path.stat()
+    identity_before = (
+        initial.st_dev,
+        initial.st_ino,
+        initial.st_size,
+        initial.st_mtime_ns,
+    )
+    identity_after = (
+        final.st_dev,
+        final.st_ino,
+        final.st_size,
+        final.st_mtime_ns,
+    )
+    identity_current = (
+        current.st_dev,
+        current.st_ino,
+        current.st_size,
+        current.st_mtime_ns,
+    )
+    if identity_before != identity_after or identity_after != identity_current:
+        raise OSError(f"Il file è cambiato durante il calcolo dell'hash: {path}")
+
+    return FileFingerprint(
+        size=final.st_size,
+        sha256=digest.hexdigest(),
+        device=final.st_dev,
+        inode=final.st_ino,
+        modified_ns=final.st_mtime_ns,
+    )
+
+
+def ensure_file_unchanged(path: Path, fingerprint: FileFingerprint) -> None:
+    current = path.stat()
+    identity = (
+        current.st_dev,
+        current.st_ino,
+        current.st_size,
+        current.st_mtime_ns,
+    )
+    expected = (
+        fingerprint.device,
+        fingerprint.inode,
+        fingerprint.size,
+        fingerprint.modified_ns,
+    )
+    if identity != expected or not stat.S_ISREG(current.st_mode):
+        raise OSError(
+            "Il file selezionato è cambiato dopo il calcolo dell'hash."
+        )
+
+
+def check_destination(
+    proposal: TransferProposal,
+    destination_dir: Path,
+    *,
+    cancel_requested: Callable[[], bool] | None = None,
+) -> DestinationCheck:
     target = destination_dir / proposal.filename
     if not target.exists() and not target.is_symlink():
         return DestinationCheck(DestinationConflict.NONE, target)
@@ -108,7 +212,13 @@ def check_destination(proposal: TransferProposal, destination_dir: Path) -> Dest
         if target.stat().st_size != proposal.size:
             return DestinationCheck(DestinationConflict.DIFFERENT, target)
 
-        if sha256_file(target) == proposal.sha256:
+        if (
+            sha256_file(
+                target,
+                cancel_requested=cancel_requested,
+            )
+            == proposal.sha256
+        ):
             return DestinationCheck(DestinationConflict.IDENTICAL, target)
     except OSError:
         return DestinationCheck(DestinationConflict.DIFFERENT, target)
@@ -136,7 +246,12 @@ def received_path(directory: Path, filename: str) -> Path:
     return directory / filename
 
 
-def verify_received_file(path: Path, proposal: TransferProposal) -> None:
+def verify_received_file(
+    path: Path,
+    proposal: TransferProposal,
+    *,
+    cancel_requested: Callable[[], bool] | None = None,
+) -> None:
     try:
         mode = path.lstat().st_mode
     except FileNotFoundError:
@@ -151,7 +266,10 @@ def verify_received_file(path: Path, proposal: TransferProposal) -> None:
             f"Dimensione file non valida: atteso {proposal.size}, ricevuto {size}"
         )
 
-    digest = sha256_file(path)
+    digest = sha256_file(
+        path,
+        cancel_requested=cancel_requested,
+    )
     if digest != proposal.sha256:
         raise ValueError("Hash SHA-256 del file ricevuto non corrispondente.")
 
@@ -193,21 +311,42 @@ def ensure_receive_capacity(
         )
 
 
-def move_verified_file(source: Path, destination: Path, *, overwrite: bool) -> Path:
+def move_verified_file(
+    source: Path,
+    destination: Path,
+    *,
+    overwrite: bool,
+    cancel_requested: Callable[[], bool] | None = None,
+) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.exists() and not overwrite:
         destination = unique_destination_path(destination)
 
+    if cancel_requested and cancel_requested():
+        raise OperationCancelled
+
     try:
+        if cancel_requested and cancel_requested():
+            raise OperationCancelled
         source.replace(destination)
     except OSError as exc:
         if exc.errno != errno.EXDEV:
             raise
-        _copy_across_devices(source, destination)
+        _copy_across_devices(
+            source,
+            destination,
+            cancel_requested=cancel_requested,
+        )
     return destination
 
 
-def _copy_across_devices(source: Path, destination: Path) -> None:
+def _copy_across_devices(
+    source: Path,
+    destination: Path,
+    *,
+    cancel_requested: Callable[[], bool] | None = None,
+    chunk_size: int = 1024 * 1024,
+) -> None:
     temporary = tempfile.NamedTemporaryFile(
         prefix=f".{destination.name}.moontransfer-",
         dir=destination.parent,
@@ -217,7 +356,19 @@ def _copy_across_devices(source: Path, destination: Path) -> None:
     temporary.close()
 
     try:
-        shutil.copy2(source, temporary_path)
+        with source.open("rb") as input_file, temporary_path.open("wb") as output_file:
+            while True:
+                if cancel_requested and cancel_requested():
+                    raise OperationCancelled
+                chunk = input_file.read(chunk_size)
+                if not chunk:
+                    break
+                output_file.write(chunk)
+        if cancel_requested and cancel_requested():
+            raise OperationCancelled
+        shutil.copystat(source, temporary_path)
+        if cancel_requested and cancel_requested():
+            raise OperationCancelled
         temporary_path.replace(destination)
     except Exception:
         temporary_path.unlink(missing_ok=True)
