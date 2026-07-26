@@ -23,6 +23,7 @@ TRANSFER_PROGRESS_RE = re.compile(
     re.IGNORECASE,
 )
 PERCENT_RE = re.compile(r"\b(?P<percent>\d{1,3})%")
+MAX_NUMERIC_TOKEN_CHARS = 32
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,9 @@ def strip_ansi(text: str) -> str:
 
 
 def parse_size_value(value: str, unit: str) -> int:
+    if len(value) > MAX_NUMERIC_TOKEN_CHARS:
+        raise ValueError("Valore numerico troppo lungo.")
+
     unit = unit.strip()
     binary_units = {
         "KiB": 1024,
@@ -111,7 +115,10 @@ def parse_announced_transfer_total(line: str) -> int | None:
     if not match:
         return None
 
-    return parse_size_value(match.group("value"), match.group("unit"))
+    try:
+        return parse_size_value(match.group("value"), match.group("unit"))
+    except (OverflowError, ValueError):
+        return None
 
 
 def parse_transfer_progress(line: str) -> TransferProgressSample | None:
@@ -125,18 +132,21 @@ def parse_transfer_progress(line: str) -> TransferProgressSample | None:
     if percent_match:
         percent = max(0, min(100, int(percent_match.group("percent"))))
 
-    total_unit = match.group("total_unit")
-    transferred_unit = match.group("transferred_unit") or total_unit
-    transferred_bytes = parse_size_value(
-        match.group("transferred"),
-        transferred_unit,
-    )
-    total_bytes = parse_size_value(match.group("total"), total_unit)
+    try:
+        total_unit = match.group("total_unit")
+        transferred_unit = match.group("transferred_unit") or total_unit
+        transferred_bytes = parse_size_value(
+            match.group("transferred"),
+            transferred_unit,
+        )
+        total_bytes = parse_size_value(match.group("total"), total_unit)
 
-    speed_bps = None
-    if match.group("speed") and match.group("speed_unit"):
-        speed_unit = match.group("speed_unit").removesuffix("/s")
-        speed_bps = float(parse_size_value(match.group("speed"), speed_unit))
+        speed_bps = None
+        if match.group("speed") and match.group("speed_unit"):
+            speed_unit = match.group("speed_unit").removesuffix("/s")
+            speed_bps = float(parse_size_value(match.group("speed"), speed_unit))
+    except (OverflowError, ValueError):
+        return None
 
     return TransferProgressSample(
         percent=percent,

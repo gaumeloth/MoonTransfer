@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
@@ -28,6 +29,7 @@ from moontransfer.progress import (
 class StatusLabel(QLabel):
     def __init__(self, text: str) -> None:
         super().__init__(text)
+        self.setTextFormat(Qt.TextFormat.PlainText)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         self.setWordWrap(True)
         self.setStyleSheet(
@@ -225,6 +227,7 @@ class TerminalView(QPlainTextEdit):
         super().__init__()
         self.setReadOnly(True)
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.setMaximumBlockCount(5000)
 
         font = QFont("monospace")
         font.setStyleHint(QFont.StyleHint.Monospace)
@@ -239,6 +242,28 @@ class TerminalView(QPlainTextEdit):
 
     def append_line(self, text: str = "") -> None:
         self.append_text(text + "\n")
+
+
+def plain_message_box(
+    parent: QWidget | None,
+    *,
+    icon: QMessageBox.Icon,
+    title: str,
+    text: str,
+    standard_buttons: QMessageBox.StandardButton = QMessageBox.StandardButton.NoButton,
+    default_button: QMessageBox.StandardButton | None = None,
+) -> QMessageBox:
+    box = QMessageBox(parent)
+    box.setIcon(icon)
+    box.setWindowTitle(title)
+    box.setTextFormat(Qt.TextFormat.PlainText)
+    box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+    box.setText(text)
+    if standard_buttons != QMessageBox.StandardButton.NoButton:
+        box.setStandardButtons(standard_buttons)
+    if default_button is not None:
+        box.setDefaultButton(default_button)
+    return box
 
 
 class TechnicalOutput(QWidget):

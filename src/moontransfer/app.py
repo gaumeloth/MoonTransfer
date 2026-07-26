@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QProcess, QTimer
+from PySide6.QtCore import QProcess, Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -27,6 +27,8 @@ from moontransfer.files import (
     check_destination,
     cleanup_session_paths,
     create_session_paths,
+    directory_payload_size,
+    ensure_receive_capacity,
     move_verified_file,
     received_path,
     sha256_file,
@@ -40,11 +42,15 @@ from moontransfer.progress import (
     parse_transfer_progress,
 )
 from moontransfer.protocol import (
+    MAX_CONTROL_FILE_BYTES,
+    ProtocolError,
     TransferProposal,
     code_id,
     create_proposal,
     generate_croc_code,
     read_proposal,
+    validate_croc_code,
+    validate_filename,
     write_control_file,
 )
 from moontransfer.runner import CrocRunner
@@ -53,6 +59,7 @@ from moontransfer.widgets import (
     TechnicalOutput,
     TransferProgressWidget,
     add_expandable_output,
+    plain_message_box,
 )
 
 
@@ -77,6 +84,7 @@ class SendTab(QWidget):
         self.file_edit.setPlaceholderText("Seleziona un file da inviare")
         self.browse_button = QPushButton("Sfoglia...")
         self.file_info_label = QLabel("Nessun file selezionato.")
+        self.file_info_label.setTextFormat(Qt.TextFormat.PlainText)
         self.file_info_label.setWordWrap(True)
         self.file_info_label.setSizePolicy(
             QSizePolicy.Policy.Preferred,
@@ -245,6 +253,7 @@ class SendTab(QWidget):
 
         try:
             size = path.stat().st_size
+            validate_filename(path.name)
             digest = sha256_file(path)
             self.proposal = create_proposal(
                 filename=path.name,
@@ -292,6 +301,7 @@ class SendTab(QWidget):
                 secret=self.metadata_code,
             ),
             preview=croc.build_secret_preview(self.croc_path, args),
+            sensitive_values=(self.metadata_code,),
         )
 
     def _start_main_sender(self) -> None:
@@ -315,6 +325,7 @@ class SendTab(QWidget):
                     secret=self.proposal.main_code,
                 ),
                 preview=croc.build_secret_preview(self.croc_path, args),
+                sensitive_values=(self.proposal.main_code,),
             )
             self._start_control_timeout(
                 "attesa connessione destinatario",
@@ -413,7 +424,13 @@ class SendTab(QWidget):
         self._set_running(False)
         self.status_label.setText(message)
         if exc is not None:
-            QMessageBox.critical(self, "Errore trasferimento", f"{message}\n\n{exc}")
+            plain_message_box(
+                self,
+                icon=QMessageBox.Icon.Critical,
+                title="Errore trasferimento",
+                text=f"{message}\n\n{exc}",
+                standard_buttons=QMessageBox.StandardButton.Ok,
+            ).exec()
 
     def _start_control_timeout(self, stage: str, milliseconds: int) -> None:
         self.timeout_stage = stage
@@ -450,6 +467,8 @@ class ReceiveTab(QWidget):
         self.stopping = False
         self.timeout_stage = ""
         self.main_response_accepted: bool | None = None
+        self.receive_size_limit: int | None = None
+        self.receive_size_stage = ""
 
         self.status_label = StatusLabel("Pronto a ricevere un file.")
         self.code_edit = QLineEdit()
@@ -472,6 +491,9 @@ class ReceiveTab(QWidget):
         self.control_timer = QTimer(self)
         self.control_timer.setSingleShot(True)
         self.control_timer.timeout.connect(self._on_control_timeout)
+        self.receive_size_timer = QTimer(self)
+        self.receive_size_timer.setInterval(250)
+        self.receive_size_timer.timeout.connect(self._check_receive_size)
 
         code_row = QHBoxLayout()
         code_row.addWidget(QLabel("Codice:"))
@@ -583,12 +605,16 @@ class ReceiveTab(QWidget):
         else:
             self.status_label.setText("Impossibile aprire la cartella di destinazione.")
             details = f"\n\nDettaglio tecnico:\n{result.error}" if result.error else ""
-            QMessageBox.warning(
+            plain_message_box(
                 self,
-                "Apertura non riuscita",
-                "Non riesco ad aprire la cartella con il file manager del sistema."
-                + details,
-            )
+                icon=QMessageBox.Icon.Warning,
+                title="Apertura non riuscita",
+                text=(
+                    "Non riesco ad aprire la cartella con il file manager del sistema."
+                    + details
+                ),
+                standard_buttons=QMessageBox.StandardButton.Ok,
+            ).exec()
 
     def _set_running(self, running: bool) -> None:
         self.start_button.setEnabled(False if running else self._can_start_receive())
@@ -612,6 +638,19 @@ class ReceiveTab(QWidget):
             QMessageBox.warning(self, "Codice mancante", "Incolla il codice ricevuto.")
             return
 
+        try:
+            code = validate_croc_code(code)
+        except ProtocolError as exc:
+            self.status_label.setText("Il codice inserito non è valido.")
+            plain_message_box(
+                self,
+                icon=QMessageBox.Icon.Warning,
+                title="Codice non valido",
+                text=str(exc),
+                standard_buttons=QMessageBox.StandardButton.Ok,
+            ).exec()
+            return
+
         if not destination_text:
             self.status_label.setText("Scegli una cartella di destinazione.")
             QMessageBox.warning(
@@ -625,13 +664,15 @@ class ReceiveTab(QWidget):
 
         try:
             destination.mkdir(parents=True, exist_ok=True)
-            self.paths = create_session_paths()
+            self.paths = create_session_paths(main_receive_parent=destination)
         except Exception as exc:
-            QMessageBox.critical(
+            plain_message_box(
                 self,
-                "Errore destinazione",
-                f"Impossibile usare la cartella di destinazione:\n{exc}",
-            )
+                icon=QMessageBox.Icon.Critical,
+                title="Errore destinazione",
+                text=f"Impossibile usare la cartella di destinazione:\n{exc}",
+                standard_buttons=QMessageBox.StandardButton.Ok,
+            ).exec()
             self.status_label.setText("Impossibile usare la cartella di destinazione.")
             self._refresh_receive_actions()
             return
@@ -670,6 +711,11 @@ class ReceiveTab(QWidget):
                 secret=code,
             ),
             preview=croc.build_secret_preview(self.croc_path, args),
+            sensitive_values=(code,),
+        )
+        self._start_receive_size_monitor(
+            MAX_CONTROL_FILE_BYTES,
+            "ricezione metadati",
         )
 
     def _schedule_main_response(self, accepted: bool) -> None:
@@ -707,7 +753,13 @@ class ReceiveTab(QWidget):
                     secret=self.proposal.main_code,
                 ),
                 preview=croc.build_secret_preview(self.croc_path, args),
+                sensitive_values=(self.proposal.main_code,),
             )
+            if accepted:
+                self._start_receive_size_monitor(
+                    self.proposal.size,
+                    "ricezione file principale",
+                )
             answer = "y\n" if accepted else "n\n"
             self.runners["main_receive"].write_stdin(answer, close=True)
             self.terminal.append_line(
@@ -751,6 +803,7 @@ class ReceiveTab(QWidget):
         if self.stopping or not self.session_active:
             return
 
+        self._stop_receive_size_monitor()
         success = exit_status == QProcess.ExitStatus.NormalExit and exit_code == 0
         if runner_name == "main_receive" and self.main_response_accepted is False:
             self._stop_control_timeout()
@@ -793,6 +846,25 @@ class ReceiveTab(QWidget):
             if not accepted:
                 self._schedule_main_response(False)
                 return
+            if target is None:
+                raise RuntimeError("Destinazione del trasferimento mancante.")
+
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                ensure_receive_capacity(self.paths.main_receive, self.proposal.size)
+                if target.parent.stat().st_dev != self.paths.main_receive.stat().st_dev:
+                    ensure_receive_capacity(target.parent, self.proposal.size)
+            except OSError as exc:
+                plain_message_box(
+                    self,
+                    icon=QMessageBox.Icon.Critical,
+                    title="Spazio insufficiente",
+                    text=str(exc),
+                    standard_buttons=QMessageBox.StandardButton.Ok,
+                ).exec()
+                self._schedule_main_response(False)
+                return
+
             self.target_path = target
             self.target_overwrite = overwrite
             self._schedule_main_response(True)
@@ -824,24 +896,31 @@ class ReceiveTab(QWidget):
             f"Dimensione: {format_file_size(proposal.size)}\n"
             f"SHA-256: {proposal.sha256}"
         )
-        check = check_destination(proposal, destination)
 
-        if check.conflict == DestinationConflict.NONE:
-            answer = QMessageBox.question(
-                self,
-                "Accetta trasferimento",
-                f"{details}\n\nVuoi ricevere questo file?",
-            )
-            if answer == QMessageBox.StandardButton.Yes:
-                return True, check.path, False
+        answer_box = plain_message_box(
+            self,
+            icon=QMessageBox.Icon.Question,
+            title="Accetta trasferimento",
+            text=f"{details}\n\nVuoi ricevere questo file?",
+            standard_buttons=(
+                QMessageBox.StandardButton.Yes
+                | QMessageBox.StandardButton.No
+            ),
+            default_button=QMessageBox.StandardButton.No,
+        )
+        if answer_box.exec() != QMessageBox.StandardButton.Yes:
             return False, None, False
 
+        check = check_destination(proposal, destination)
+        if check.conflict == DestinationConflict.NONE:
+            return True, check.path, False
+
         if check.conflict == DestinationConflict.IDENTICAL:
-            box = QMessageBox(self)
-            box.setIcon(QMessageBox.Icon.Information)
-            box.setWindowTitle("File già presente")
-            box.setText(
-                f"{details}\n\nNella destinazione esiste già lo stesso file."
+            box = plain_message_box(
+                self,
+                icon=QMessageBox.Icon.Information,
+                title="File già presente",
+                text=f"{details}\n\nNella destinazione esiste già lo stesso file.",
             )
             skip_button = box.addButton(
                 "Non scaricare",
@@ -858,13 +937,15 @@ class ReceiveTab(QWidget):
                 return True, check.path, True
             return False, None, False
 
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Warning)
-        box.setWindowTitle("File già esistente")
-        box.setText(
-            f"{details}\n\n"
-            "Nella destinazione esiste già un file con lo stesso nome, "
-            "ma il contenuto è diverso."
+        box = plain_message_box(
+            self,
+            icon=QMessageBox.Icon.Warning,
+            title="File già esistente",
+            text=(
+                f"{details}\n\n"
+                "Nella destinazione esiste già un file con lo stesso nome, "
+                "ma il contenuto è diverso."
+            ),
         )
         overwrite_button = box.addButton(
             "Sovrascrivi",
@@ -933,7 +1014,13 @@ class ReceiveTab(QWidget):
         self._set_running(False)
         self.status_label.setText(message)
         if exc is not None:
-            QMessageBox.critical(self, "Errore trasferimento", f"{message}\n\n{exc}")
+            plain_message_box(
+                self,
+                icon=QMessageBox.Icon.Critical,
+                title="Errore trasferimento",
+                text=f"{message}\n\n{exc}",
+                standard_buttons=QMessageBox.StandardButton.Ok,
+            ).exec()
 
     def _start_control_timeout(self, stage: str, milliseconds: int) -> None:
         self.timeout_stage = stage
@@ -947,7 +1034,53 @@ class ReceiveTab(QWidget):
         stage = self.timeout_stage or "operazione di controllo"
         self._abort_session(f"Timeout durante {stage}.")
 
+    def _start_receive_size_monitor(self, limit: int, stage: str) -> None:
+        self.receive_size_limit = limit
+        self.receive_size_stage = stage
+        self.receive_size_timer.start()
+
+    def _stop_receive_size_monitor(self) -> None:
+        self.receive_size_timer.stop()
+        self.receive_size_limit = None
+        self.receive_size_stage = ""
+
+    def _check_receive_size(self) -> None:
+        if (
+            not self.session_active
+            or not self.paths
+            or self.receive_size_limit is None
+        ):
+            self._stop_receive_size_monitor()
+            return
+
+        if self.runners["metadata_receive"].is_running():
+            directory = self.paths.metadata_receive
+        elif self.runners["main_receive"].is_running():
+            directory = self.paths.main_receive
+        else:
+            return
+
+        try:
+            received_bytes = directory_payload_size(directory)
+        except Exception as exc:
+            self._abort_session(
+                f"Contenuto temporaneo non valido durante {self.receive_size_stage}.",
+                exc,
+            )
+            return
+
+        if received_bytes > self.receive_size_limit:
+            self._abort_session(
+                f"Ricezione interrotta durante {self.receive_size_stage}: "
+                "dimensione superiore a quella consentita.",
+                ValueError(
+                    f"Ricevuti {received_bytes} byte, "
+                    f"limite {self.receive_size_limit} byte."
+                ),
+            )
+
     def _cleanup_session(self) -> None:
+        self._stop_receive_size_monitor()
         cleanup_session_paths(self.paths)
         self.paths = None
         self.proposal = None

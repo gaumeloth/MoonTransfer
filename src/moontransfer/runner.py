@@ -9,12 +9,26 @@ from PySide6.QtCore import QProcess, QProcessEnvironment
 from moontransfer import croc
 
 
+MAX_PROCESS_RECORD_BYTES = 64 * 1024
+
+
 def split_process_records(buffered: bytes) -> tuple[list[bytes], bytes]:
     records = re.split(rb"[\r\n]", buffered)
     if buffered.endswith((b"\r", b"\n")):
         return records, b""
 
     return records[:-1], records[-1]
+
+
+def redact_sensitive_text(text: str, sensitive_values: tuple[str, ...]) -> str:
+    redacted = text
+    for value in sorted(
+        (value for value in sensitive_values if value),
+        key=len,
+        reverse=True,
+    ):
+        redacted = redacted.replace(value, "<hidden>")
+    return redacted
 
 
 class CrocRunner:
@@ -32,6 +46,7 @@ class CrocRunner:
         self.on_finished: Callable[[int, QProcess.ExitStatus], None] | None = None
         self._stdout_buffer = b""
         self._stderr_buffer = b""
+        self._sensitive_values: tuple[str, ...] = ()
 
         self.proc = QProcess()
         self.proc.setProcessChannelMode(QProcess.ProcessChannelMode.SeparateChannels)
@@ -51,12 +66,14 @@ class CrocRunner:
         env: dict[str, str] | None = None,
         unset_env: tuple[str, ...] = (),
         preview: str | None = None,
+        sensitive_values: tuple[str, ...] = (),
     ) -> None:
         if self.is_running():
             raise RuntimeError("croc è già in esecuzione")
 
         self._stdout_buffer = b""
         self._stderr_buffer = b""
+        self._sensitive_values = sensitive_values
         self.proc.setWorkingDirectory(str(workdir or Path.home()))
 
         process_env = QProcessEnvironment.systemEnvironment()
@@ -71,6 +88,7 @@ class CrocRunner:
 
         self.proc.start(self.croc_path, args)
         if not self.proc.waitForStarted(3000):
+            self._sensitive_values = ()
             raise RuntimeError(self.proc.errorString())
 
     def stop(self) -> None:
@@ -84,6 +102,7 @@ class CrocRunner:
         if not self.proc.waitForFinished(1500):
             self.append_line("[stop] terminazione forzata")
             self.proc.kill()
+            self.proc.waitForFinished(1500)
 
     def write_stdin(self, text: str, *, close: bool = False) -> None:
         if not self.is_running():
@@ -107,14 +126,20 @@ class CrocRunner:
         if not data:
             return
 
-        self.append_text(data.decode("utf-8", errors="replace"))
-
         buffered = getattr(self, buffer_name) + data
         complete_lines, remaining = split_process_records(buffered)
+        while len(remaining) > MAX_PROCESS_RECORD_BYTES:
+            complete_lines.append(remaining[:MAX_PROCESS_RECORD_BYTES])
+            remaining = remaining[MAX_PROCESS_RECORD_BYTES:]
         setattr(self, buffer_name, remaining)
 
         for raw_line in complete_lines:
+            self._display_line(raw_line)
             self._emit_line(raw_line)
+
+    def _display_line(self, raw_line: bytes) -> None:
+        text = raw_line.decode("utf-8", errors="replace").rstrip("\r")
+        self.append_line(redact_sensitive_text(text, self._sensitive_values))
 
     def _emit_line(self, raw_line: bytes) -> None:
         if self.on_line:
@@ -125,6 +150,7 @@ class CrocRunner:
             raw_line = getattr(self, name)
             if raw_line:
                 setattr(self, name, b"")
+                self._display_line(raw_line)
                 self._emit_line(raw_line)
 
     def _on_finished(
@@ -139,5 +165,8 @@ class CrocRunner:
             f"exit_status={exit_status.name}"
         )
 
-        if self.on_finished:
-            self.on_finished(exit_code, exit_status)
+        try:
+            if self.on_finished:
+                self.on_finished(exit_code, exit_status)
+        finally:
+            self._sensitive_values = ()
