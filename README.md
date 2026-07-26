@@ -515,6 +515,10 @@ During the main file transfer, MoonTransfer shows progress, transferred size,
 current speed, elapsed time, and estimated remaining time when `croc` provides
 enough progress information.
 
+MoonTransfer calculates the file fingerprint in the background before showing
+the code. The **Stop** button can cancel this preparation as well as an active
+transfer.
+
 The code is one-time use: it is valid for that transfer and should not be
 reused.
 
@@ -538,6 +542,9 @@ transfer prompt. If you reject the transfer, MoonTransfer connects only to
 refuse the main transfer and does not download the file content. At the end
 MoonTransfer verifies the received size and SHA-256 hash before saving the file
 in the final destination.
+
+Destination comparison and final SHA-256 verification run in the background.
+The **Stop** button remains available while these checks are in progress.
 
 During the main file transfer, MoonTransfer shows progress, downloaded size,
 current speed, elapsed time, and estimated remaining time when `croc` provides
@@ -734,7 +741,13 @@ Use the existing module boundaries when choosing where to make a change:
   the GUI.
 - `src/moontransfer/transfer.py`: explicit transfer states, send and receive
   controllers, session lifecycle, process and timeout coordination, metadata
-  flow, receive limits, final verification, and cleanup.
+  flow, background file operations, receive limits, final verification, and
+  cleanup.
+- `src/moontransfer/tasks.py`: cancellable `QThread` worker used for file
+  fingerprinting, destination comparison, final verification, and cross-device
+  copies without blocking the GUI event loop.
+- `src/moontransfer/cancellation.py`: Qt-independent cancellation exception
+  shared by background workers and file operations.
 - `src/moontransfer/widgets.py`: reusable Qt widgets such as the status label,
   technical output panel, terminal-like output view, and transfer progress
   widget.
@@ -745,8 +758,8 @@ Use the existing module boundaries when choosing where to make a change:
   version, generated codes, filename validation, SHA-256 validation, and
   metadata JSON read/write rules.
 - `src/moontransfer/files.py`: temporary session directories, destination
-  conflict checks, SHA-256 hashing, received-file verification, unique filenames,
-  and final file placement.
+  conflict checks, stable file fingerprints, cancellable SHA-256 hashing,
+  received-file verification, unique filenames, and final file placement.
 - `src/moontransfer/progress.py`: parsing `croc` progress output and formatting
   file sizes, transfer rates, elapsed time, and remaining time.
 - `src/moontransfer/messages.py`: user-facing status messages derived from
@@ -984,7 +997,9 @@ test suite before committing.
   temporary directories, conflict checks, and final file placement,
   `progress.py` for transfer output parsing, `messages.py` for user-facing
   status text, `desktop.py` for file manager integration, `runner.py` for
-  `QProcess` handling, and `widgets.py` for shared Qt widgets.
+  `QProcess` handling, `tasks.py` for cancellable background file operations,
+  `cancellation.py` for the shared cancellation contract, and `widgets.py` for
+  shared Qt widgets.
 - The bundled `croc` version is pinned in `pyproject.toml`; supported release
   archives are verified with versioned SHA-256 hashes before extraction.
 - When sending, MoonTransfer generates metadata and main file codes itself. The
@@ -1031,6 +1046,11 @@ The command preview shown in the technical details masks internal transfer
 codes. The final file is moved to the selected destination only after the
 expected size and SHA-256 hash are verified.
 
+- Potentially long local operations run in a cancellable background `QThread`:
+  sender fingerprinting, comparison with an existing destination file, final
+  received-file verification, and cross-device copies. The sender records the
+  source file identity together with its hash and checks it again before
+  starting the main `croc` process.
 - Build reproducibility depends on `uv.lock`, the pinned `croc` version, and
   the versioned SHA-256 hashes in `pyproject.toml`.
 
@@ -1041,6 +1061,7 @@ MoonTransfer/
 ├─ src/
 │  └─ moontransfer/
 │     ├─ app.py
+│     ├─ cancellation.py
 │     ├─ croc.py
 │     ├─ desktop.py
 │     ├─ files.py
@@ -1048,6 +1069,7 @@ MoonTransfer/
 │     ├─ protocol.py
 │     ├─ progress.py
 │     ├─ runner.py
+│     ├─ tasks.py
 │     ├─ transfer.py
 │     └─ widgets.py
 ├─ tools/
@@ -1068,6 +1090,7 @@ MoonTransfer/
 │  ├─ test_protocol.py
 │  ├─ test_progress.py
 │  ├─ test_runner.py
+│  ├─ test_tasks.py
 │  ├─ test_transfer.py
 │  └─ test_widgets.py
 ├─ README.md
