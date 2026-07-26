@@ -84,6 +84,18 @@ class ProgressTests(unittest.TestCase):
             )
         )
 
+    def test_oversized_numeric_tokens_are_ignored(self) -> None:
+        huge = "9" * 400
+
+        self.assertIsNone(
+            parse_announced_transfer_total(f"Sending 'file.bin' ({huge} GB)")
+        )
+        self.assertIsNone(
+            parse_transfer_progress(
+                f"file.bin 50% |#####| ({huge} GB/2 GB, 1 MB/s)"
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

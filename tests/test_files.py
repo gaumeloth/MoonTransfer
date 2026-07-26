@@ -11,6 +11,8 @@ from moontransfer.files import (
     check_destination,
     cleanup_session_paths,
     create_session_paths,
+    directory_payload_size,
+    ensure_receive_capacity,
     move_verified_file,
     sha256_file,
     unique_destination_path,
@@ -88,6 +90,26 @@ class FileHelperTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 verify_received_file(path, proposal)
 
+    def test_verify_received_file_rejects_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            target = directory / "target.txt"
+            target.write_bytes(b"content")
+            link = directory / "example.txt"
+            try:
+                link.symlink_to(target)
+            except OSError as exc:
+                self.skipTest(f"Symlink non disponibile: {exc}")
+
+            proposal = create_proposal(
+                filename=link.name,
+                size=target.stat().st_size,
+                sha256=sha256_file(target),
+            )
+
+            with self.assertRaisesRegex(ValueError, "file regolare"):
+                verify_received_file(link, proposal)
+
     def test_move_verified_file_uses_alternate_name_without_overwrite(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp)
@@ -139,6 +161,40 @@ class FileHelperTests(unittest.TestCase):
             cleanup_session_paths(paths)
 
         self.assertFalse(root.exists())
+
+    def test_main_receive_staging_can_use_destination_filesystem(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            destination = Path(tmp) / "destination"
+            destination.mkdir()
+            paths = create_session_paths(main_receive_parent=destination)
+            root = paths.root
+            main_receive = paths.main_receive
+
+            try:
+                self.assertEqual(main_receive.parent, destination)
+                self.assertTrue(main_receive.is_dir())
+                self.assertNotEqual(main_receive, root / "main-receive")
+            finally:
+                cleanup_session_paths(paths)
+
+            self.assertFalse(root.exists())
+            self.assertFalse(main_receive.exists())
+
+    def test_directory_payload_size_counts_regular_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            nested = directory / "nested"
+            nested.mkdir()
+            (directory / "one.bin").write_bytes(b"123")
+            (nested / "two.bin").write_bytes(b"4567")
+
+            self.assertEqual(directory_payload_size(directory), 7)
+
+    def test_ensure_receive_capacity_keeps_reserve(self) -> None:
+        disk_usage = mock.Mock(free=100)
+        with mock.patch("moontransfer.files.shutil.disk_usage", return_value=disk_usage):
+            with self.assertRaisesRegex(OSError, "Spazio libero insufficiente"):
+                ensure_receive_capacity(Path("/tmp"), 80, reserve_bytes=30)
 
 
 if __name__ == "__main__":

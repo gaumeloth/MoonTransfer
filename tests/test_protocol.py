@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -49,6 +50,40 @@ class ProtocolTests(unittest.TestCase):
                 sha256="a" * 64,
             )
 
+    def test_rejects_nonportable_filename(self) -> None:
+        invalid_names = (
+            "CON",
+            "NUL.txt",
+            "COM1.log",
+            "COM¹.log",
+            "LPT9",
+            "CONOUT$",
+            "report:alternate.txt",
+            "trailing-space ",
+            "trailing-dot.",
+            "line\nbreak.txt",
+            "spoof\u202etxt.exe",
+            "x" * 256,
+        )
+
+        for filename in invalid_names:
+            with self.subTest(filename=filename):
+                with self.assertRaises(protocol.ProtocolError):
+                    protocol.create_proposal(
+                        filename=filename,
+                        size=12,
+                        sha256="a" * 64,
+                    )
+
+    def test_accepts_normal_unicode_filename(self) -> None:
+        proposal = protocol.create_proposal(
+            filename="vacanza-città.txt",
+            size=12,
+            sha256="a" * 64,
+        )
+
+        self.assertEqual(proposal.filename, "vacanza-città.txt")
+
     def test_rejects_invalid_hash(self) -> None:
         with self.assertRaises(protocol.ProtocolError):
             protocol.create_proposal(
@@ -56,6 +91,33 @@ class ProtocolTests(unittest.TestCase):
                 size=12,
                 sha256="not-a-sha",
             )
+
+    def test_rejects_invalid_size(self) -> None:
+        for size in (-1, True, protocol.MAX_TRANSFER_FILE_BYTES + 1):
+            with self.subTest(size=size):
+                with self.assertRaises(protocol.ProtocolError):
+                    protocol.create_proposal(
+                        filename="example.txt",
+                        size=size,
+                        sha256="a" * 64,
+                    )
+
+    def test_read_rejects_invalid_internal_code(self) -> None:
+        proposal = protocol.create_proposal(
+            filename="example.txt",
+            size=12,
+            sha256="a" * 64,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "metadata.json"
+            protocol.write_control_file(path, proposal)
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["main_code"] = "not-a-moontransfer-code"
+            path.write_text(json.dumps(data), encoding="utf-8")
+
+            with self.assertRaises(protocol.ProtocolError):
+                protocol.read_proposal(path)
 
     def test_round_trip_proposal(self) -> None:
         proposal = protocol.create_proposal(

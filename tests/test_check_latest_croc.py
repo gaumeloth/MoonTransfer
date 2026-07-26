@@ -69,6 +69,27 @@ class LatestCrocCheckTests(unittest.TestCase):
             flattened,
         )
 
+    def test_compatibility_environment_drops_maintainer_secrets(self) -> None:
+        environment = check_latest_croc.compatibility_process_environment(
+            Path("/tmp/croc-config"),
+            base_env={
+                "GITHUB_TOKEN": "github-secret",
+                "SSH_AUTH_SOCK": "/tmp/agent.sock",
+                "AWS_SECRET_ACCESS_KEY": "cloud-secret",
+                "LD_PRELOAD": "/tmp/injected.so",
+                "HTTPS_PROXY": "http://proxy.example",
+                "LANG": "it_IT.UTF-8",
+            },
+        )
+
+        self.assertNotIn("GITHUB_TOKEN", environment)
+        self.assertNotIn("SSH_AUTH_SOCK", environment)
+        self.assertNotIn("AWS_SECRET_ACCESS_KEY", environment)
+        self.assertNotIn("LD_PRELOAD", environment)
+        self.assertEqual(environment["HTTPS_PROXY"], "http://proxy.example")
+        self.assertEqual(environment["LANG"], "it_IT.UTF-8")
+        self.assertEqual(environment["HOME"], "/tmp/croc-config/home")
+
 
 if __name__ == "__main__":
     unittest.main()

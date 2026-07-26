@@ -5,6 +5,7 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tools import fetch_croc
 
@@ -143,6 +144,67 @@ class FetchCrocExtractionTests(unittest.TestCase):
             with tarfile.open(tar_path, "r:gz") as tar:
                 with self.assertRaisesRegex(RuntimeError, "Links are not supported"):
                     fetch_croc.safe_extract_tar(tar, Path(tmp) / "out")
+
+    def test_safe_extract_tar_rejects_special_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tar_path = Path(tmp) / "bad.tar.gz"
+            with tarfile.open(tar_path, "w:gz") as tar:
+                info = tarfile.TarInfo("pipe")
+                info.type = tarfile.FIFOTYPE
+                tar.addfile(info)
+
+            with tarfile.open(tar_path, "r:gz") as tar:
+                with self.assertRaisesRegex(RuntimeError, "Special files"):
+                    fetch_croc.safe_extract_tar(tar, Path(tmp) / "out")
+
+
+class FetchCrocInstallTests(unittest.TestCase):
+    def test_matching_version_marker_still_reinstalls_verified_binary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            asset = "croc-test.tar.gz"
+            archive = root / ".cache" / asset
+            archive.parent.mkdir()
+            archive.write_bytes(b"verified archive")
+            expected_hash = fetch_croc.sha256_file(archive)
+
+            pyproject = root / "pyproject.toml"
+            pyproject.write_text(
+                (
+                    "[tool.moontransfer.croc]\n"
+                    'version = "10.4.13"\n\n'
+                    "[tool.moontransfer.croc.hashes]\n"
+                    f'"{asset}" = "sha256:{expected_hash}"\n'
+                ),
+                encoding="utf-8",
+            )
+
+            executable = "croc.exe" if fetch_croc.os.name == "nt" else "croc"
+            destination = root / "third_party" / "croc" / executable
+            destination.parent.mkdir(parents=True)
+            destination.write_bytes(b"untrusted preexisting binary")
+            (destination.parent / "VERSION").write_text(
+                "10.4.13\n",
+                encoding="utf-8",
+            )
+
+            def fake_extract(
+                _asset: str,
+                _archive: Path,
+                extract_dir: Path,
+            ) -> None:
+                extract_dir.mkdir(parents=True, exist_ok=True)
+                (extract_dir / executable).write_bytes(b"verified binary")
+
+            fake_module_file = root / "tools" / "fetch_croc.py"
+            with (
+                mock.patch.object(fetch_croc, "__file__", str(fake_module_file)),
+                mock.patch.object(fetch_croc, "pick_asset", return_value=asset),
+                mock.patch.object(fetch_croc, "extract_archive", side_effect=fake_extract),
+            ):
+                fetch_croc.main([])
+
+            self.assertEqual(destination.read_bytes(), b"verified binary")
 
 
 if __name__ == "__main__":
