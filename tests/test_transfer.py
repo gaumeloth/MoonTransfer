@@ -40,6 +40,20 @@ class TransferStateMachineTests(unittest.TestCase):
         self.assertEqual(machine.state, TransferState.REJECTED)
         self.assertFalse(machine.active)
 
+    def test_receive_state_machine_models_destination_check(self) -> None:
+        machine = TransferStateMachine(RECEIVE_TRANSITIONS)
+
+        machine.transition(TransferState.PREPARING)
+        machine.transition(TransferState.TRANSFERRING_METADATA)
+        machine.transition(TransferState.AWAITING_DECISION)
+        machine.transition(TransferState.CHECKING_DESTINATION)
+        machine.transition(TransferState.TRANSFERRING_FILE)
+        machine.transition(TransferState.VERIFYING)
+        machine.transition(TransferState.COMPLETED)
+
+        self.assertEqual(machine.state, TransferState.COMPLETED)
+        self.assertFalse(machine.active)
+
     def test_invalid_transition_is_rejected_without_changing_state(self) -> None:
         machine = TransferStateMachine(SEND_TRANSITIONS)
 

@@ -21,8 +21,8 @@ from PySide6.QtWidgets import (
 from moontransfer import croc
 from moontransfer.desktop import open_folder
 from moontransfer.files import (
+    DestinationCheck,
     DestinationConflict,
-    check_destination,
     unique_destination_path,
 )
 from moontransfer.progress import format_file_size
@@ -287,8 +287,11 @@ class ReceiveTab(QWidget):
         self.controller = ReceiveTransferController(
             croc_path=croc_path,
             runners=self.runners,
-            decision_provider=lambda proposal: self._choose_transfer_action(
+            acceptance_provider=lambda proposal: self._confirm_transfer(
                 proposal
+            ),
+            conflict_resolver=lambda proposal, check: (
+                self._resolve_destination_conflict(proposal, check)
             ),
             parent=self,
         )
@@ -481,35 +484,35 @@ class ReceiveTab(QWidget):
                 f"Impossibile avviare la ricezione.\n\n{exc}",
             )
 
-    def _choose_transfer_action(
+    def _confirm_transfer(
         self,
         proposal: TransferProposal,
-    ) -> ReceiveDecision:
-        destination = self._destination()
-        details = (
-            f"Nome: {proposal.filename}\n"
-            f"Dimensione: {format_file_size(proposal.size)}\n"
-            f"SHA-256: {proposal.sha256}"
-        )
-
+    ) -> bool:
         answer_box = plain_message_box(
             self,
             icon=QMessageBox.Icon.Question,
             title="Accetta trasferimento",
-            text=f"{details}\n\nVuoi ricevere questo file?",
+            text=(
+                f"{self._proposal_details(proposal)}\n\n"
+                "Vuoi ricevere questo file?"
+            ),
             standard_buttons=(
                 QMessageBox.StandardButton.Yes
                 | QMessageBox.StandardButton.No
             ),
             default_button=QMessageBox.StandardButton.No,
         )
-        if answer_box.exec() != QMessageBox.StandardButton.Yes:
-            return ReceiveDecision.reject()
+        return answer_box.exec() == QMessageBox.StandardButton.Yes
 
-        check = check_destination(proposal, destination)
+    def _resolve_destination_conflict(
+        self,
+        proposal: TransferProposal,
+        check: DestinationCheck,
+    ) -> ReceiveDecision:
         if check.conflict == DestinationConflict.NONE:
             return ReceiveDecision.accept(check.path, overwrite=False)
 
+        details = self._proposal_details(proposal)
         if check.conflict == DestinationConflict.IDENTICAL:
             box = plain_message_box(
                 self,
@@ -579,6 +582,14 @@ class ReceiveTab(QWidget):
                 )
 
         return ReceiveDecision.reject()
+
+    @staticmethod
+    def _proposal_details(proposal: TransferProposal) -> str:
+        return (
+            f"Nome: {proposal.filename}\n"
+            f"Dimensione: {format_file_size(proposal.size)}\n"
+            f"SHA-256: {proposal.sha256}"
+        )
 
 
 class MainWindow(QWidget):

@@ -5,19 +5,24 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication, QObject, QProcess, QTimer, Signal
+from PySide6.QtCore import QObject, QProcess, QTimer, Signal
 
 from moontransfer import croc
 from moontransfer.files import (
     CONTROL_METADATA_NAME,
+    DestinationCheck,
+    DestinationConflict,
+    FileFingerprint,
     SessionPaths,
+    check_destination,
     cleanup_session_paths,
     create_session_paths,
     directory_payload_size,
     ensure_receive_capacity,
+    ensure_file_unchanged,
+    fingerprint_file,
     move_verified_file,
     received_path,
-    sha256_file,
     verify_received_file,
 )
 from moontransfer.messages import croc_status_from_line
@@ -36,6 +41,7 @@ from moontransfer.protocol import (
     write_control_file,
 )
 from moontransfer.runner import CrocRunner
+from moontransfer.tasks import CancellableTask
 
 
 class TransferState(Enum):
@@ -43,6 +49,7 @@ class TransferState(Enum):
     PREPARING = auto()
     TRANSFERRING_METADATA = auto()
     AWAITING_DECISION = auto()
+    CHECKING_DESTINATION = auto()
     RESPONDING_TO_DECISION = auto()
     TRANSFERRING_FILE = auto()
     VERIFYING = auto()
@@ -123,6 +130,15 @@ RECEIVE_TRANSITIONS: Mapping[TransferState, frozenset[TransferState]] = {
     ),
     TransferState.AWAITING_DECISION: frozenset(
         {
+            TransferState.CHECKING_DESTINATION,
+            TransferState.RESPONDING_TO_DECISION,
+            TransferState.TRANSFERRING_FILE,
+            TransferState.CANCELLED,
+            TransferState.FAILED,
+        }
+    ),
+    TransferState.CHECKING_DESTINATION: frozenset(
+        {
             TransferState.RESPONDING_TO_DECISION,
             TransferState.TRANSFERRING_FILE,
             TransferState.CANCELLED,
@@ -202,6 +218,7 @@ class ReceiveDecision:
 @dataclass
 class SendSession:
     source_path: Path
+    fingerprint: FileFingerprint | None = None
     paths: SessionPaths | None = None
     proposal: TransferProposal | None = None
     metadata_code: str | None = None
@@ -249,6 +266,11 @@ class BaseTransferController(QObject):
         self.machine = TransferStateMachine(transitions)
         self.stopping = False
         self.timeout_stage = ""
+        self._task: CancellableTask | None = None
+        self._task_success: Callable[[object], None] | None = None
+        self._task_failure: Callable[[Exception], None] | None = None
+        self._task_cancelled: Callable[[], None] | None = None
+        self._task_complete_on_cancel = False
 
         for name, runner in self.runners.items():
             runner.on_line = (
@@ -291,6 +313,85 @@ class BaseTransferController(QObject):
         for runner in self.runners.values():
             runner.stop()
         self.stopping = False
+
+    def _start_task(
+        self,
+        operation: Callable[[Callable[[], bool]], object],
+        *,
+        on_success: Callable[[object], None],
+        on_failure: Callable[[Exception], None],
+        on_cancelled: Callable[[], None] | None = None,
+        complete_on_cancel: bool = False,
+    ) -> None:
+        if self._task is not None:
+            raise RuntimeError("Un'operazione in background è già in corso.")
+
+        task = CancellableTask(operation)
+        task.finished.connect(self._on_task_finished)
+        self._task = task
+        self._task_success = on_success
+        self._task_failure = on_failure
+        self._task_cancelled = on_cancelled
+        self._task_complete_on_cancel = complete_on_cancel
+        task.start()
+
+    def _on_task_finished(self) -> None:
+        task = self.sender()
+        if not isinstance(task, CancellableTask):
+            return
+
+        if task is not self._task:
+            task.deleteLater()
+            return
+
+        self._consume_task(task)
+
+    def _consume_task(self, task: CancellableTask) -> None:
+        on_success = self._task_success
+        on_failure = self._task_failure
+        on_cancelled = self._task_cancelled
+        self._clear_task_reference()
+        task.deleteLater()
+
+        if task.was_cancelled:
+            if on_cancelled:
+                on_cancelled()
+            return
+        if task.error is not None:
+            if on_failure:
+                on_failure(task.error)
+            return
+        if on_success:
+            on_success(task.result)
+
+    def _cancel_task(self) -> bool:
+        task = self._task
+        if task is None:
+            return False
+
+        complete_on_cancel = self._task_complete_on_cancel
+        task.cancel()
+        if task.isRunning():
+            task.wait()
+
+        if (
+            complete_on_cancel
+            and not task.was_cancelled
+            and task.error is None
+        ):
+            self._consume_task(task)
+            return True
+
+        self._clear_task_reference()
+        task.deleteLater()
+        return False
+
+    def _clear_task_reference(self) -> None:
+        self._task = None
+        self._task_success = None
+        self._task_failure = None
+        self._task_cancelled = None
+        self._task_complete_on_cancel = False
 
     def _start_control_timeout(self, stage: str) -> None:
         self.timeout_stage = stage
@@ -354,28 +455,53 @@ class SendTransferController(BaseTransferController):
         if self.active or self.any_running():
             raise RuntimeError("Un trasferimento è già in corso.")
 
+        self._cancel_task()
         self._cleanup_session()
         self.session = SendSession(source_path=source_path)
         self._transition(TransferState.PREPARING)
         self.code_changed.emit(None)
         self.status_changed.emit("Calcolo hash SHA-256 del file...")
-        QCoreApplication.processEvents()
 
         try:
-            size = source_path.stat().st_size
             validate_filename(source_path.name)
-            digest = sha256_file(source_path)
+            self._start_task(
+                lambda cancel_requested: fingerprint_file(
+                    source_path,
+                    cancel_requested=cancel_requested,
+                ),
+                on_success=self._on_source_fingerprinted,
+                on_failure=lambda exc: self._abort_session(
+                    "Impossibile preparare il trasferimento.",
+                    exc,
+                ),
+            )
+        except Exception as exc:
+            self._abort_session("Impossibile preparare il trasferimento.", exc)
+
+    def _on_source_fingerprinted(self, result: object) -> None:
+        if not self.active or self.state != TransferState.PREPARING:
+            return
+        if not isinstance(result, FileFingerprint):
+            self._abort_session(
+                "Impossibile preparare il trasferimento.",
+                TypeError("Risultato del calcolo SHA-256 non valido."),
+            )
+            return
+
+        session = self._require_session()
+        try:
             proposal = create_proposal(
-                filename=source_path.name,
-                size=size,
-                sha256=digest,
+                filename=session.source_path.name,
+                size=result.size,
+                sha256=result.sha256,
             )
             metadata_code = generate_croc_code()
             paths = create_session_paths()
 
-            self.session.proposal = proposal
-            self.session.metadata_code = metadata_code
-            self.session.paths = paths
+            session.fingerprint = result
+            session.proposal = proposal
+            session.metadata_code = metadata_code
+            session.paths = paths
             metadata_path = paths.metadata_send / CONTROL_METADATA_NAME
             write_control_file(metadata_path, proposal)
         except Exception as exc:
@@ -399,6 +525,7 @@ class SendTransferController(BaseTransferController):
 
         self.status_changed.emit("Interruzione dell'invio in corso...")
         self._stop_control_timeout()
+        self._cancel_task()
         self._stop_runners()
         self.progress_finished.emit(False)
         self._cleanup_session()
@@ -428,8 +555,17 @@ class SendTransferController(BaseTransferController):
 
     def _start_main_sender(self) -> None:
         session = self._require_session()
-        if not session.proposal or not session.paths:
+        if not session.proposal or not session.paths or not session.fingerprint:
             self._abort_session("Sessione di invio incompleta.")
+            return
+
+        try:
+            ensure_file_unchanged(session.source_path, session.fingerprint)
+        except Exception as exc:
+            self._abort_session(
+                "Il file selezionato è cambiato prima dell'invio.",
+                exc,
+            )
             return
 
         self.terminal_line.emit(
@@ -533,6 +669,7 @@ class SendTransferController(BaseTransferController):
         exc: Exception | None = None,
     ) -> None:
         self._stop_control_timeout()
+        self._cancel_task()
         self._stop_runners()
         self._cleanup_session()
         if self.active:
@@ -560,7 +697,11 @@ class ReceiveTransferController(BaseTransferController):
         *,
         croc_path: str,
         runners: dict[str, CrocRunner],
-        decision_provider: Callable[[TransferProposal], ReceiveDecision],
+        acceptance_provider: Callable[[TransferProposal], bool],
+        conflict_resolver: Callable[
+            [TransferProposal, DestinationCheck],
+            ReceiveDecision,
+        ],
         parent: QObject | None = None,
     ) -> None:
         super().__init__(
@@ -569,7 +710,8 @@ class ReceiveTransferController(BaseTransferController):
             transitions=RECEIVE_TRANSITIONS,
             parent=parent,
         )
-        self.decision_provider = decision_provider
+        self.acceptance_provider = acceptance_provider
+        self.conflict_resolver = conflict_resolver
         self.session: ReceiveSession | None = None
 
         self.receive_size_timer = QTimer(self)
@@ -580,6 +722,7 @@ class ReceiveTransferController(BaseTransferController):
         if self.active or self.any_running():
             raise RuntimeError("Un trasferimento è già in corso.")
 
+        self._cancel_task()
         self._cleanup_session()
         self.session = ReceiveSession(
             metadata_code=metadata_code,
@@ -619,6 +762,8 @@ class ReceiveTransferController(BaseTransferController):
         self.status_changed.emit("Interruzione della ricezione in corso...")
         self._stop_control_timeout()
         self._stop_receive_size_monitor()
+        if self._cancel_task():
+            return
         self._stop_runners()
         self.progress_finished.emit(False)
         self._cleanup_session()
@@ -795,37 +940,92 @@ class ReceiveTransferController(BaseTransferController):
             session.proposal = read_proposal(metadata_path)
             self.progress_preview_changed.emit(session.proposal.size)
             self._transition(TransferState.AWAITING_DECISION)
-            decision = self.decision_provider(session.proposal)
-            if not decision.accepted:
-                self._schedule_main_response(False)
-                return
-            if decision.target is None:
-                raise RuntimeError("Destinazione del trasferimento mancante.")
-
-            try:
-                decision.target.parent.mkdir(parents=True, exist_ok=True)
-                ensure_receive_capacity(
-                    session.paths.main_receive,
-                    session.proposal.size,
-                )
-                if (
-                    decision.target.parent.stat().st_dev
-                    != session.paths.main_receive.stat().st_dev
-                ):
-                    ensure_receive_capacity(
-                        decision.target.parent,
-                        session.proposal.size,
-                    )
-            except OSError as exc:
-                self._emit_error("Spazio insufficiente", str(exc))
+            if not self.acceptance_provider(session.proposal):
                 self._schedule_main_response(False)
                 return
 
-            session.target_path = decision.target
-            session.target_overwrite = decision.overwrite
-            self._schedule_main_response(True)
+            self._transition(TransferState.CHECKING_DESTINATION)
+            self.status_changed.emit("Controllo della destinazione...")
+            self._start_task(
+                lambda cancel_requested: check_destination(
+                    session.proposal,
+                    session.destination,
+                    cancel_requested=cancel_requested,
+                ),
+                on_success=self._on_destination_checked,
+                on_failure=lambda exc: self._abort_session(
+                    "Impossibile controllare la destinazione.",
+                    exc,
+                ),
+            )
         except Exception as exc:
             self._abort_session("Metadati ricevuti non validi.", exc)
+
+    def _on_destination_checked(self, result: object) -> None:
+        if not self.active or self.state != TransferState.CHECKING_DESTINATION:
+            return
+        if not isinstance(result, DestinationCheck):
+            self._abort_session(
+                "Impossibile controllare la destinazione.",
+                TypeError("Risultato del controllo destinazione non valido."),
+            )
+            return
+
+        session = self._require_session()
+        if not session.paths or not session.proposal:
+            self._abort_session("Sessione di ricezione incompleta.")
+            return
+
+        try:
+            if result.conflict == DestinationConflict.NONE:
+                decision = ReceiveDecision.accept(
+                    result.path,
+                    overwrite=False,
+                )
+            else:
+                decision = self.conflict_resolver(
+                    session.proposal,
+                    result,
+                )
+            self._apply_receive_decision(decision)
+        except Exception as exc:
+            self._abort_session(
+                "Impossibile preparare la destinazione.",
+                exc,
+            )
+
+    def _apply_receive_decision(self, decision: ReceiveDecision) -> None:
+        session = self._require_session()
+        if not session.paths or not session.proposal:
+            raise RuntimeError("Sessione di ricezione incompleta.")
+        if not decision.accepted:
+            self._schedule_main_response(False)
+            return
+        if decision.target is None:
+            raise RuntimeError("Destinazione del trasferimento mancante.")
+
+        try:
+            decision.target.parent.mkdir(parents=True, exist_ok=True)
+            ensure_receive_capacity(
+                session.paths.main_receive,
+                session.proposal.size,
+            )
+            if (
+                decision.target.parent.stat().st_dev
+                != session.paths.main_receive.stat().st_dev
+            ):
+                ensure_receive_capacity(
+                    decision.target.parent,
+                    session.proposal.size,
+                )
+        except OSError as exc:
+            self._emit_error("Spazio insufficiente", str(exc))
+            self._schedule_main_response(False)
+            return
+
+        session.target_path = decision.target
+        session.target_overwrite = decision.overwrite
+        self._schedule_main_response(True)
 
     def _handle_main_received(self) -> None:
         session = self._require_session()
@@ -840,23 +1040,66 @@ class ReceiveTransferController(BaseTransferController):
             session.proposal.filename,
         )
         try:
-            verify_received_file(source, session.proposal)
-            saved_path = move_verified_file(
-                source,
-                session.target_path,
-                overwrite=session.target_overwrite,
+            proposal = session.proposal
+            target_path = session.target_path
+            target_overwrite = session.target_overwrite
+            self.status_changed.emit("Verifica integrità del file ricevuto...")
+            self._start_task(
+                lambda cancel_requested: self._verify_and_store_file(
+                    source=source,
+                    proposal=proposal,
+                    target_path=target_path,
+                    target_overwrite=target_overwrite,
+                    cancel_requested=cancel_requested,
+                ),
+                on_success=self._on_received_file_stored,
+                on_failure=lambda exc: self._abort_session(
+                    "Verifica o salvataggio del file non riusciti.",
+                    exc,
+                ),
+                complete_on_cancel=True,
             )
         except Exception as exc:
             self._abort_session(
                 "Verifica o salvataggio del file non riusciti.",
                 exc,
             )
+
+    @staticmethod
+    def _verify_and_store_file(
+        *,
+        source: Path,
+        proposal: TransferProposal,
+        target_path: Path,
+        target_overwrite: bool,
+        cancel_requested: Callable[[], bool],
+    ) -> Path:
+        verify_received_file(
+            source,
+            proposal,
+            cancel_requested=cancel_requested,
+        )
+        return move_verified_file(
+            source,
+            target_path,
+            overwrite=target_overwrite,
+            cancel_requested=cancel_requested,
+        )
+
+    def _on_received_file_stored(self, result: object) -> None:
+        if not self.active or self.state != TransferState.VERIFYING:
+            return
+        if not isinstance(result, Path):
+            self._abort_session(
+                "Verifica o salvataggio del file non riusciti.",
+                TypeError("Percorso finale del file non valido."),
+            )
             return
 
         self.progress_finished.emit(True)
         self._cleanup_session()
         self._transition(TransferState.COMPLETED)
-        self.status_changed.emit(f"Ricezione completata: {saved_path}")
+        self.status_changed.emit(f"Ricezione completata: {result}")
 
     def _abort_session(
         self,
@@ -870,6 +1113,7 @@ class ReceiveTransferController(BaseTransferController):
         )
         self._stop_control_timeout()
         self._stop_receive_size_monitor()
+        self._cancel_task()
         self._stop_runners()
         if accepted:
             self.progress_finished.emit(False)
