@@ -14,6 +14,11 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from moontransfer.app import ReceiveTab, SendTab
 from moontransfer.files import cleanup_session_paths, create_session_paths
 from moontransfer.protocol import create_proposal, write_control_file
+from moontransfer.transfer import (
+    ReceiveDecision,
+    ReceiveSession,
+    TransferState,
+)
 
 
 class _RunnerState:
@@ -87,11 +92,11 @@ class ReceiveFlowSecurityTests(unittest.TestCase):
             mock.patch("moontransfer.app.plain_message_box", return_value=answer_box),
             mock.patch("moontransfer.app.check_destination") as check_destination,
         ):
-            accepted, target, overwrite = tab._choose_transfer_action(proposal)
+            decision = tab._choose_transfer_action(proposal)
 
-        self.assertFalse(accepted)
-        self.assertIsNone(target)
-        self.assertFalse(overwrite)
+        self.assertFalse(decision.accepted)
+        self.assertIsNone(decision.target)
+        self.assertFalse(decision.overwrite)
         check_destination.assert_not_called()
 
     def test_receive_monitor_aborts_oversized_metadata(self) -> None:
@@ -103,17 +108,24 @@ class ReceiveFlowSecurityTests(unittest.TestCase):
             paths = create_session_paths(main_receive_parent=destination)
             try:
                 (paths.metadata_receive / "oversized.bin").write_bytes(b"1234")
-                tab.paths = paths
-                tab.session_active = True
-                tab.receive_size_limit = 3
-                tab.receive_size_stage = "test metadati"
-                tab.runners = {
+                tab.controller.session = ReceiveSession(
+                    metadata_code="1" * 32,
+                    destination=destination,
+                    paths=paths,
+                    receive_size_limit=3,
+                    receive_size_stage="test metadati",
+                )
+                tab.controller.machine.state = TransferState.TRANSFERRING_METADATA
+                tab.controller.runners = {
                     "metadata_receive": _RunnerState(True),
                     "main_receive": _RunnerState(False),
                 }
 
-                with mock.patch.object(tab, "_abort_session") as abort:
-                    tab._check_receive_size()
+                with mock.patch.object(
+                    tab.controller,
+                    "_abort_session",
+                ) as abort:
+                    tab.controller._check_receive_size()
 
                 abort.assert_called_once()
                 self.assertIn(
@@ -121,7 +133,8 @@ class ReceiveFlowSecurityTests(unittest.TestCase):
                     abort.call_args.args[0],
                 )
             finally:
-                tab.receive_size_timer.stop()
+                tab.controller.receive_size_timer.stop()
+                tab.controller.session = None
                 cleanup_session_paths(paths)
 
 
@@ -144,20 +157,60 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
             tab._start_send()
             metadata_runner = tab.runners["metadata_send"]
             main_runner = tab.runners["main_send"]
-            session_root = tab.paths.root if tab.paths else None
+            session = tab.controller.session
+            session_root = (
+                session.paths.root
+                if session is not None and session.paths is not None
+                else None
+            )
 
             self.assertTrue(metadata_runner.is_running())
             self.assertFalse(main_runner.is_running())
             self.assertRegex(tab.code_edit.text(), r"^[0-9a-f]{32}$")
+            self.assertEqual(
+                tab.controller.state,
+                TransferState.TRANSFERRING_METADATA,
+            )
 
             metadata_runner.finish()
             self.assertTrue(main_runner.is_running())
+            self.assertEqual(
+                tab.controller.state,
+                TransferState.AWAITING_DECISION,
+            )
 
             main_runner.finish()
             self.assertEqual(tab.status_label.text(), "Invio completato.")
-            self.assertFalse(tab.session_active)
+            self.assertEqual(
+                tab.controller.state,
+                TransferState.COMPLETED,
+            )
+            self.assertFalse(tab.controller.active)
             self.assertIsNotNone(session_root)
             assert session_root is not None
+            self.assertFalse(session_root.exists())
+
+    def test_send_failure_cleans_session_and_enters_failed_state(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch("moontransfer.app.CrocRunner", _FakeCrocRunner),
+        ):
+            source = Path(tmp) / "example.txt"
+            source.write_bytes(b"content")
+            with mock.patch("moontransfer.widgets.QTimer.singleShot"):
+                tab = SendTab("/fake/croc")
+            tab.file_edit.setText(str(source))
+            tab._start_send()
+            session = tab.controller.session
+            assert session is not None
+            assert session.paths is not None
+            session_root = session.paths.root
+
+            tab.runners["metadata_send"].finish(exit_code=1)
+
+            self.assertEqual(tab.controller.state, TransferState.FAILED)
+            self.assertFalse(tab.controller.active)
+            self.assertIsNone(tab.controller.session)
             self.assertFalse(session_root.exists())
 
     def test_receive_accept_flow_verifies_and_saves_file(self) -> None:
@@ -179,10 +232,12 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
             tab.code_edit.setText("1" * 32)
             tab.dest_edit.setText(str(destination))
             tab._start_receive()
-            assert tab.paths is not None
+            session = tab.controller.session
+            assert session is not None
+            assert session.paths is not None
 
             metadata_path = (
-                tab.paths.metadata_receive / "moontransfer-metadata.json"
+                session.paths.metadata_receive / "moontransfer-metadata.json"
             )
             write_control_file(metadata_path, proposal)
             target = destination / proposal.filename
@@ -191,10 +246,13 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
                 mock.patch.object(
                     tab,
                     "_choose_transfer_action",
-                    return_value=(True, target, False),
+                    return_value=ReceiveDecision.accept(
+                        target,
+                        overwrite=False,
+                    ),
                 ),
                 mock.patch(
-                    "moontransfer.app.QTimer.singleShot",
+                    "moontransfer.transfer.QTimer.singleShot",
                     side_effect=lambda _delay, callback: callback(),
                 ),
             ):
@@ -203,13 +261,21 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
             main_runner = tab.runners["main_receive"]
             self.assertTrue(main_runner.is_running())
             self.assertEqual(main_runner.stdin_writes, [("y\n", True)])
+            self.assertEqual(
+                tab.controller.state,
+                TransferState.TRANSFERRING_FILE,
+            )
 
-            received = tab.paths.main_receive / proposal.filename
+            received = session.paths.main_receive / proposal.filename
             received.write_bytes(b"content")
             main_runner.finish()
 
             self.assertEqual(target.read_bytes(), b"content")
-            self.assertFalse(tab.session_active)
+            self.assertEqual(
+                tab.controller.state,
+                TransferState.COMPLETED,
+            )
+            self.assertFalse(tab.controller.active)
             self.assertIn("Ricezione completata:", tab.status_label.text())
 
     def test_receive_reject_flow_answers_main_prompt(self) -> None:
@@ -228,9 +294,11 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
             tab.code_edit.setText("2" * 32)
             tab.dest_edit.setText(str(destination))
             tab._start_receive()
-            assert tab.paths is not None
+            session = tab.controller.session
+            assert session is not None
+            assert session.paths is not None
             write_control_file(
-                tab.paths.metadata_receive / "moontransfer-metadata.json",
+                session.paths.metadata_receive / "moontransfer-metadata.json",
                 proposal,
             )
 
@@ -238,10 +306,10 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
                 mock.patch.object(
                     tab,
                     "_choose_transfer_action",
-                    return_value=(False, None, False),
+                    return_value=ReceiveDecision.reject(),
                 ),
                 mock.patch(
-                    "moontransfer.app.QTimer.singleShot",
+                    "moontransfer.transfer.QTimer.singleShot",
                     side_effect=lambda _delay, callback: callback(),
                 ),
             ):
@@ -251,8 +319,37 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
             self.assertEqual(main_runner.stdin_writes, [("n\n", True)])
             main_runner.finish()
 
-            self.assertFalse(tab.session_active)
+            self.assertEqual(
+                tab.controller.state,
+                TransferState.REJECTED,
+            )
+            self.assertFalse(tab.controller.active)
             self.assertEqual(tab.status_label.text(), "Trasferimento rifiutato.")
+
+    def test_receive_stop_cleans_control_and_staging_directories(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch("moontransfer.app.CrocRunner", _FakeCrocRunner),
+        ):
+            destination = Path(tmp) / "destination"
+            with mock.patch("moontransfer.widgets.QTimer.singleShot"):
+                tab = ReceiveTab("/fake/croc")
+            tab.code_edit.setText("3" * 32)
+            tab.dest_edit.setText(str(destination))
+            tab._start_receive()
+            session = tab.controller.session
+            assert session is not None
+            assert session.paths is not None
+            session_root = session.paths.root
+            staging = session.paths.main_receive
+
+            tab._stop_receive()
+
+            self.assertEqual(tab.controller.state, TransferState.CANCELLED)
+            self.assertFalse(tab.controller.active)
+            self.assertIsNone(tab.controller.session)
+            self.assertFalse(session_root.exists())
+            self.assertFalse(staging.exists())
 
 
 if __name__ == "__main__":
