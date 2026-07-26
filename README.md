@@ -730,8 +730,11 @@ separate `CONTRIBUTING.md`. In that case:
 Use the existing module boundaries when choosing where to make a change:
 
 - `src/moontransfer/app.py`: application entry point, main window, send tab,
-  receive tab, high-level GUI flow, user dialogs, and coordination between
-  transfer steps.
+  receive tab, input validation, user dialogs, and binding controller events to
+  the GUI.
+- `src/moontransfer/transfer.py`: explicit transfer states, send and receive
+  controllers, session lifecycle, process and timeout coordination, metadata
+  flow, receive limits, final verification, and cleanup.
 - `src/moontransfer/widgets.py`: reusable Qt widgets such as the status label,
   technical output panel, terminal-like output view, and transfer progress
   widget.
@@ -972,13 +975,16 @@ test suite before committing.
 - MoonTransfer starts `croc` with `QProcess`, without going through shells such
   as bash, fish, or PowerShell.
 - `src/moontransfer/app.py` keeps the application entry point, main window, and
-  send/receive tabs. Reusable behavior is split into smaller modules:
-  `croc.py` for `croc` command construction, `protocol.py` for the
-  MoonTransfer control JSON messages, `files.py` for hashing, temporary
-  directories, conflict checks, and final file placement, `progress.py` for
-  transfer output parsing, `messages.py` for user-facing status text,
-  `desktop.py` for file manager integration, `runner.py` for `QProcess`
-  handling, and `widgets.py` for shared Qt widgets.
+  send/receive tabs. It owns widget layout, local input validation, user
+  dialogs, and presentation of controller events. `transfer.py` owns the
+  explicit state machines and the orchestration of metadata and main-file
+  processes, timeouts, session resources, verification, and cleanup. Other
+  reusable behavior is split into `croc.py` for `croc` command construction,
+  `protocol.py` for MoonTransfer control JSON messages, `files.py` for hashing,
+  temporary directories, conflict checks, and final file placement,
+  `progress.py` for transfer output parsing, `messages.py` for user-facing
+  status text, `desktop.py` for file manager integration, `runner.py` for
+  `QProcess` handling, and `widgets.py` for shared Qt widgets.
 - The bundled `croc` version is pinned in `pyproject.toml`; supported release
   archives are verified with versioned SHA-256 hashes before extraction.
 - When sending, MoonTransfer generates metadata and main file codes itself. The
@@ -1042,6 +1048,7 @@ MoonTransfer/
 │     ├─ protocol.py
 │     ├─ progress.py
 │     ├─ runner.py
+│     ├─ transfer.py
 │     └─ widgets.py
 ├─ tools/
 │  ├─ build.py
@@ -1051,6 +1058,7 @@ MoonTransfer/
 │  ├─ build.ps1
 │  └─ build.sh
 ├─ tests/
+│  ├─ test_app.py
 │  ├─ test_check_latest_croc.py
 │  ├─ test_croc.py
 │  ├─ test_desktop.py
@@ -1059,7 +1067,9 @@ MoonTransfer/
 │  ├─ test_messages.py
 │  ├─ test_protocol.py
 │  ├─ test_progress.py
-│  └─ test_runner.py
+│  ├─ test_runner.py
+│  ├─ test_transfer.py
+│  └─ test_widgets.py
 ├─ README.md
 ├─ README.it.md
 ├─ LICENSE
