@@ -37,7 +37,11 @@ def safe_extract_tar(tar: tarfile.TarFile, dst: Path) -> None:
             raise RuntimeError(f"Path traversal in tar archive: {member.name}")
         if member.issym() or member.islnk():
             raise RuntimeError(f"Links are not supported in tar archive: {member.name}")
-    tar.extractall(dst)
+        if not member.isfile() and not member.isdir():
+            raise RuntimeError(
+                f"Special files are not supported in tar archive: {member.name}"
+            )
+    tar.extractall(dst, filter="data")
 
 
 def safe_extract_zip(zip_file: zipfile.ZipFile, dst: Path) -> None:
@@ -388,12 +392,10 @@ def main(argv: list[str] | None = None) -> None:
     asset = pick_asset(target_version)
     expected_hash = expected_hash_for_asset(asset, hashes)
 
-    if dest.exists() and installed_version == target_version:
-        print(f"[ok] croc v{installed_version} already installed: {dest}")
-        return
-
     if installed_version:
         print(f"[local] croc installed: v{installed_version}")
+        if dest.exists() and installed_version == target_version:
+            print("[local] reinstalling from the verified pinned archive")
     else:
         print("[local] croc is not installed")
 

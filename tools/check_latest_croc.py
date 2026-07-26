@@ -8,6 +8,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,6 +24,32 @@ from tools import fetch_croc
 
 
 DEFAULT_TIMEOUT = 120
+COMPATIBILITY_ENV_KEYS = frozenset(
+    {
+        "ALL_PROXY",
+        "COMSPEC",
+        "CURL_CA_BUNDLE",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "NO_PROXY",
+        "NUMBER_OF_PROCESSORS",
+        "PATHEXT",
+        "PROCESSOR_ARCHITECTURE",
+        "PROCESSOR_IDENTIFIER",
+        "REQUESTS_CA_BUNDLE",
+        "SSL_CERT_DIR",
+        "SSL_CERT_FILE",
+        "SYSTEMROOT",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "TZ",
+        "WINDIR",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -110,10 +137,38 @@ def extracted_binary_path(root: Path, asset: str, archive: Path) -> Path:
     return found
 
 
-def command_output(args: list[str], *, cwd: Path | None = None, timeout: int = 30) -> str:
+def compatibility_process_environment(
+    config_dir: Path,
+    *,
+    secret: str | None = None,
+    base_env: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    source = os.environ if base_env is None else base_env
+    environment = {
+        key: value
+        for key, value in source.items()
+        if key.upper() in COMPATIBILITY_ENV_KEYS
+    }
+    environment.update(
+        croc.build_process_environment(
+            config_dir,
+            secret=secret,
+        )
+    )
+    return environment
+
+
+def command_output(
+    args: list[str],
+    *,
+    env: Mapping[str, str],
+    cwd: Path | None = None,
+    timeout: int = 30,
+) -> str:
     result = subprocess.run(
         args,
         cwd=str(cwd) if cwd else None,
+        env=dict(env),
         check=False,
         text=True,
         capture_output=True,
@@ -157,19 +212,22 @@ def run_smoke_tests(binary: Path, version: str) -> None:
 
     version_command, send_help_command, receive_help_command = smoke_command_args(binary)
 
-    version_output = command_output(version_command)
-    if f"v{fetch_croc.normalize_version(version)}" not in version_output:
-        raise RuntimeError(
-            f"Unexpected croc version output for {binary}:\n{version_output}"
-        )
+    with tempfile.TemporaryDirectory(prefix="moontransfer-croc-smoke-") as tmp:
+        environment = compatibility_process_environment(Path(tmp) / "croc-config")
 
-    send_help = command_output(send_help_command)
-    if "--no-local" not in send_help:
-        raise RuntimeError("Latest croc send help does not mention --no-local")
+        version_output = command_output(version_command, env=environment)
+        if f"v{fetch_croc.normalize_version(version)}" not in version_output:
+            raise RuntimeError(
+                f"Unexpected croc version output for {binary}:\n{version_output}"
+            )
 
-    receive_help = command_output(receive_help_command)
-    if "--overwrite" not in receive_help:
-        raise RuntimeError("Latest croc help does not mention --overwrite")
+        send_help = command_output(send_help_command, env=environment)
+        if "--no-local" not in send_help:
+            raise RuntimeError("Latest croc send help does not mention --no-local")
+
+        receive_help = command_output(receive_help_command, env=environment)
+        if "--overwrite" not in receive_help:
+            raise RuntimeError("Latest croc help does not mention --overwrite")
 
     preview = croc.build_secret_preview(str(binary), croc.build_receive_args())
     if "CROC_SECRET=<hidden>" not in preview:
@@ -212,14 +270,7 @@ def run_transfer_test(binary: Path, *, timeout: int = DEFAULT_TIMEOUT) -> None:
             stderr=subprocess.STDOUT,
             text=True,
             cwd=str(source_dir),
-            env={
-                **{
-                    key: value
-                    for key, value in os.environ.items()
-                    if key != croc.CROC_SECRET_ENV
-                },
-                **croc.build_process_environment(base / "sender-croc-config"),
-            },
+            env=compatibility_process_environment(base / "sender-croc-config"),
         )
 
         assert sender.stdout is not None
@@ -255,12 +306,9 @@ def run_transfer_test(binary: Path, *, timeout: int = DEFAULT_TIMEOUT) -> None:
                     + "".join(sender_output[-40:])
                 )
 
-            receiver_env = os.environ.copy()
-            receiver_env.update(
-                croc.build_process_environment(
-                    base / "receiver-croc-config",
-                    secret=code,
-                )
+            receiver_env = compatibility_process_environment(
+                base / "receiver-croc-config",
+                secret=code,
             )
             receiver = subprocess.Popen(
                 [str(binary), *croc.build_receive_args()],
