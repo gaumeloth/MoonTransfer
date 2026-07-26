@@ -251,6 +251,7 @@ class BaseTransferController(QObject):
     progress_total_changed = Signal(int)
     progress_sampled = Signal(object)
     progress_finished = Signal(bool)
+    shutdown_finished = Signal()
 
     def __init__(
         self,
@@ -271,13 +272,15 @@ class BaseTransferController(QObject):
         self._task_failure: Callable[[Exception], None] | None = None
         self._task_cancelled: Callable[[], None] | None = None
         self._task_complete_on_cancel = False
+        self._shutdown_finalizer: Callable[[], None] | None = None
+        self._shutdown_complete_task = False
 
         for name, runner in self.runners.items():
             runner.on_line = (
                 lambda line, role=name: self._on_runner_line(role, line)
             )
             runner.on_finished = (
-                lambda exit_code, exit_status, role=name: self._on_runner_finished(
+                lambda exit_code, exit_status, role=name: self._handle_runner_finished(
                     role,
                     exit_code,
                     exit_status,
@@ -296,6 +299,15 @@ class BaseTransferController(QObject):
     def active(self) -> bool:
         return self.machine.active
 
+    @property
+    def busy(self) -> bool:
+        return (
+            self.active
+            or self.stopping
+            or self._task is not None
+            or self.any_running()
+        )
+
     def any_running(self) -> bool:
         return any(runner.is_running() for runner in self.runners.values())
 
@@ -309,10 +321,8 @@ class BaseTransferController(QObject):
             self.active_changed.emit(self.active)
 
     def _stop_runners(self) -> None:
-        self.stopping = True
         for runner in self.runners.values():
             runner.stop()
-        self.stopping = False
 
     def _start_task(
         self,
@@ -344,7 +354,28 @@ class BaseTransferController(QObject):
             task.deleteLater()
             return
 
+        if self.stopping:
+            self._finish_task_during_shutdown(task)
+            return
+
         self._consume_task(task)
+
+    def _finish_task_during_shutdown(self, task: CancellableTask) -> None:
+        if (
+            self._shutdown_complete_task
+            and self._task_complete_on_cancel
+            and not task.was_cancelled
+            and task.error is None
+            and not self.any_running()
+        ):
+            self._clear_shutdown()
+            self._consume_task(task)
+            self.shutdown_finished.emit()
+            return
+
+        self._clear_task_reference()
+        task.deleteLater()
+        self._maybe_finish_shutdown()
 
     def _consume_task(self, task: CancellableTask) -> None:
         on_success = self._task_success
@@ -364,34 +395,60 @@ class BaseTransferController(QObject):
         if on_success:
             on_success(task.result)
 
-    def _cancel_task(self) -> bool:
-        task = self._task
-        if task is None:
-            return False
-
-        complete_on_cancel = self._task_complete_on_cancel
-        task.cancel()
-        if task.isRunning():
-            task.wait()
-
-        if (
-            complete_on_cancel
-            and not task.was_cancelled
-            and task.error is None
-        ):
-            self._consume_task(task)
-            return True
-
-        self._clear_task_reference()
-        task.deleteLater()
-        return False
-
     def _clear_task_reference(self) -> None:
         self._task = None
         self._task_success = None
         self._task_failure = None
         self._task_cancelled = None
         self._task_complete_on_cancel = False
+
+    def _begin_shutdown(
+        self,
+        finalizer: Callable[[], None],
+        *,
+        completed_task_wins: bool = False,
+    ) -> None:
+        if self.stopping:
+            return
+
+        self.stopping = True
+        self._shutdown_finalizer = finalizer
+        self._shutdown_complete_task = completed_task_wins
+        if self._task is not None:
+            self._task.cancel()
+        self._stop_runners()
+        self._maybe_finish_shutdown()
+
+    def _handle_runner_finished(
+        self,
+        runner_name: str,
+        exit_code: int,
+        exit_status: QProcess.ExitStatus,
+    ) -> None:
+        if self.stopping:
+            self._maybe_finish_shutdown()
+            return
+
+        self._on_runner_finished(runner_name, exit_code, exit_status)
+
+    def _maybe_finish_shutdown(self) -> None:
+        if (
+            not self.stopping
+            or self._task is not None
+            or self.any_running()
+        ):
+            return
+
+        finalizer = self._shutdown_finalizer
+        self._clear_shutdown()
+        if finalizer is not None:
+            finalizer()
+        self.shutdown_finished.emit()
+
+    def _clear_shutdown(self) -> None:
+        self.stopping = False
+        self._shutdown_finalizer = None
+        self._shutdown_complete_task = False
 
     def _start_control_timeout(self, stage: str) -> None:
         self.timeout_stage = stage
@@ -452,10 +509,9 @@ class SendTransferController(BaseTransferController):
         self.session: SendSession | None = None
 
     def start(self, source_path: Path) -> None:
-        if self.active or self.any_running():
+        if self.busy:
             raise RuntimeError("Un trasferimento è già in corso.")
 
-        self._cancel_task()
         self._cleanup_session()
         self.session = SendSession(source_path=source_path)
         self._transition(TransferState.PREPARING)
@@ -520,13 +576,14 @@ class SendTransferController(BaseTransferController):
             self._abort_session("Impossibile avviare il trasferimento.", exc)
 
     def stop(self) -> None:
-        if not self.active and not self.any_running():
+        if not self.busy:
             return
 
         self.status_changed.emit("Interruzione dell'invio in corso...")
         self._stop_control_timeout()
-        self._cancel_task()
-        self._stop_runners()
+        self._begin_shutdown(self._finish_stop)
+
+    def _finish_stop(self) -> None:
         self.progress_finished.emit(False)
         self._cleanup_session()
         if self.active:
@@ -669,8 +726,15 @@ class SendTransferController(BaseTransferController):
         exc: Exception | None = None,
     ) -> None:
         self._stop_control_timeout()
-        self._cancel_task()
-        self._stop_runners()
+        self._begin_shutdown(
+            lambda: self._finish_abort(message, exc),
+        )
+
+    def _finish_abort(
+        self,
+        message: str,
+        exc: Exception | None,
+    ) -> None:
         self._cleanup_session()
         if self.active:
             self._transition(TransferState.FAILED)
@@ -719,10 +783,9 @@ class ReceiveTransferController(BaseTransferController):
         self.receive_size_timer.timeout.connect(self._check_receive_size)
 
     def start(self, metadata_code: str, destination: Path) -> None:
-        if self.active or self.any_running():
+        if self.busy:
             raise RuntimeError("Un trasferimento è già in corso.")
 
-        self._cancel_task()
         self._cleanup_session()
         self.session = ReceiveSession(
             metadata_code=metadata_code,
@@ -756,15 +819,18 @@ class ReceiveTransferController(BaseTransferController):
             )
 
     def stop(self) -> None:
-        if not self.active and not self.any_running():
+        if not self.busy:
             return
 
         self.status_changed.emit("Interruzione della ricezione in corso...")
         self._stop_control_timeout()
         self._stop_receive_size_monitor()
-        if self._cancel_task():
-            return
-        self._stop_runners()
+        self._begin_shutdown(
+            self._finish_stop,
+            completed_task_wins=True,
+        )
+
+    def _finish_stop(self) -> None:
         self.progress_finished.emit(False)
         self._cleanup_session()
         if self.active:
@@ -1113,8 +1179,23 @@ class ReceiveTransferController(BaseTransferController):
         )
         self._stop_control_timeout()
         self._stop_receive_size_monitor()
-        self._cancel_task()
-        self._stop_runners()
+        self._begin_shutdown(
+            lambda: self._finish_abort(
+                message,
+                exc,
+                title=title,
+                accepted=accepted,
+            )
+        )
+
+    def _finish_abort(
+        self,
+        message: str,
+        exc: Exception | None,
+        *,
+        title: str,
+        accepted: bool,
+    ) -> None:
         if accepted:
             self.progress_finished.emit(False)
         self._cleanup_session()

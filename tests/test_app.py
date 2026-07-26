@@ -13,7 +13,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QProcess
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from moontransfer.app import ReceiveTab, SendTab
+from moontransfer.app import MainWindow, ReceiveTab, SendTab
 from moontransfer.cancellation import OperationCancelled
 from moontransfer.files import cleanup_session_paths, create_session_paths
 from moontransfer.protocol import create_proposal, write_control_file
@@ -83,6 +83,16 @@ class _FakeCrocRunner:
         self.running = False
         if self.on_finished:
             self.on_finished(exit_code, exit_status)
+
+
+class _DeferredStopCrocRunner(_FakeCrocRunner):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.stop_requested = False
+
+    def stop(self) -> None:
+        if self.running:
+            self.stop_requested = True
 
 
 class ReceiveFlowSecurityTests(unittest.TestCase):
@@ -453,12 +463,14 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
 
     def test_send_hashing_can_be_cancelled(self) -> None:
         started = Event()
+        release = Event()
 
         def blocking_fingerprint(_path, *, cancel_requested):
             started.set()
-            while not cancel_requested():
-                time.sleep(0.001)
-            raise OperationCancelled
+            release.wait(timeout=2)
+            if cancel_requested():
+                raise OperationCancelled
+            raise AssertionError("Il worker non ha ricevuto la cancellazione.")
 
         with (
             tempfile.TemporaryDirectory() as tmp,
@@ -479,11 +491,61 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
             self.assertEqual(tab.controller.state, TransferState.PREPARING)
             self.assertFalse(tab.runners["metadata_send"].is_running())
 
+            before_stop = time.monotonic()
             tab._stop_send()
+            stop_elapsed = time.monotonic() - before_stop
 
+            self.assertLess(stop_elapsed, 0.25)
+            self.assertEqual(tab.controller.state, TransferState.PREPARING)
+            self.assertTrue(tab.controller.busy)
+            self.assertIsNotNone(tab.controller.session)
+
+            release.set()
+            _wait_until(
+                lambda: tab.controller.state == TransferState.CANCELLED
+            )
             self.assertEqual(tab.controller.state, TransferState.CANCELLED)
             self.assertFalse(tab.controller.active)
             self.assertIsNone(tab.controller.session)
+
+    def test_send_stop_waits_for_process_before_cleanup(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch(
+                "moontransfer.app.CrocRunner",
+                _DeferredStopCrocRunner,
+            ),
+        ):
+            source = Path(tmp) / "example.txt"
+            source.write_bytes(b"content")
+            with mock.patch("moontransfer.widgets.QTimer.singleShot"):
+                tab = SendTab("/fake/croc")
+            tab.file_edit.setText(str(source))
+            tab._start_send()
+
+            metadata_runner = tab.runners["metadata_send"]
+            _wait_until(metadata_runner.is_running)
+            session = tab.controller.session
+            assert session is not None
+            assert session.paths is not None
+            session_root = session.paths.root
+
+            tab._stop_send()
+
+            self.assertTrue(metadata_runner.stop_requested)
+            self.assertTrue(tab.controller.busy)
+            self.assertIs(tab.controller.session, session)
+            self.assertTrue(session_root.exists())
+
+            metadata_runner.finish(
+                exit_code=15,
+                exit_status=QProcess.ExitStatus.CrashExit,
+            )
+
+            self.assertEqual(tab.controller.state, TransferState.CANCELLED)
+            self.assertFalse(tab.controller.busy)
+            self.assertIsNone(tab.controller.session)
+            self.assertFalse(session_root.exists())
 
     def test_destination_check_can_be_cancelled(self) -> None:
         started = Event()
@@ -535,6 +597,9 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
             )
             tab._stop_receive()
 
+            _wait_until(
+                lambda: tab.controller.state == TransferState.CANCELLED
+            )
             self.assertEqual(tab.controller.state, TransferState.CANCELLED)
             self.assertFalse(tab.controller.active)
             self.assertIsNone(tab.controller.session)
@@ -601,9 +666,69 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
                 )
                 tab._stop_receive()
 
+            _wait_until(
+                lambda: tab.controller.state == TransferState.CANCELLED
+            )
             self.assertEqual(tab.controller.state, TransferState.CANCELLED)
             self.assertFalse(session_root.exists())
             self.assertFalse(staging.exists())
+
+    def test_window_close_waits_for_active_worker(self) -> None:
+        started = Event()
+        release = Event()
+
+        def blocking_fingerprint(_path, *, cancel_requested):
+            started.set()
+            release.wait(timeout=2)
+            if cancel_requested():
+                raise OperationCancelled
+            raise AssertionError("Il worker non ha ricevuto la cancellazione.")
+
+        window = None
+        try:
+            with (
+                tempfile.TemporaryDirectory() as tmp,
+                mock.patch("moontransfer.app.CrocRunner", _FakeCrocRunner),
+                mock.patch(
+                    "moontransfer.app.croc.find_executable",
+                    return_value="/fake/croc",
+                ),
+                mock.patch(
+                    "moontransfer.transfer.fingerprint_file",
+                    side_effect=blocking_fingerprint,
+                ),
+            ):
+                source = Path(tmp) / "large.bin"
+                source.write_bytes(b"content")
+                window = MainWindow()
+                window.send_tab.file_edit.setText(str(source))
+                window.show()
+                QApplication.processEvents()
+
+                window.send_tab._start_send()
+                self.assertTrue(started.wait(timeout=1))
+
+                self.assertFalse(window.close())
+                self.assertTrue(window.isVisible())
+                self.assertTrue(window._close_pending)
+                self.assertTrue(window.send_tab.controller.busy)
+
+                release.set()
+                _wait_until(lambda: not window.isVisible())
+
+                self.assertFalse(window.send_tab.controller.busy)
+                self.assertEqual(
+                    window.send_tab.controller.state,
+                    TransferState.CANCELLED,
+                )
+                self.assertIsNone(window.send_tab.controller.session)
+        finally:
+            release.set()
+            if window is not None and window.send_tab.controller.busy:
+                window.send_tab.controller.stop()
+                _wait_until(lambda: not window.send_tab.controller.busy)
+            if window is not None:
+                window.close()
 
     def test_completed_save_wins_over_late_stop_request(self) -> None:
         with (
@@ -656,6 +781,9 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
 
             tab._stop_receive()
 
+            _wait_until(
+                lambda: tab.controller.state == TransferState.COMPLETED
+            )
             self.assertEqual(tab.controller.state, TransferState.COMPLETED)
             self.assertEqual(
                 (destination / proposal.filename).read_bytes(),

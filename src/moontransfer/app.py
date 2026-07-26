@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -596,6 +596,7 @@ class MainWindow(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("MoonTransfer")
+        self._close_pending = False
 
         croc_path = croc.find_executable()
         if not croc_path:
@@ -609,6 +610,12 @@ class MainWindow(QWidget):
         tabs = QTabWidget()
         self.send_tab = SendTab(croc_path)
         self.receive_tab = ReceiveTab(croc_path)
+        self.send_tab.controller.shutdown_finished.connect(
+            self._schedule_pending_close
+        )
+        self.receive_tab.controller.shutdown_finished.connect(
+            self._schedule_pending_close
+        )
         tabs.addTab(self.send_tab, "Invia")
         tabs.addTab(self.receive_tab, "Ricevi")
 
@@ -616,10 +623,35 @@ class MainWindow(QWidget):
         layout.addWidget(tabs)
         self.resize(900, self.sizeHint().height())
 
+    def _controllers_busy(self) -> bool:
+        return (
+            self.send_tab.controller.busy
+            or self.receive_tab.controller.busy
+        )
+
+    def _schedule_pending_close(self) -> None:
+        if self._close_pending:
+            QTimer.singleShot(0, self._complete_pending_close)
+
+    def _complete_pending_close(self) -> None:
+        if self._close_pending and not self._controllers_busy():
+            self._close_pending = False
+            self.close()
+
     def closeEvent(self, event) -> None:  # noqa: ANN001
+        if not self._controllers_busy():
+            self._close_pending = False
+            event.accept()
+            return
+
+        event.ignore()
+        if self._close_pending:
+            return
+
+        self._close_pending = True
         self.send_tab.stop_active_transfers()
         self.receive_tab.stop_active_transfers()
-        event.accept()
+        self._schedule_pending_close()
 
 
 def main() -> None:

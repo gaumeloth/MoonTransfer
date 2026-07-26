@@ -4,12 +4,13 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QProcess, QProcessEnvironment
+from PySide6.QtCore import QProcess, QProcessEnvironment, QTimer
 
 from moontransfer import croc
 
 
 MAX_PROCESS_RECORD_BYTES = 64 * 1024
+PROCESS_TERMINATE_TIMEOUT_MS = 1500
 
 
 def split_process_records(buffered: bytes) -> tuple[list[bytes], bytes]:
@@ -47,6 +48,7 @@ class CrocRunner:
         self._stdout_buffer = b""
         self._stderr_buffer = b""
         self._sensitive_values: tuple[str, ...] = ()
+        self._stopping = False
 
         self.proc = QProcess()
         self.proc.setProcessChannelMode(QProcess.ProcessChannelMode.SeparateChannels)
@@ -54,6 +56,9 @@ class CrocRunner:
         self.proc.readyReadStandardOutput.connect(self._on_stdout)
         self.proc.readyReadStandardError.connect(self._on_stderr)
         self.proc.finished.connect(self._on_finished)
+        self._kill_timer = QTimer(self.proc)
+        self._kill_timer.setSingleShot(True)
+        self._kill_timer.timeout.connect(self._force_stop)
 
     def is_running(self) -> bool:
         return self.proc.state() != QProcess.ProcessState.NotRunning
@@ -68,8 +73,8 @@ class CrocRunner:
         preview: str | None = None,
         sensitive_values: tuple[str, ...] = (),
     ) -> None:
-        if self.is_running():
-            raise RuntimeError("croc è già in esecuzione")
+        if self.is_running() or self._stopping:
+            raise RuntimeError("croc è già in esecuzione o in arresto")
 
         self._stdout_buffer = b""
         self._stderr_buffer = b""
@@ -92,17 +97,21 @@ class CrocRunner:
             raise RuntimeError(self.proc.errorString())
 
     def stop(self) -> None:
-        if not self.is_running():
+        if not self.is_running() or self._stopping:
             return
 
+        self._stopping = True
         self.append_line()
         self.append_line("[stop] termino croc...")
         self.proc.terminate()
+        self._kill_timer.start(PROCESS_TERMINATE_TIMEOUT_MS)
 
-        if not self.proc.waitForFinished(1500):
-            self.append_line("[stop] terminazione forzata")
-            self.proc.kill()
-            self.proc.waitForFinished(1500)
+    def _force_stop(self) -> None:
+        if not self.is_running():
+            return
+
+        self.append_line("[stop] terminazione forzata")
+        self.proc.kill()
 
     def write_stdin(self, text: str, *, close: bool = False) -> None:
         if not self.is_running():
@@ -158,6 +167,8 @@ class CrocRunner:
         exit_code: int,
         exit_status: QProcess.ExitStatus,
     ) -> None:
+        self._kill_timer.stop()
+        self._stopping = False
         self._flush_buffers()
         self.append_line()
         self.append_line(
