@@ -13,10 +13,16 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QProcess
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from moontransfer.app import MainWindow, ReceiveTab, SendTab
+from moontransfer.app import (
+    MainWindow,
+    ReceiveTab,
+    SendTab,
+    configure_application,
+)
 from moontransfer.cancellation import OperationCancelled
 from moontransfer.files import cleanup_session_paths, create_session_paths
 from moontransfer.protocol import create_proposal, write_control_file
+from moontransfer.resources import APP_ICON_PATH
 from moontransfer.transfer import (
     ReceiveDecision,
     ReceiveSession,
@@ -93,6 +99,37 @@ class _DeferredStopCrocRunner(_FakeCrocRunner):
     def stop(self) -> None:
         if self.running:
             self.stop_requested = True
+
+
+class ApplicationConfigurationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_application_icon_is_available_and_loadable(self) -> None:
+        configure_application(self.app)
+
+        self.assertTrue(APP_ICON_PATH.is_file())
+        self.assertEqual(self.app.applicationName(), "MoonTransfer")
+        self.assertFalse(self.app.windowIcon().isNull())
+
+    def test_main_window_uses_the_application_icon_explicitly(self) -> None:
+        configure_application(self.app)
+
+        with (
+            mock.patch(
+                "moontransfer.app.croc.find_executable",
+                return_value="/fake/croc",
+            ),
+            mock.patch("moontransfer.widgets.QTimer.singleShot"),
+        ):
+            window = MainWindow()
+
+        try:
+            self.assertFalse(window.windowIcon().isNull())
+            self.assertTrue(window.windowIcon().availableSizes())
+        finally:
+            window.close()
 
 
 class ReceiveFlowSecurityTests(unittest.TestCase):

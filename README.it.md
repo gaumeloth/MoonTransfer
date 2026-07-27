@@ -1,5 +1,13 @@
 # MoonTransfer
 
+<p align="center">
+  <img
+    src="src/moontransfer/assets/branding/moontransfer-logo.png"
+    alt="Logo di MoonTransfer"
+    width="640"
+  >
+</p>
+
 Versione inglese: [README.md](README.md)
 
 MoonTransfer è una GUI per inviare e ricevere file tramite
@@ -393,6 +401,11 @@ uv run --frozen --dev python tools/build.py
 `tools/build.py` è l'orchestratore della build: esegue `tools/fetch_croc.py` e
 poi PyInstaller usando `MoonTransfer.spec`.
 
+L'icona dell'applicazione ha un unico sorgente PNG versionato. Qt carica
+direttamente quel PNG durante l'esecuzione. Su Windows, PyInstaller usa la
+dipendenza di sviluppo Pillow per convertirlo nell'icona nativa dell'eseguibile
+durante la build, quindi non è necessario mantenere un file `.ico` separato.
+
 Per controllare l'ultima release upstream di `croc` senza cambiare il pin di
 build:
 
@@ -760,6 +773,12 @@ modifica:
 - `src/moontransfer/app.py`: entry point dell'applicazione, finestra principale,
   tab di invio, tab di ricezione, validazione degli input, dialoghi utente e
   collegamento degli eventi dei controller alla GUI.
+- `src/moontransfer/assets/`: risorse visive versionate condivise dalla
+  documentazione del progetto e dall'applicazione. `branding/` contiene il logo
+  principale; `icons/` contiene il PNG sorgente incluso nel pacchetto come
+  icona dell'applicazione.
+- `src/moontransfer/resources.py`: percorsi stabili verso le risorse visive
+  pacchettizzate, validi sia dai sorgenti sia nei bundle PyInstaller.
 - `src/moontransfer/transfer.py`: stati espliciti del trasferimento, controller
   di invio e ricezione, ciclo di vita della sessione, coordinamento di processi
   e timeout, flusso dei metadati, operazioni sui file in background, limiti di
@@ -876,7 +895,9 @@ Riferimenti utili:
 - [`croc`](https://github.com/schollz/croc), motore di trasferimento;
 - [`uv`](https://docs.astral.sh/uv/), gestione ambiente Python e dipendenze;
 - [PySide6 / Qt for Python](https://doc.qt.io/qtforpython-6/), toolkit GUI;
-- [PyInstaller](https://pyinstaller.org/en/stable/), creazione del bundle.
+- [PyInstaller](https://pyinstaller.org/en/stable/), creazione del bundle;
+- [Pillow](https://pillow.readthedocs.io/en/stable/), conversione dell'icona
+  dell'applicazione durante la build.
 
 ### Test automatici
 
@@ -1097,6 +1118,11 @@ verifica della dimensione e dell'hash SHA-256 attesi.
 MoonTransfer/
 ├─ src/
 │  └─ moontransfer/
+│     ├─ assets/
+│     │  ├─ branding/
+│     │  │  └─ moontransfer-logo.png
+│     │  └─ icons/
+│     │     └─ moontransfer-icon.png
 │     ├─ app.py
 │     ├─ cancellation.py
 │     ├─ croc.py
@@ -1105,6 +1131,7 @@ MoonTransfer/
 │     ├─ messages.py
 │     ├─ protocol.py
 │     ├─ progress.py
+│     ├─ resources.py
 │     ├─ runner.py
 │     ├─ tasks.py
 │     ├─ transfer.py

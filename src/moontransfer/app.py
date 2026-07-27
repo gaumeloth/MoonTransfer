@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -31,6 +32,7 @@ from moontransfer.protocol import (
     TransferProposal,
     validate_croc_code,
 )
+from moontransfer.resources import APP_ICON_PATH
 from moontransfer.runner import CrocRunner
 from moontransfer.transfer import (
     BaseTransferController,
@@ -45,6 +47,11 @@ from moontransfer.widgets import (
     add_expandable_output,
     plain_message_box,
 )
+
+
+def configure_application(app: QApplication) -> None:
+    app.setApplicationName("MoonTransfer")
+    app.setWindowIcon(QIcon(str(APP_ICON_PATH)))
 
 
 def _connect_progress(
@@ -596,6 +603,7 @@ class MainWindow(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("MoonTransfer")
+        self.setWindowIcon(QIcon(str(APP_ICON_PATH)))
         self._close_pending = False
 
         croc_path = croc.find_executable()
@@ -656,7 +664,7 @@ class MainWindow(QWidget):
 
 def main() -> None:
     app = QApplication(sys.argv)
-    app.setApplicationName("MoonTransfer")
+    configure_application(app)
     window = MainWindow()
     window.show()
     raise SystemExit(app.exec())

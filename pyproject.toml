@@ -13,6 +13,7 @@ moontransfer = "moontransfer.app:main"
 
 [dependency-groups]
 dev = [
+    "pillow>=12.3.0",
     "pyinstaller>=6.0",
 ]
 

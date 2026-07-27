@@ -1,5 +1,13 @@
 # MoonTransfer
 
+<p align="center">
+  <img
+    src="src/moontransfer/assets/branding/moontransfer-logo.png"
+    alt="MoonTransfer logo"
+    width="640"
+  >
+</p>
+
 Italian version: [README.it.md](README.it.md)
 
 MoonTransfer is a GUI for sending and receiving files through
@@ -386,6 +394,11 @@ uv run --frozen --dev python tools/build.py
 `tools/build.py` is the build orchestrator: it runs `tools/fetch_croc.py` and
 then PyInstaller using `MoonTransfer.spec`.
 
+The application icon has a single version-controlled PNG source. Qt loads that
+PNG directly at runtime. On Windows, PyInstaller uses the Pillow development
+dependency to convert it to the native executable icon during the build, so a
+separate `.ico` file does not need to be maintained.
+
 To check the latest upstream `croc` release without changing the build pin:
 
 ```sh
@@ -739,6 +752,11 @@ Use the existing module boundaries when choosing where to make a change:
 - `src/moontransfer/app.py`: application entry point, main window, send tab,
   receive tab, input validation, user dialogs, and binding controller events to
   the GUI.
+- `src/moontransfer/assets/`: version-controlled visual assets shared by the
+  project documentation and the application. `branding/` contains the main
+  logo; `icons/` contains the source PNG packaged as the application icon.
+- `src/moontransfer/resources.py`: stable paths to packaged visual assets for
+  both source runs and PyInstaller bundles.
 - `src/moontransfer/transfer.py`: explicit transfer states, send and receive
   controllers, session lifecycle, process and timeout coordination, metadata
   flow, background file operations, receive limits, final verification, and
@@ -853,7 +871,9 @@ Useful references:
 - [`uv`](https://docs.astral.sh/uv/), Python environment and dependency
   management;
 - [PySide6 / Qt for Python](https://doc.qt.io/qtforpython-6/), GUI toolkit;
-- [PyInstaller](https://pyinstaller.org/en/stable/), bundle creation.
+- [PyInstaller](https://pyinstaller.org/en/stable/), bundle creation;
+- [Pillow](https://pillow.readthedocs.io/en/stable/), build-time conversion of
+  the application icon.
 
 ### Automatic tests
 
@@ -1060,6 +1080,11 @@ expected size and SHA-256 hash are verified.
 MoonTransfer/
 ├─ src/
 │  └─ moontransfer/
+│     ├─ assets/
+│     │  ├─ branding/
+│     │  │  └─ moontransfer-logo.png
+│     │  └─ icons/
+│     │     └─ moontransfer-icon.png
 │     ├─ app.py
 │     ├─ cancellation.py
 │     ├─ croc.py
@@ -1068,6 +1093,7 @@ MoonTransfer/
 │     ├─ messages.py
 │     ├─ protocol.py
 │     ├─ progress.py
+│     ├─ resources.py
 │     ├─ runner.py
 │     ├─ tasks.py
 │     ├─ transfer.py

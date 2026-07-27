@@ -8,6 +8,7 @@ import os
 # SPECPATH è la directory del file .spec.
 ROOT = Path(SPECPATH).resolve()
 SRC = ROOT / "src"
+APP_ICON = SRC / "moontransfer" / "assets" / "icons" / "moontransfer-icon.png"
 
 if os.name == "nt":
     CROC_BIN = ROOT / "third_party" / "croc" / "croc.exe"
@@ -20,6 +21,9 @@ if not CROC_BIN.exists():
         "Esegui prima: uv run python tools/fetch_croc.py"
     )
 
+if not APP_ICON.exists():
+    raise FileNotFoundError(f"Icona dell'applicazione non trovata: {APP_ICON}")
+
 
 a = Analysis(
     [str(SRC / "moontransfer" / "app.py")],
@@ -27,7 +31,9 @@ a = Analysis(
     binaries=[
         (str(CROC_BIN), "."),
     ],
-    datas=[],
+    datas=[
+        (str(APP_ICON), "moontransfer/assets/icons"),
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -51,6 +57,7 @@ exe = EXE(
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
+    icon=str(APP_ICON) if os.name == "nt" else None,
 )
 
 coll = COLLECT(
