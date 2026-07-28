@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import queue
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -260,17 +261,36 @@ def run_transfer_test(binary: Path, *, timeout: int = DEFAULT_TIMEOUT) -> None:
         dest_dir.mkdir()
 
         source_file = source_dir / "moontransfer-latest-croc-test.txt"
-        source_file.write_text("moontransfer latest croc transfer test\n", encoding="utf-8")
+        source_file.write_text(
+            "moontransfer latest croc transfer test\n",
+            encoding="utf-8",
+        )
+        source_folder = source_dir / "moontransfer-folder"
+        nested_folder = source_folder / "nested"
+        empty_folder = source_folder / "empty"
+        nested_folder.mkdir(parents=True)
+        empty_folder.mkdir()
+        (nested_folder / "dati-città.txt").write_text(
+            "nested moontransfer compatibility test\n",
+            encoding="utf-8",
+        )
 
         sender_output: list[str] = []
         sender_lines: queue.Queue[str] = queue.Queue()
+        expected_code = secrets.token_hex(16)
         sender = subprocess.Popen(
-            [str(binary), *croc.build_send_args(source_file)],
+            [
+                str(binary),
+                *croc.build_send_args((source_file, source_folder)),
+            ],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
             cwd=str(source_dir),
-            env=compatibility_process_environment(base / "sender-croc-config"),
+            env=compatibility_process_environment(
+                base / "sender-croc-config",
+                secret=expected_code,
+            ),
         )
 
         assert sender.stdout is not None
@@ -297,6 +317,10 @@ def run_transfer_test(binary: Path, *, timeout: int = DEFAULT_TIMEOUT) -> None:
 
                 parsed = croc.parse_send_code(line)
                 if parsed:
+                    if parsed != expected_code:
+                        raise RuntimeError(
+                            "sender reported a different custom transfer code"
+                        )
                     code = parsed
                     break
 
@@ -331,15 +355,33 @@ def run_transfer_test(binary: Path, *, timeout: int = DEFAULT_TIMEOUT) -> None:
             sender.wait(timeout=timeout)
 
             received_file = dest_dir / source_file.name
-            if not received_file.is_file():
+            received_nested = (
+                dest_dir
+                / source_folder.name
+                / "nested"
+                / "dati-città.txt"
+            )
+            received_empty = dest_dir / source_folder.name / "empty"
+            if (
+                not received_file.is_file()
+                or not received_nested.is_file()
+                or not received_empty.is_dir()
+            ):
                 raise RuntimeError(
-                    "received file was not created\n"
+                    "received multi-item payload is incomplete\n"
                     f"sender output:\n{''.join(sender_output[-80:])}\n"
                     f"receiver output:\n{''.join(receiver_output[-80:])}"
                 )
 
-            if received_file.read_text(encoding="utf-8") != source_file.read_text(encoding="utf-8"):
-                raise RuntimeError("received file content does not match source content")
+            expected_files = (
+                (source_file, received_file),
+                (nested_folder / "dati-città.txt", received_nested),
+            )
+            for original, received in expected_files:
+                if received.read_bytes() != original.read_bytes():
+                    raise RuntimeError(
+                        f"received content does not match source: {original.name}"
+                    )
 
         finally:
             for proc in (receiver, sender):
