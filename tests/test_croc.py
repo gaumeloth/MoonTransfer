@@ -38,6 +38,26 @@ class CrocCommandTests(unittest.TestCase):
             ],
         )
 
+    def test_build_send_args_accepts_multiple_paths(self) -> None:
+        paths = (Path("/tmp/first.txt"), Path("/tmp/folder"))
+
+        self.assertEqual(
+            croc.build_send_args(paths),
+            [
+                "--classic=false",
+                "--ignore-stdin",
+                "--disable-clipboard",
+                "send",
+                "--no-local",
+                "/tmp/first.txt",
+                "/tmp/folder",
+            ],
+        )
+
+    def test_build_send_args_rejects_empty_selection(self) -> None:
+        with self.assertRaises(ValueError):
+            croc.build_send_args(())
+
     def test_build_receive_args(self) -> None:
         self.assertEqual(
             croc.build_receive_args(),

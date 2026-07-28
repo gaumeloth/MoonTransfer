@@ -21,6 +21,7 @@ from moontransfer.app import (
 )
 from moontransfer.cancellation import OperationCancelled
 from moontransfer.files import cleanup_session_paths, create_session_paths
+from moontransfer.payload import scan_source_payload
 from moontransfer.protocol import create_proposal, write_control_file
 from moontransfer.resources import APP_ICON_PATH
 from moontransfer.transfer import (
@@ -150,7 +151,9 @@ class ReceiveFlowSecurityTests(unittest.TestCase):
 
         with (
             mock.patch("moontransfer.app.plain_message_box", return_value=answer_box),
-            mock.patch("moontransfer.transfer.check_destination") as check_destination,
+            mock.patch(
+                "moontransfer.transfer.check_payload_destination"
+            ) as check_destination,
         ):
             accepted = tab._confirm_transfer(proposal)
 
@@ -210,7 +213,7 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
             source.write_bytes(b"content")
             with mock.patch("moontransfer.widgets.QTimer.singleShot"):
                 tab = SendTab("/fake/croc")
-            tab.file_edit.setText(str(source))
+            tab._add_paths((source,))
 
             tab._start_send()
             metadata_runner = tab.runners["metadata_send"]
@@ -232,7 +235,7 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
             )
 
             metadata_runner.finish()
-            self.assertTrue(main_runner.is_running())
+            _wait_until(main_runner.is_running)
             self.assertEqual(
                 tab.controller.state,
                 TransferState.AWAITING_DECISION,
@@ -249,6 +252,115 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
             assert session_root is not None
             self.assertFalse(session_root.exists())
 
+    def test_send_flow_passes_multiple_roots_to_one_main_process(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch("moontransfer.app.CrocRunner", _FakeCrocRunner),
+        ):
+            base = Path(tmp)
+            source_file = base / "note.txt"
+            source_folder = base / "photos"
+            empty_folder = source_folder / "empty"
+            source_file.write_text("note", encoding="utf-8")
+            empty_folder.mkdir(parents=True)
+            (source_folder / "image.bin").write_bytes(b"image")
+
+            with mock.patch("moontransfer.widgets.QTimer.singleShot"):
+                tab = SendTab("/fake/croc")
+            tab._add_paths((source_file, source_folder))
+            tab._start_send()
+
+            metadata_runner = tab.runners["metadata_send"]
+            main_runner = tab.runners["main_send"]
+            _wait_until(metadata_runner.is_running)
+            session = tab.controller.session
+            assert session is not None
+            assert session.proposal is not None
+
+            self.assertEqual(session.proposal.roots, ("note.txt", "photos"))
+            self.assertEqual(session.proposal.file_count, 2)
+            self.assertEqual(session.proposal.directory_count, 2)
+            self.assertIn(
+                "photos/empty",
+                {entry.path for entry in session.proposal.entries},
+            )
+
+            metadata_runner.finish()
+            _wait_until(main_runner.is_running)
+            main_args = main_runner.starts[-1]["args"]
+            self.assertEqual(
+                main_args[-2:],
+                [str(source_file), str(source_folder)],
+            )
+
+            main_runner.finish()
+            self.assertEqual(tab.controller.state, TransferState.COMPLETED)
+
+    def test_receive_flow_verifies_and_publishes_multiple_roots(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch("moontransfer.app.CrocRunner", _FakeCrocRunner),
+        ):
+            base = Path(tmp)
+            source_file = base / "note.txt"
+            source_folder = base / "photos"
+            source_file.write_text("note", encoding="utf-8")
+            (source_folder / "empty").mkdir(parents=True)
+            (source_folder / "image.bin").write_bytes(b"image")
+            proposal = scan_source_payload(
+                (source_file, source_folder)
+            ).create_proposal()
+
+            destination = base / "destination"
+            with mock.patch("moontransfer.widgets.QTimer.singleShot"):
+                tab = ReceiveTab("/fake/croc")
+            tab.code_edit.setText("8" * 32)
+            tab.dest_edit.setText(str(destination))
+            tab._start_receive()
+            session = tab.controller.session
+            assert session is not None
+            assert session.paths is not None
+            write_control_file(
+                session.paths.metadata_receive / "moontransfer-metadata.json",
+                proposal,
+            )
+
+            with (
+                mock.patch.object(
+                    tab,
+                    "_confirm_transfer",
+                    return_value=True,
+                ),
+                mock.patch(
+                    "moontransfer.transfer.QTimer.singleShot",
+                    side_effect=lambda _delay, callback: callback(),
+                ),
+            ):
+                tab.runners["metadata_receive"].finish()
+                _wait_until(tab.runners["main_receive"].is_running)
+
+            staging = session.paths.main_receive
+            (staging / "note.txt").write_text("note", encoding="utf-8")
+            received_folder = staging / "photos"
+            (received_folder / "empty").mkdir(parents=True)
+            (received_folder / "image.bin").write_bytes(b"image")
+            tab.runners["main_receive"].finish()
+            _wait_until(
+                lambda: tab.controller.state == TransferState.COMPLETED
+            )
+
+            target = destination / "MoonTransfer"
+            self.assertEqual(
+                (target / "note.txt").read_text(encoding="utf-8"),
+                "note",
+            )
+            self.assertEqual(
+                (target / "photos" / "image.bin").read_bytes(),
+                b"image",
+            )
+            self.assertTrue((target / "photos" / "empty").is_dir())
+            self.assertFalse(staging.exists())
+
     def test_send_failure_cleans_session_and_enters_failed_state(self) -> None:
         with (
             tempfile.TemporaryDirectory() as tmp,
@@ -258,7 +370,7 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
             source.write_bytes(b"content")
             with mock.patch("moontransfer.widgets.QTimer.singleShot"):
                 tab = SendTab("/fake/croc")
-            tab.file_edit.setText(str(source))
+            tab._add_paths((source,))
             tab._start_send()
             _wait_until(tab.runners["metadata_send"].is_running)
             session = tab.controller.session
@@ -282,7 +394,7 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
             source.write_bytes(b"content")
             with mock.patch("moontransfer.widgets.QTimer.singleShot"):
                 tab = SendTab("/fake/croc")
-            tab.file_edit.setText(str(source))
+            tab._add_paths((source,))
             tab._start_send()
             _wait_until(tab.runners["metadata_send"].is_running)
             session = tab.controller.session
@@ -293,6 +405,9 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
             source.write_bytes(b"changed content")
             with mock.patch("moontransfer.app._show_controller_error"):
                 tab.runners["metadata_send"].finish()
+                _wait_until(
+                    lambda: tab.controller.state == TransferState.FAILED
+                )
 
             self.assertEqual(tab.controller.state, TransferState.FAILED)
             self.assertFalse(tab.runners["main_send"].is_running())
@@ -502,7 +617,7 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
         started = Event()
         release = Event()
 
-        def blocking_fingerprint(_path, *, cancel_requested):
+        def blocking_scan(_paths, *, cancel_requested):
             started.set()
             release.wait(timeout=2)
             if cancel_requested():
@@ -513,15 +628,15 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
             tempfile.TemporaryDirectory() as tmp,
             mock.patch("moontransfer.app.CrocRunner", _FakeCrocRunner),
             mock.patch(
-                "moontransfer.transfer.fingerprint_file",
-                side_effect=blocking_fingerprint,
+                "moontransfer.transfer.scan_source_payload",
+                side_effect=blocking_scan,
             ),
         ):
             source = Path(tmp) / "large.bin"
             source.write_bytes(b"content")
             with mock.patch("moontransfer.widgets.QTimer.singleShot"):
                 tab = SendTab("/fake/croc")
-            tab.file_edit.setText(str(source))
+            tab._add_paths((source,))
 
             tab._start_send()
             self.assertTrue(started.wait(timeout=1))
@@ -557,7 +672,7 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
             source.write_bytes(b"content")
             with mock.patch("moontransfer.widgets.QTimer.singleShot"):
                 tab = SendTab("/fake/croc")
-            tab.file_edit.setText(str(source))
+            tab._add_paths((source,))
             tab._start_send()
 
             metadata_runner = tab.runners["metadata_send"]
@@ -597,7 +712,7 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
             tempfile.TemporaryDirectory() as tmp,
             mock.patch("moontransfer.app.CrocRunner", _FakeCrocRunner),
             mock.patch(
-                "moontransfer.transfer.check_destination",
+                "moontransfer.transfer.check_payload_destination",
                 side_effect=blocking_check,
             ),
         ):
@@ -644,7 +759,7 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
     def test_received_file_verification_can_be_cancelled(self) -> None:
         started = Event()
 
-        def blocking_verify(_path, _proposal, *, cancel_requested):
+        def blocking_verify(_staging, _proposal, *, cancel_requested):
             started.set()
             while not cancel_requested():
                 time.sleep(0.001)
@@ -692,7 +807,7 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
             session_root = session.paths.root
             staging = session.paths.main_receive
             with mock.patch(
-                "moontransfer.transfer.verify_received_file",
+                "moontransfer.transfer.verify_received_payload",
                 side_effect=blocking_verify,
             ):
                 tab.runners["main_receive"].finish()
@@ -714,7 +829,7 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
         started = Event()
         release = Event()
 
-        def blocking_fingerprint(_path, *, cancel_requested):
+        def blocking_scan(_paths, *, cancel_requested):
             started.set()
             release.wait(timeout=2)
             if cancel_requested():
@@ -731,14 +846,14 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
                     return_value="/fake/croc",
                 ),
                 mock.patch(
-                    "moontransfer.transfer.fingerprint_file",
-                    side_effect=blocking_fingerprint,
+                    "moontransfer.transfer.scan_source_payload",
+                    side_effect=blocking_scan,
                 ),
             ):
                 source = Path(tmp) / "large.bin"
                 source.write_bytes(b"content")
                 window = MainWindow()
-                window.send_tab.file_edit.setText(str(source))
+                window.send_tab._add_paths((source,))
                 window.show()
                 QApplication.processEvents()
 

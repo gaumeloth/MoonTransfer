@@ -1,19 +1,25 @@
 from __future__ import annotations
 
+import stat
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QFileDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QStyle,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -24,6 +30,8 @@ from moontransfer.desktop import open_folder
 from moontransfer.files import (
     DestinationCheck,
     DestinationConflict,
+    is_link_or_reparse,
+    unique_directory_path,
     unique_destination_path,
 )
 from moontransfer.progress import format_file_size
@@ -90,12 +98,40 @@ class SendTab(QWidget):
     def __init__(self, croc_path: str) -> None:
         super().__init__()
         self.last_code: str | None = None
+        self.source_paths: list[Path] = []
 
-        self.status_label = StatusLabel("Pronto a inviare un file.")
-        self.file_edit = QLineEdit()
-        self.file_edit.setPlaceholderText("Seleziona un file da inviare")
-        self.browse_button = QPushButton("Sfoglia...")
-        self.file_info_label = QLabel("Nessun file selezionato.")
+        self.status_label = StatusLabel(
+            "Pronto a inviare file e cartelle."
+        )
+        self.source_list = QListWidget()
+        self.source_list.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection
+        )
+        self.source_list.setMinimumHeight(100)
+        self.source_list.setMaximumHeight(150)
+        self.source_list.setAlternatingRowColors(True)
+
+        self.add_files_button = QPushButton("Aggiungi file")
+        self.add_folder_button = QPushButton("Aggiungi cartella")
+        self.remove_button = QPushButton("Rimuovi")
+        self.remove_button.setEnabled(False)
+        self.clear_selection_button = QPushButton("Svuota")
+        self.clear_selection_button.setEnabled(False)
+
+        self.add_files_button.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
+        )
+        self.add_folder_button.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon)
+        )
+        self.remove_button.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon)
+        )
+        self.clear_selection_button.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_DialogResetButton)
+        )
+
+        self.file_info_label = QLabel("Nessun elemento selezionato.")
         self.file_info_label.setTextFormat(Qt.TextFormat.PlainText)
         self.file_info_label.setWordWrap(True)
         self.file_info_label.setSizePolicy(
@@ -133,9 +169,12 @@ class SendTab(QWidget):
         )
         _connect_progress(self.controller, self.progress)
 
-        file_row = QHBoxLayout()
-        file_row.addWidget(self.file_edit, 1)
-        file_row.addWidget(self.browse_button)
+        selection_actions = QHBoxLayout()
+        selection_actions.addWidget(self.add_files_button)
+        selection_actions.addWidget(self.add_folder_button)
+        selection_actions.addStretch(1)
+        selection_actions.addWidget(self.remove_button)
+        selection_actions.addWidget(self.clear_selection_button)
 
         control_row = QHBoxLayout()
         control_row.addWidget(self.start_button)
@@ -147,18 +186,24 @@ class SendTab(QWidget):
 
         layout = QVBoxLayout(self)
         layout.addWidget(self.status_label)
-        layout.addLayout(file_row)
+        layout.addWidget(self.source_list)
+        layout.addLayout(selection_actions)
         layout.addWidget(self.file_info_label)
         layout.addLayout(control_row)
         layout.addWidget(self.progress)
         add_expandable_output(layout, self.output)
 
-        self.browse_button.clicked.connect(self._browse_file)
-        self.file_edit.textChanged.connect(self._refresh_file_info)
+        self.add_files_button.clicked.connect(self._browse_files)
+        self.add_folder_button.clicked.connect(self._browse_folder)
+        self.remove_button.clicked.connect(self._remove_selected)
+        self.clear_selection_button.clicked.connect(self._clear_selection)
+        self.source_list.itemSelectionChanged.connect(
+            self._refresh_selection_actions
+        )
         self.start_button.clicked.connect(self._start_send)
         self.stop_button.clicked.connect(self._stop_send)
         self.copy_button.clicked.connect(self._copy_code)
-        self._refresh_file_info()
+        self._refresh_selection_info()
 
     def stop_active_transfers(self) -> None:
         self.controller.stop()
@@ -170,65 +215,163 @@ class SendTab(QWidget):
             append_line=self.terminal.append_line,
         )
 
-    def _browse_file(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
+    def _browse_files(self) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(
             self,
             "Seleziona file da inviare",
-            str(Path.home()),
+            str(self._browse_start_directory()),
+        )
+        if paths:
+            self._add_paths(Path(path) for path in paths)
+
+    def _browse_folder(self) -> None:
+        path = QFileDialog.getExistingDirectory(
+            self,
+            "Seleziona cartella da inviare",
+            str(self._browse_start_directory()),
         )
         if path:
-            self.file_edit.setText(path)
-            self._refresh_file_info()
+            self._add_paths((Path(path),))
 
-    def _selected_file(self) -> Path | None:
-        path_text = self.file_edit.text().strip()
-        if not path_text:
-            return None
-        return Path(path_text)
+    def _browse_start_directory(self) -> Path:
+        if self.source_paths:
+            first = self.source_paths[0]
+            return first if first.is_dir() else first.parent
+        return Path.home()
 
-    def _has_valid_file(self) -> bool:
-        path = self._selected_file()
-        return bool(path and path.is_file())
+    def _add_paths(self, paths: Iterable[Path]) -> None:
+        known = {str(path) for path in self.source_paths}
+        for selected in paths:
+            path = selected.expanduser().absolute()
+            if str(path) in known:
+                continue
+            known.add(str(path))
+            self.source_paths.append(path)
 
-    def _refresh_file_info(self) -> None:
-        path = self._selected_file()
-        if not path:
-            self.file_info_label.setText("Nessun file selezionato.")
+            item = QListWidgetItem(self._source_description(path))
+            item.setData(Qt.ItemDataRole.UserRole, str(path))
+            item.setToolTip(str(path))
+            if path.is_dir():
+                item.setIcon(
+                    self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
+                )
+            else:
+                item.setIcon(
+                    self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
+                )
+            self.source_list.addItem(item)
+        self._refresh_selection_info()
+
+    @staticmethod
+    def _source_description(path: Path) -> str:
+        kind = "Cartella" if path.is_dir() else "File"
+        return f"{kind}: {path.name} ({path.parent})"
+
+    def _remove_selected(self) -> None:
+        selected_rows = sorted(
+            {self.source_list.row(item) for item in self.source_list.selectedItems()},
+            reverse=True,
+        )
+        for row in selected_rows:
+            self.source_list.takeItem(row)
+            del self.source_paths[row]
+        self._refresh_selection_info()
+
+    def _clear_selection(self) -> None:
+        self.source_paths.clear()
+        self.source_list.clear()
+        self._refresh_selection_info()
+
+    def _has_valid_selection(self) -> bool:
+        if not self.source_paths:
+            return False
+        try:
+            for path in self.source_paths:
+                item_stat = path.lstat()
+                if is_link_or_reparse(item_stat):
+                    return False
+                if not (
+                    stat.S_ISREG(item_stat.st_mode)
+                    or stat.S_ISDIR(item_stat.st_mode)
+                ):
+                    return False
+        except OSError:
+            return False
+        return True
+
+    def _refresh_selection_actions(self) -> None:
+        running = self.controller.active
+        self.remove_button.setEnabled(
+            not running and bool(self.source_list.selectedItems())
+        )
+        self.clear_selection_button.setEnabled(
+            not running and bool(self.source_paths)
+        )
+
+    def _refresh_selection_info(self) -> None:
+        if not self.source_paths:
+            self.file_info_label.setText("Nessun elemento selezionato.")
             self.start_button.setEnabled(False)
             self.progress.set_total_preview(None)
+            self._refresh_selection_actions()
             return
 
-        if not path.is_file():
+        if not self._has_valid_selection():
             self.file_info_label.setText(
-                "Il percorso selezionato non è un file valido."
+                "La selezione contiene un percorso non disponibile o non supportato."
             )
             self.start_button.setEnabled(False)
             self.progress.set_total_preview(None)
+            self._refresh_selection_actions()
             return
 
-        try:
-            size_bytes = path.stat().st_size
-            size = format_file_size(size_bytes)
-        except OSError:
-            size_bytes = None
-            size = "dimensione non disponibile"
+        file_count = 0
+        directory_count = 0
+        selected_file_size = 0
+        for path in self.source_paths:
+            if path.is_dir():
+                directory_count += 1
+            else:
+                file_count += 1
+                selected_file_size += path.stat().st_size
 
-        self.file_info_label.setText(f"File: {path.name} - {size}")
-        self.progress.set_total_preview(size_bytes)
+        parts = []
+        if file_count:
+            parts.append(f"{file_count} file")
+        if directory_count:
+            parts.append(
+                f"{directory_count} "
+                + ("cartella" if directory_count == 1 else "cartelle")
+            )
+        summary = ", ".join(parts)
+        if directory_count:
+            detail = "La dimensione totale sarà calcolata prima dell'invio."
+            preview_size = None
+        else:
+            detail = f"Dimensione totale: {format_file_size(selected_file_size)}."
+            preview_size = selected_file_size
+
+        self.file_info_label.setText(
+            f"Elementi principali selezionati: {summary}. {detail}"
+        )
+        self.progress.set_total_preview(preview_size)
         if not self.controller.active:
             self.start_button.setEnabled(True)
             self.status_label.setText(
-                "File selezionato. Premi Invia per generare il codice."
+                "Selezione pronta. Premi Invia per generare il codice."
             )
+        self._refresh_selection_actions()
 
     def _set_running(self, running: bool) -> None:
         self.start_button.setEnabled(
-            False if running else self._has_valid_file()
+            False if running else self._has_valid_selection()
         )
         self.stop_button.setEnabled(running)
-        self.browse_button.setEnabled(not running)
-        self.file_edit.setEnabled(not running)
+        self.add_files_button.setEnabled(not running)
+        self.add_folder_button.setEnabled(not running)
+        self.source_list.setEnabled(not running)
         self.copy_button.setEnabled(bool(self.last_code))
+        self._refresh_selection_actions()
 
     def _set_code(self, code: str | None) -> None:
         self.last_code = code
@@ -239,20 +382,19 @@ class SendTab(QWidget):
         self.controller.stop()
 
     def _start_send(self) -> None:
-        path = self._selected_file()
-        if not path or not path.is_file():
+        if not self._has_valid_selection():
             self.status_label.setText(
-                "Seleziona un file valido prima di inviare."
+                "Seleziona almeno un file o una cartella valida prima di inviare."
             )
             QMessageBox.warning(
                 self,
-                "File non valido",
-                "Seleziona un file valido.",
+                "Selezione non valida",
+                "Seleziona almeno un file o una cartella valida.",
             )
             return
 
         try:
-            self.controller.start(path)
+            self.controller.start(tuple(self.source_paths))
         except Exception as exc:
             self.status_label.setText("Impossibile avviare il trasferimento.")
             _show_controller_error(
@@ -495,13 +637,14 @@ class ReceiveTab(QWidget):
         self,
         proposal: TransferProposal,
     ) -> bool:
+        object_name = "questo file" if proposal.is_single_file else "questo contenuto"
         answer_box = plain_message_box(
             self,
             icon=QMessageBox.Icon.Question,
             title="Accetta trasferimento",
             text=(
                 f"{self._proposal_details(proposal)}\n\n"
-                "Vuoi ricevere questo file?"
+                f"Vuoi ricevere {object_name}?"
             ),
             standard_buttons=(
                 QMessageBox.StandardButton.Yes
@@ -509,6 +652,10 @@ class ReceiveTab(QWidget):
             ),
             default_button=QMessageBox.StandardButton.No,
         )
+        if not proposal.is_single_file:
+            answer_box.setDetailedText(
+                self._proposal_manifest_details(proposal)
+            )
         return answer_box.exec() == QMessageBox.StandardButton.Yes
 
     def _resolve_destination_conflict(
@@ -520,6 +667,48 @@ class ReceiveTab(QWidget):
             return ReceiveDecision.accept(check.path, overwrite=False)
 
         details = self._proposal_details(proposal)
+        if not proposal.is_single_file:
+            suggested = unique_directory_path(check.path)
+            identical = check.conflict == DestinationConflict.IDENTICAL
+            box = plain_message_box(
+                self,
+                icon=(
+                    QMessageBox.Icon.Information
+                    if identical
+                    else QMessageBox.Icon.Warning
+                ),
+                title=(
+                    "Contenuto già presente"
+                    if identical
+                    else "Nome già esistente"
+                ),
+                text=(
+                    f"{details}\n\n"
+                    + (
+                        "Nella destinazione esiste già lo stesso contenuto."
+                        if identical
+                        else (
+                            "Nella destinazione esiste già un elemento con lo "
+                            "stesso nome, ma il contenuto è diverso."
+                        )
+                    )
+                    + "\n\nLe cartelle esistenti non vengono unite o sovrascritte."
+                ),
+            )
+            save_button = box.addButton(
+                f"Salva come {suggested.name}",
+                QMessageBox.ButtonRole.AcceptRole,
+            )
+            reject_button = box.addButton(
+                "Non scaricare" if identical else "Rifiuta",
+                QMessageBox.ButtonRole.RejectRole,
+            )
+            box.setDefaultButton(reject_button)
+            box.exec()
+            if box.clickedButton() is save_button:
+                return ReceiveDecision.accept(suggested, overwrite=False)
+            return ReceiveDecision.reject()
+
         if check.conflict == DestinationConflict.IDENTICAL:
             box = plain_message_box(
                 self,
@@ -592,11 +781,38 @@ class ReceiveTab(QWidget):
 
     @staticmethod
     def _proposal_details(proposal: TransferProposal) -> str:
+        if proposal.is_single_file:
+            return (
+                f"Nome: {proposal.filename}\n"
+                f"Dimensione: {format_file_size(proposal.size)}\n"
+                f"SHA-256: {proposal.sha256}"
+            )
+
+        roots = ", ".join(proposal.roots[:8])
+        if len(proposal.roots) > 8:
+            roots += f", e altri {len(proposal.roots) - 8}"
+        kind = "Cartella" if len(proposal.roots) == 1 else "Gruppo"
         return (
-            f"Nome: {proposal.filename}\n"
-            f"Dimensione: {format_file_size(proposal.size)}\n"
-            f"SHA-256: {proposal.sha256}"
+            f"Tipo: {kind}\n"
+            f"Elementi principali: {roots}\n"
+            f"Contenuto: {proposal.file_count} file, "
+            f"{proposal.directory_count} cartelle\n"
+            f"Dimensione totale: {format_file_size(proposal.size)}\n"
+            "Integrità: SHA-256 verificato per ogni file"
         )
+
+    @staticmethod
+    def _proposal_manifest_details(proposal: TransferProposal) -> str:
+        lines = ["Manifest del trasferimento:"]
+        for entry in proposal.entries:
+            if entry.is_directory:
+                lines.append(f"Cartella  {entry.path}")
+            else:
+                lines.append(
+                    f"File      {entry.path}  "
+                    f"{format_file_size(entry.size or 0)}  {entry.sha256}"
+                )
+        return "\n".join(lines)
 
 
 class MainWindow(QWidget):

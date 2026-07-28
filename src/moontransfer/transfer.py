@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
@@ -12,21 +12,23 @@ from moontransfer.files import (
     CONTROL_METADATA_NAME,
     DestinationCheck,
     DestinationConflict,
-    FileFingerprint,
     SessionPaths,
-    check_destination,
     cleanup_session_paths,
     create_session_paths,
     directory_payload_size,
     ensure_receive_capacity,
-    ensure_file_unchanged,
-    fingerprint_file,
-    move_verified_file,
-    received_path,
-    verify_received_file,
 )
 from moontransfer.messages import croc_status_from_line
+from moontransfer.payload import (
+    SourcePayload,
+    check_payload_destination,
+    ensure_source_payload_unchanged,
+    publish_received_payload,
+    scan_source_payload,
+    verify_received_payload,
+)
 from moontransfer.progress import (
+    AggregateTransferProgress,
     parse_announced_transfer_total,
     parse_transfer_progress,
 )
@@ -34,10 +36,8 @@ from moontransfer.protocol import (
     MAX_CONTROL_FILE_BYTES,
     TransferProposal,
     code_id,
-    create_proposal,
     generate_croc_code,
     read_proposal,
-    validate_filename,
     write_control_file,
 )
 from moontransfer.runner import CrocRunner
@@ -51,7 +51,8 @@ class TransferState(Enum):
     AWAITING_DECISION = auto()
     CHECKING_DESTINATION = auto()
     RESPONDING_TO_DECISION = auto()
-    TRANSFERRING_FILE = auto()
+    TRANSFERRING_PAYLOAD = auto()
+    TRANSFERRING_FILE = TRANSFERRING_PAYLOAD
     VERIFYING = auto()
     COMPLETED = auto()
     REJECTED = auto()
@@ -217,8 +218,8 @@ class ReceiveDecision:
 
 @dataclass
 class SendSession:
-    source_path: Path
-    fingerprint: FileFingerprint | None = None
+    source_paths: tuple[Path, ...]
+    payload: SourcePayload | None = None
     paths: SessionPaths | None = None
     proposal: TransferProposal | None = None
     metadata_code: str | None = None
@@ -274,6 +275,7 @@ class BaseTransferController(QObject):
         self._task_complete_on_cancel = False
         self._shutdown_finalizer: Callable[[], None] | None = None
         self._shutdown_complete_task = False
+        self.progress_aggregator = AggregateTransferProgress()
 
         for name, runner in self.runners.items():
             runner.on_line = (
@@ -508,24 +510,30 @@ class SendTransferController(BaseTransferController):
         )
         self.session: SendSession | None = None
 
-    def start(self, source_path: Path) -> None:
+    def start(self, source_paths: Path | Iterable[Path]) -> None:
         if self.busy:
             raise RuntimeError("Un trasferimento è già in corso.")
 
+        selected = (
+            (source_paths,)
+            if isinstance(source_paths, Path)
+            else tuple(source_paths)
+        )
         self._cleanup_session()
-        self.session = SendSession(source_path=source_path)
+        self.session = SendSession(source_paths=selected)
         self._transition(TransferState.PREPARING)
         self.code_changed.emit(None)
-        self.status_changed.emit("Calcolo hash SHA-256 del file...")
+        self.status_changed.emit(
+            "Analisi del contenuto e calcolo degli hash SHA-256..."
+        )
 
         try:
-            validate_filename(source_path.name)
             self._start_task(
-                lambda cancel_requested: fingerprint_file(
-                    source_path,
+                lambda cancel_requested: scan_source_payload(
+                    selected,
                     cancel_requested=cancel_requested,
                 ),
-                on_success=self._on_source_fingerprinted,
+                on_success=self._on_source_scanned,
                 on_failure=lambda exc: self._abort_session(
                     "Impossibile preparare il trasferimento.",
                     exc,
@@ -534,32 +542,29 @@ class SendTransferController(BaseTransferController):
         except Exception as exc:
             self._abort_session("Impossibile preparare il trasferimento.", exc)
 
-    def _on_source_fingerprinted(self, result: object) -> None:
+    def _on_source_scanned(self, result: object) -> None:
         if not self.active or self.state != TransferState.PREPARING:
             return
-        if not isinstance(result, FileFingerprint):
+        if not isinstance(result, SourcePayload):
             self._abort_session(
                 "Impossibile preparare il trasferimento.",
-                TypeError("Risultato del calcolo SHA-256 non valido."),
+                TypeError("Risultato dell'analisi del contenuto non valido."),
             )
             return
 
         session = self._require_session()
         try:
-            proposal = create_proposal(
-                filename=session.source_path.name,
-                size=result.size,
-                sha256=result.sha256,
-            )
+            proposal = result.create_proposal()
             metadata_code = generate_croc_code()
             paths = create_session_paths()
 
-            session.fingerprint = result
+            session.payload = result
             session.proposal = proposal
             session.metadata_code = metadata_code
             session.paths = paths
             metadata_path = paths.metadata_send / CONTROL_METADATA_NAME
             write_control_file(metadata_path, proposal)
+            self.progress_aggregator.reset(proposal.file_sizes)
         except Exception as exc:
             self._abort_session("Impossibile preparare il trasferimento.", exc)
             return
@@ -596,7 +601,7 @@ class SendTransferController(BaseTransferController):
             raise RuntimeError("Codice metadata mancante.")
 
         self.terminal_line.emit(
-            "[metadata] invio informazioni file "
+            "[metadata] invio manifest del trasferimento "
             f"(code-id={code_id(session.metadata_code)})"
         )
         args = croc.build_send_args(metadata_path)
@@ -612,25 +617,47 @@ class SendTransferController(BaseTransferController):
 
     def _start_main_sender(self) -> None:
         session = self._require_session()
-        if not session.proposal or not session.paths or not session.fingerprint:
+        if not session.proposal or not session.paths or not session.payload:
             self._abort_session("Sessione di invio incompleta.")
             return
 
         try:
-            ensure_file_unchanged(session.source_path, session.fingerprint)
+            self.status_changed.emit(
+                "Controllo che il contenuto selezionato non sia cambiato..."
+            )
+            payload = session.payload
+            self._start_task(
+                lambda cancel_requested: ensure_source_payload_unchanged(
+                    payload,
+                    cancel_requested=cancel_requested,
+                ),
+                on_success=lambda _result: self._launch_main_sender(),
+                on_failure=lambda exc: self._abort_session(
+                    "Il contenuto selezionato è cambiato prima dell'invio.",
+                    exc,
+                ),
+            )
         except Exception as exc:
             self._abort_session(
-                "Il file selezionato è cambiato prima dell'invio.",
+                "Impossibile verificare il contenuto prima dell'invio.",
                 exc,
             )
+
+    def _launch_main_sender(self) -> None:
+        if not self.active or self.state != TransferState.AWAITING_DECISION:
+            return
+
+        session = self._require_session()
+        if not session.proposal or not session.paths or not session.payload:
+            self._abort_session("Sessione di invio incompleta.")
             return
 
         self.terminal_line.emit(
-            "[main] invio file principale "
+            "[main] invio contenuto principale "
             f"(code-id={code_id(session.proposal.main_code)})"
         )
         self.progress_started.emit(session.proposal.size, True)
-        args = croc.build_send_args(session.source_path)
+        args = croc.build_send_args(session.payload.root_paths)
         try:
             self.runners["main_send"].start(
                 args,
@@ -672,7 +699,7 @@ class SendTransferController(BaseTransferController):
             self._stop_control_timeout()
             if self.state == TransferState.AWAITING_DECISION:
                 self._transition(TransferState.TRANSFERRING_FILE)
-            self.progress_sampled.emit(sample)
+            self.progress_sampled.emit(self.progress_aggregator.apply(sample))
 
     def _on_runner_finished(
         self,
@@ -689,7 +716,7 @@ class SendTransferController(BaseTransferController):
                 self.progress_finished.emit(False)
                 self._abort_session(
                     "Invio non completato. Il destinatario potrebbe aver rifiutato "
-                    "il file oppure la connessione potrebbe essere fallita."
+                    "il trasferimento oppure la connessione potrebbe essere fallita."
                 )
             else:
                 self._abort_session(
@@ -807,7 +834,7 @@ class ReceiveTransferController(BaseTransferController):
             )
             return
 
-        self.status_changed.emit("Ricezione informazioni file...")
+        self.status_changed.emit("Ricezione manifest del trasferimento...")
         try:
             self._transition(TransferState.TRANSFERRING_METADATA)
             self._start_metadata_receiver()
@@ -844,7 +871,7 @@ class ReceiveTransferController(BaseTransferController):
 
         args = croc.build_receive_args()
         self.terminal_line.emit(
-            "[metadata] ricezione informazioni file "
+            "[metadata] ricezione manifest del trasferimento "
             f"(code-id={code_id(session.metadata_code)})"
         )
         self.runners["metadata_receive"].start(
@@ -867,7 +894,7 @@ class ReceiveTransferController(BaseTransferController):
         session.main_response_accepted = accepted
         if accepted:
             self.status_changed.emit(
-                "Trasferimento accettato. Attendo il file..."
+                "Trasferimento accettato. Attendo il contenuto..."
             )
         else:
             self.status_changed.emit("Comunico il rifiuto al mittente...")
@@ -893,7 +920,7 @@ class ReceiveTransferController(BaseTransferController):
         )
         args = croc.build_prompted_receive_args()
         self.terminal_line.emit(
-            "[main] ricezione file principale "
+            "[main] ricezione contenuto principale "
             f"(code-id={code_id(session.proposal.main_code)})"
         )
         if accepted:
@@ -912,7 +939,7 @@ class ReceiveTransferController(BaseTransferController):
             if accepted:
                 self._start_receive_size_monitor(
                     session.proposal.size,
-                    "ricezione file principale",
+                    "ricezione contenuto principale",
                 )
             answer = "y\n" if accepted else "n\n"
             self.runners["main_receive"].write_stdin(answer, close=True)
@@ -944,7 +971,7 @@ class ReceiveTransferController(BaseTransferController):
 
         sample = parse_transfer_progress(line)
         if sample:
-            self.progress_sampled.emit(sample)
+            self.progress_sampled.emit(self.progress_aggregator.apply(sample))
 
     def _on_runner_finished(
         self,
@@ -1004,6 +1031,7 @@ class ReceiveTransferController(BaseTransferController):
                 )
 
             session.proposal = read_proposal(metadata_path)
+            self.progress_aggregator.reset(session.proposal.file_sizes)
             self.progress_preview_changed.emit(session.proposal.size)
             self._transition(TransferState.AWAITING_DECISION)
             if not self.acceptance_provider(session.proposal):
@@ -1013,7 +1041,7 @@ class ReceiveTransferController(BaseTransferController):
             self._transition(TransferState.CHECKING_DESTINATION)
             self.status_changed.emit("Controllo della destinazione...")
             self._start_task(
-                lambda cancel_requested: check_destination(
+                lambda cancel_requested: check_payload_destination(
                     session.proposal,
                     session.destination,
                     cancel_requested=cancel_requested,
@@ -1097,68 +1125,68 @@ class ReceiveTransferController(BaseTransferController):
         session = self._require_session()
         if not session.paths or not session.proposal or not session.target_path:
             self._abort_session(
-                "File ricevuto ma sessione non disponibile."
+                "Contenuto ricevuto ma sessione non disponibile."
             )
             return
 
-        source = received_path(
-            session.paths.main_receive,
-            session.proposal.filename,
-        )
         try:
             proposal = session.proposal
             target_path = session.target_path
             target_overwrite = session.target_overwrite
-            self.status_changed.emit("Verifica integrità del file ricevuto...")
+            staging = session.paths.main_receive
+            self.status_changed.emit(
+                "Verifica integrità del contenuto ricevuto..."
+            )
             self._start_task(
-                lambda cancel_requested: self._verify_and_store_file(
-                    source=source,
+                lambda cancel_requested: self._verify_and_store_payload(
+                    staging=staging,
                     proposal=proposal,
                     target_path=target_path,
                     target_overwrite=target_overwrite,
                     cancel_requested=cancel_requested,
                 ),
-                on_success=self._on_received_file_stored,
+                on_success=self._on_received_payload_stored,
                 on_failure=lambda exc: self._abort_session(
-                    "Verifica o salvataggio del file non riusciti.",
+                    "Verifica o salvataggio del contenuto non riusciti.",
                     exc,
                 ),
                 complete_on_cancel=True,
             )
         except Exception as exc:
             self._abort_session(
-                "Verifica o salvataggio del file non riusciti.",
+                "Verifica o salvataggio del contenuto non riusciti.",
                 exc,
             )
 
     @staticmethod
-    def _verify_and_store_file(
+    def _verify_and_store_payload(
         *,
-        source: Path,
+        staging: Path,
         proposal: TransferProposal,
         target_path: Path,
         target_overwrite: bool,
         cancel_requested: Callable[[], bool],
     ) -> Path:
-        verify_received_file(
-            source,
+        verify_received_payload(
+            staging,
             proposal,
             cancel_requested=cancel_requested,
         )
-        return move_verified_file(
-            source,
+        return publish_received_payload(
+            staging,
+            proposal,
             target_path,
             overwrite=target_overwrite,
             cancel_requested=cancel_requested,
         )
 
-    def _on_received_file_stored(self, result: object) -> None:
+    def _on_received_payload_stored(self, result: object) -> None:
         if not self.active or self.state != TransferState.VERIFYING:
             return
         if not isinstance(result, Path):
             self._abort_session(
-                "Verifica o salvataggio del file non riusciti.",
-                TypeError("Percorso finale del file non valido."),
+                "Verifica o salvataggio del contenuto non riusciti.",
+                TypeError("Percorso finale del contenuto non valido."),
             )
             return
 

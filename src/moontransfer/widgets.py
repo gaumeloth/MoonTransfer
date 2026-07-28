@@ -102,9 +102,9 @@ class TransferProgressWidget(QWidget):
 
         self.total_bytes = total_bytes
         self.transferred_bytes = 0
-        self.percent = 0 if total_bytes else None
+        self.percent = 0 if total_bytes is not None else None
         self.speed_bps = None
-        self.exact_total = bool(total_bytes)
+        self.exact_total = total_bytes is not None
         self.elapsed_seconds = 0.0
         self.started_at = None
         self._refresh()
@@ -117,7 +117,7 @@ class TransferProgressWidget(QWidget):
     ) -> None:
         self.total_bytes = total_bytes
         self.transferred_bytes = 0
-        self.percent = 0 if total_bytes else None
+        self.percent = 0 if total_bytes is not None else None
         self.speed_bps = None
         self.started_at = time.monotonic()
         self.elapsed_seconds = 0.0
@@ -127,7 +127,7 @@ class TransferProgressWidget(QWidget):
         self._refresh()
 
     def set_total(self, total_bytes: int) -> None:
-        if self.exact_total and self.total_bytes:
+        if self.exact_total and self.total_bytes is not None:
             return
 
         self.total_bytes = total_bytes
@@ -144,7 +144,11 @@ class TransferProgressWidget(QWidget):
             self.speed_bps = sample.speed_bps
 
         if sample.transferred_bytes is not None:
-            if self.exact_total and self.total_bytes and sample.percent is not None:
+            if (
+                self.exact_total
+                and self.total_bytes is not None
+                and sample.percent is not None
+            ):
                 self.transferred_bytes = round(self.total_bytes * sample.percent / 100)
             else:
                 self.transferred_bytes = sample.transferred_bytes
@@ -195,10 +199,12 @@ class TransferProgressWidget(QWidget):
     def _refresh(self, *, success: bool = False) -> None:
         elapsed = self._current_elapsed()
 
-        if self.total_bytes:
+        if self.total_bytes is not None:
             percent = self.percent
-            if percent is None:
+            if percent is None and self.total_bytes:
                 percent = round(self.transferred_bytes * 100 / self.total_bytes)
+            if percent is None:
+                percent = 0
             percent = max(0, min(100, percent))
             self.progress_bar.setRange(0, 100)
             self.progress_bar.setValue(percent)
@@ -209,7 +215,9 @@ class TransferProgressWidget(QWidget):
             self.progress_bar.setValue(0)
 
         self.total_value.setText(
-            format_file_size(self.total_bytes) if self.total_bytes else "-"
+            format_file_size(self.total_bytes)
+            if self.total_bytes is not None
+            else "-"
         )
         self.transferred_value.setText(format_file_size(self.transferred_bytes))
         self.speed_value.setText(format_transfer_rate(self.speed_bps))
