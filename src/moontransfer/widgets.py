@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtCore import QMimeData, Qt, QTimer, Signal
+from PySide6.QtGui import (
+    QDragEnterEvent,
+    QDragLeaveEvent,
+    QDragMoveEvent,
+    QDropEvent,
+    QFont,
+    QPalette,
+)
 from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QListWidget,
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
@@ -24,6 +33,111 @@ from moontransfer.progress import (
     format_file_size,
     format_transfer_rate,
 )
+
+
+def local_paths_from_mime_data(mime_data: QMimeData) -> tuple[Path, ...]:
+    if not mime_data.hasUrls():
+        return ()
+
+    urls = mime_data.urls()
+    if not urls:
+        return ()
+
+    paths: list[Path] = []
+    for url in urls:
+        if not url.isLocalFile():
+            return ()
+        local_path = url.toLocalFile()
+        if not local_path:
+            return ()
+        paths.append(Path(local_path))
+    return tuple(paths)
+
+
+class DropPathListWidget(QListWidget):
+    paths_dropped = Signal(object)
+    drop_active_changed = Signal(bool)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._drop_enabled = True
+        self._drop_active = False
+        self.setAcceptDrops(True)
+        self.viewport().setAcceptDrops(True)
+        self.setDragEnabled(False)
+        self.setDropIndicatorShown(False)
+
+    @property
+    def drop_enabled(self) -> bool:
+        return self._drop_enabled
+
+    def set_drop_enabled(self, enabled: bool) -> None:
+        self._drop_enabled = enabled
+        self.setAcceptDrops(enabled)
+        self.viewport().setAcceptDrops(enabled)
+        if not enabled:
+            self._set_drop_active(False)
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        self._handle_drag_event(event)
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:
+        self._handle_drag_event(event)
+
+    def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
+        self._set_drop_active(False)
+        event.accept()
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        paths = self._accepted_paths(event.mimeData())
+        self._set_drop_active(False)
+        if not paths:
+            event.ignore()
+            return
+
+        event.setDropAction(Qt.DropAction.CopyAction)
+        event.accept()
+        self.paths_dropped.emit(paths)
+
+    def _handle_drag_event(
+        self,
+        event: QDragEnterEvent | QDragMoveEvent,
+    ) -> None:
+        if not self._accepted_paths(event.mimeData()):
+            self._set_drop_active(False)
+            event.ignore()
+            return
+
+        self._set_drop_active(True)
+        event.setDropAction(Qt.DropAction.CopyAction)
+        event.accept()
+
+    def _accepted_paths(self, mime_data: QMimeData) -> tuple[Path, ...]:
+        if not self._drop_enabled or not self.isEnabled():
+            return ()
+        return local_paths_from_mime_data(mime_data)
+
+    def _set_drop_active(self, active: bool) -> None:
+        if self._drop_active == active:
+            return
+
+        self._drop_active = active
+        self.setProperty("dropActive", active)
+        if active:
+            palette = self.palette()
+            border = palette.color(QPalette.ColorRole.Highlight).name()
+            background = palette.color(
+                QPalette.ColorRole.AlternateBase
+            ).name()
+            self.setStyleSheet(
+                "QListWidget {"
+                f"border: 2px solid {border};"
+                f"background-color: {background};"
+                "}"
+            )
+        else:
+            self.setStyleSheet("")
+        self.drop_active_changed.emit(active)
 
 
 class StatusLabel(QLabel):

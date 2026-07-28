@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidget,
     QListWidgetItem,
     QMessageBox,
     QPushButton,
@@ -36,6 +35,7 @@ from moontransfer.files import (
 )
 from moontransfer.progress import format_file_size
 from moontransfer.protocol import (
+    MAX_PAYLOAD_ROOTS,
     ProtocolError,
     TransferProposal,
     validate_croc_code,
@@ -49,6 +49,7 @@ from moontransfer.transfer import (
     SendTransferController,
 )
 from moontransfer.widgets import (
+    DropPathListWidget,
     StatusLabel,
     TechnicalOutput,
     TransferProgressWidget,
@@ -99,17 +100,22 @@ class SendTab(QWidget):
         super().__init__()
         self.last_code: str | None = None
         self.source_paths: list[Path] = []
+        self._status_before_drop: str | None = None
 
         self.status_label = StatusLabel(
             "Pronto a inviare file e cartelle."
         )
-        self.source_list = QListWidget()
+        self.source_list = DropPathListWidget()
         self.source_list.setSelectionMode(
             QAbstractItemView.SelectionMode.ExtendedSelection
         )
         self.source_list.setMinimumHeight(100)
         self.source_list.setMaximumHeight(150)
         self.source_list.setAlternatingRowColors(True)
+        self.source_list.setAccessibleName("Elementi da inviare")
+        self.source_list.setToolTip(
+            "Trascina qui file e cartelle oppure usa i pulsanti di selezione."
+        )
 
         self.add_files_button = QPushButton("Aggiungi file")
         self.add_folder_button = QPushButton("Aggiungi cartella")
@@ -200,6 +206,10 @@ class SendTab(QWidget):
         self.source_list.itemSelectionChanged.connect(
             self._refresh_selection_actions
         )
+        self.source_list.paths_dropped.connect(self._add_paths)
+        self.source_list.drop_active_changed.connect(
+            self._set_drop_active
+        )
         self.start_button.clicked.connect(self._start_send)
         self.stop_button.clicked.connect(self._stop_send)
         self.copy_button.clicked.connect(self._copy_code)
@@ -241,13 +251,25 @@ class SendTab(QWidget):
 
     def _add_paths(self, paths: Iterable[Path]) -> None:
         known = {str(path) for path in self.source_paths}
+        pending: list[Path] = []
         for selected in paths:
             path = selected.expanduser().absolute()
             if str(path) in known:
                 continue
+            if (
+                len(self.source_paths) + len(pending)
+                >= MAX_PAYLOAD_ROOTS
+            ):
+                self.status_label.setText(
+                    "Puoi selezionare al massimo "
+                    f"{MAX_PAYLOAD_ROOTS} elementi principali."
+                )
+                return
             known.add(str(path))
-            self.source_paths.append(path)
+            pending.append(path)
 
+        for path in pending:
+            self.source_paths.append(path)
             item = QListWidgetItem(self._source_description(path))
             item.setData(Qt.ItemDataRole.UserRole, str(path))
             item.setToolTip(str(path))
@@ -261,6 +283,19 @@ class SendTab(QWidget):
                 )
             self.source_list.addItem(item)
         self._refresh_selection_info()
+
+    def _set_drop_active(self, active: bool) -> None:
+        if active:
+            if self._status_before_drop is None:
+                self._status_before_drop = self.status_label.text()
+            self.status_label.setText(
+                "Rilascia per aggiungere file e cartelle."
+            )
+            return
+
+        if self._status_before_drop is not None:
+            self.status_label.setText(self._status_before_drop)
+            self._status_before_drop = None
 
     @staticmethod
     def _source_description(path: Path) -> str:
@@ -369,6 +404,7 @@ class SendTab(QWidget):
         self.stop_button.setEnabled(running)
         self.add_files_button.setEnabled(not running)
         self.add_folder_button.setEnabled(not running)
+        self.source_list.set_drop_enabled(not running)
         self.source_list.setEnabled(not running)
         self.copy_button.setEnabled(bool(self.last_code))
         self._refresh_selection_actions()
