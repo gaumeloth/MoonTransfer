@@ -10,12 +10,12 @@
 
 Italian version: [README.it.md](README.it.md)
 
-MoonTransfer is a GUI for sending and receiving files through
+MoonTransfer is a GUI for sending and receiving files and folders through
 [`croc`](https://github.com/schollz/croc).
 
-Its goal is to make file transfer simple: the sender chooses a file,
-MoonTransfer shows a code, and the receiver enters that code to save the file
-in the selected folder.
+Its goal is to make file transfer simple: the sender chooses one or more files
+and folders, MoonTransfer shows a code, and the receiver enters that code to
+save the selected content.
 
 MoonTransfer does not implement its own cryptographic protocol. Security,
 connection handling, and transfer are provided by `croc`; MoonTransfer only
@@ -26,12 +26,17 @@ application.
 
 MoonTransfer is in an early stage. The main flow is already working:
 
-- sending a single file;
-- receiving file metadata through a code before accepting the main download;
+- sending one or more files, folders, or a mixed selection;
+- preserving nested and empty folders;
+- receiving a bounded manifest through a code before accepting the main
+  download;
 - using `croc`'s native accept/reject prompt for the main transfer;
 - showing `croc` output in the GUI;
 - generating one user-facing code while keeping internal control codes hidden;
-- showing filename, size, and SHA-256 before downloading the main file;
+- showing selected roots, total size, and per-file SHA-256 information before
+  downloading the main content;
+- receiving into isolated staging, checking the exact manifest, and publishing
+  the result only after verification;
 - local build with PyInstaller;
 - automatic download of the `croc` binary during the build;
 - pinned `croc` version and SHA-256 verification for supported platforms;
@@ -508,60 +513,85 @@ To complete a transfer, you need two people or two computers:
 Both computers must be connected to the Internet. The code must be shared
 outside MoonTransfer, for example via chat, phone, or email.
 
-### Send a file
+### Send files and folders
 
-On the computer that has the file to send:
+On the sending computer:
 
 1. open MoonTransfer;
 2. go to the **Invia** (Send) tab;
-3. press **Sfoglia...** (Browse);
-4. choose the file to send;
-5. press **Invia** (Send);
-6. wait for the code to appear;
-7. share the code with the person who needs to receive the file.
+3. use **Aggiungi file** (Add files) to select one or more files;
+4. use **Aggiungi cartella** (Add folder) for each folder you want to include;
+5. review the list and use **Rimuovi** (Remove) or **Svuota** (Clear) if needed;
+6. press **Invia** (Send);
+7. wait while MoonTransfer scans the selection and calculates SHA-256 hashes;
+8. share the displayed code with the receiver.
 
-The code first lets the receiver download a small metadata file. After that,
-MoonTransfer opens the main `croc` transfer and waits for the receiver to accept
-or reject it through `croc`'s native prompt.
+The code first lets the receiver download a bounded manifest containing the
+selected paths, sizes, and per-file SHA-256 hashes. MoonTransfer then opens one
+main `croc` transfer for the complete payload and waits for the receiver to
+accept or reject it through `croc`'s native prompt.
 
-During the main file transfer, MoonTransfer shows progress, transferred size,
+During the main transfer, MoonTransfer shows overall progress, transferred size,
 current speed, elapsed time, and estimated remaining time when `croc` provides
 enough progress information.
 
-MoonTransfer calculates the file fingerprint in the background before showing
-the code. The **Stop** button can cancel this preparation as well as an active
+MoonTransfer scans and fingerprints regular files in the background before
+showing the code. It checks the selected tree again before starting the main
+process. The **Stop** button can cancel preparation, verification, or an active
 transfer.
 
 The code is one-time use: it is valid for that transfer and should not be
 reused.
 
-### Receive a file
+### Receive files and folders
 
-On the computer that needs to receive the file:
+On the receiving computer:
 
 1. open MoonTransfer;
 2. go to the **Ricevi** (Receive) tab;
 3. paste the received code;
 4. choose the destination folder;
 5. press **Ricevi** (Receive);
-6. review the filename, size, and SHA-256 hash shown by MoonTransfer;
-7. accept or reject the transfer;
-8. if a file with the same name already exists, choose whether to skip,
+6. review the selected roots, file and folder counts, total size, and SHA-256
+   information shown by MoonTransfer;
+7. expand the manifest details if you need the path, size, and hash of each
+   file;
+8. accept or reject the transfer;
+9. if a single file with the same name already exists, choose whether to skip,
    overwrite, or save the incoming file with another name;
-9. wait for the transfer to complete.
+10. if a folder or group conflicts with existing content, reject it or use the
+    proposed unique folder name;
+11. wait for the transfer to complete.
 
-The main file is downloaded only after MoonTransfer accepts `croc`'s main
+The main payload is downloaded only after MoonTransfer accepts `croc`'s main
 transfer prompt. If you reject the transfer, MoonTransfer connects only to
-refuse the main transfer and does not download the file content. At the end
-MoonTransfer verifies the received size and SHA-256 hash before saving the file
-in the final destination.
+refuse the main transfer and does not download its content. At the end,
+MoonTransfer verifies the exact set of paths, entry types, sizes, and per-file
+SHA-256 hashes before publishing anything in the final destination.
 
 Destination comparison and final SHA-256 verification run in the background.
 The **Stop** button remains available while these checks are in progress.
 
-During the main file transfer, MoonTransfer shows progress, downloaded size,
+During the main transfer, MoonTransfer shows overall progress, downloaded size,
 current speed, elapsed time, and estimated remaining time when `croc` provides
 enough progress information.
+
+A single received file or folder keeps its original root name. A selection
+with multiple roots is stored in a `MoonTransfer` container folder. Existing
+folders are never merged or recursively overwritten; MoonTransfer proposes a
+unique name such as `MoonTransfer (1)` instead.
+
+### Current payload limits
+
+MoonTransfer currently accepts regular files and ordinary folders, including
+empty folders. Symbolic links, junction-like entries, sockets, FIFOs, devices,
+and other special filesystem objects are rejected rather than followed or
+recreated.
+
+A payload can contain at most 10,000 manifest entries and 256 selected roots.
+The manifest is limited to 4 MiB. A folder and one of its descendants cannot be
+selected as separate roots, and root names that would collide on a
+case-insensitive or Unicode-normalizing filesystem are rejected.
 
 If the transfer does not start, check that both computers are connected to the
 Internet and that any firewall or corporate network is not blocking the
@@ -579,8 +609,8 @@ not published yet, so users currently build the application locally.
 Possible future improvements, in indicative order:
 
 - publish ready-made releases for Linux, Windows, and macOS;
-- add drag and drop for the file to send;
-- support sending folders from the GUI;
+- add drag and drop for files and folders;
+- let the sender choose the container name for multi-root payloads;
 - remember the last destination folder used;
 - add advanced settings for custom `croc` relays;
 - further separate transfer, progress parsing, and graphical interface code;
@@ -759,10 +789,10 @@ Use the existing module boundaries when choosing where to make a change:
   both source runs and PyInstaller bundles.
 - `src/moontransfer/transfer.py`: explicit transfer states, send and receive
   controllers, session lifecycle, process and timeout coordination, metadata
-  flow, background file operations, receive limits, final verification, and
+  flow, background payload operations, receive limits, final verification, and
   cleanup.
 - `src/moontransfer/tasks.py`: cancellable `QThread` worker used for file
-  fingerprinting, destination comparison, final verification, and cross-device
+  inventory, destination comparison, final verification, and cross-device
   copies without blocking the GUI event loop.
 - `src/moontransfer/cancellation.py`: Qt-independent cancellation exception
   shared by background workers and file operations.
@@ -773,13 +803,17 @@ Use the existing module boundaries when choosing where to make a change:
   transfer-code environment variables, isolated `croc` configuration, and safe
   command previews for logs.
 - `src/moontransfer/protocol.py`: MoonTransfer control metadata format, protocol
-  version, generated codes, filename validation, SHA-256 validation, and
-  metadata JSON read/write rules.
+  versions, generated codes, bounded payload manifest, portable path
+  validation, SHA-256 validation, and metadata JSON read/write rules.
+- `src/moontransfer/payload.py`: source-tree inventory, mutation detection,
+  destination comparison, exact received-tree verification, and safe
+  publication of single-root or multi-root payloads.
 - `src/moontransfer/files.py`: temporary session directories, destination
-  conflict checks, stable file fingerprints, cancellable SHA-256 hashing,
-  received-file verification, unique filenames, and final file placement.
-- `src/moontransfer/progress.py`: parsing `croc` progress output and formatting
-  file sizes, transfer rates, elapsed time, and remaining time.
+  primitives, stable file fingerprints, cancellable SHA-256 hashing, unique
+  file and directory names, and cross-filesystem movement.
+- `src/moontransfer/progress.py`: parsing `croc` progress output, aggregating
+  per-file samples, and formatting file sizes, transfer rates, elapsed time,
+  and remaining time.
 - `src/moontransfer/messages.py`: user-facing status messages derived from
   process output and process results.
 - `src/moontransfer/runner.py`: `QProcess` lifecycle, stdout/stderr splitting,
@@ -878,9 +912,10 @@ Useful references:
 ### Automatic tests
 
 Unit tests cover the non-GUI logic split across the runtime modules and
-maintenance tools: command construction, transfer output parsing, user-facing
-status messages, desktop integration helpers, process-output splitting, pinned
-`croc` asset selection, and latest-release check helpers.
+maintenance tools: payload inventory and exact-tree verification, protocol
+validation, command construction, transfer output parsing, user-facing status
+messages, desktop integration helpers, process-output splitting, pinned `croc`
+asset selection, and latest-release check helpers.
 
 They do not exercise real GUI interaction and they do not perform a real file
 transfer by default. Use the manual transfer test for that.
@@ -908,10 +943,12 @@ when the behavior crosses module or platform boundaries.
   configuration: run `tests/test_croc.py`, `tests/test_check_latest_croc.py`,
   and the full unit test suite.
 - Changes to metadata JSON, generated codes, filename validation, hash
-  validation, or protocol versioning: run `tests/test_protocol.py` and
-  `tests/test_files.py`.
-- Changes to destination handling, overwrite/rename behavior, hashing, or final
-  file placement: run `tests/test_files.py` and perform a manual receive test.
+  validation, manifests, or protocol versioning: run `tests/test_protocol.py`,
+  `tests/test_payload.py`, and `tests/test_files.py`.
+- Changes to source scanning, destination handling, overwrite/rename behavior,
+  hashing, received-tree verification, or final placement: run
+  `tests/test_payload.py` and `tests/test_files.py`, then perform a manual
+  receive test.
 - Changes to progress parsing or displayed transfer statistics: run
   `tests/test_progress.py` with representative `croc` output samples.
 - Changes to user-facing status text: run `tests/test_messages.py` and check the
@@ -935,10 +972,12 @@ To verify the full flow during development, you can use two MoonTransfer
 instances on the same machine:
 
 1. open two MoonTransfer instances;
-2. in the first instance, send a small file;
+2. in the first instance, select a small file and a folder containing a nested
+   file and an empty folder;
 3. copy the displayed code;
 4. in the second instance, receive into a different folder;
-5. check that the file was created in the destination folder.
+5. check that the `MoonTransfer` container contains every selected root, nested
+   file, and empty folder.
 
 This test is useful for development, but it is not the main use case of the
 program, which remains transferring between two different computers.
@@ -995,9 +1034,10 @@ uv run --frozen python tools/check_latest_croc.py --force --transfer
 ```
 
 The transfer check starts a sender and a receiver with the latest `croc`
-binary, transfers a small temporary file, and verifies the received content. It
-requires Internet access and a reachable `croc` relay, so it is intentionally
-not part of the default check.
+binary, transfers multiple roots including a nested folder, an empty folder,
+and a Unicode filename, and verifies the received content. It requires Internet
+access and a reachable `croc` relay, so it is intentionally not part of the
+default check.
 
 If the check passes for a new release, update `[tool.moontransfer.croc]` in
 `pyproject.toml` with the new version and official hashes, then run the normal
@@ -1010,25 +1050,28 @@ test suite before committing.
 - `src/moontransfer/app.py` keeps the application entry point, main window, and
   send/receive tabs. It owns widget layout, local input validation, user
   dialogs, and presentation of controller events. `transfer.py` owns the
-  explicit state machines and the orchestration of metadata and main-file
+  explicit state machines and the orchestration of metadata and main-payload
   processes, timeouts, session resources, verification, and cleanup. Other
   reusable behavior is split into `croc.py` for `croc` command construction,
-  `protocol.py` for MoonTransfer control JSON messages, `files.py` for hashing,
-  temporary directories, conflict checks, and final file placement,
-  `progress.py` for transfer output parsing, `messages.py` for user-facing
-  status text, `desktop.py` for file manager integration, `runner.py` for
-  `QProcess` handling, `tasks.py` for cancellable background file operations,
-  `cancellation.py` for the shared cancellation contract, and `widgets.py` for
-  shared Qt widgets.
+  `protocol.py` for bounded control manifests, `payload.py` for inventory and
+  exact tree verification, `files.py` for low-level filesystem primitives,
+  `progress.py` for transfer output parsing and aggregation, `messages.py` for
+  user-facing status text, `desktop.py` for file manager integration,
+  `runner.py` for `QProcess` handling, `tasks.py` for cancellable background
+  operations, `cancellation.py` for the shared cancellation contract, and
+  `widgets.py` for shared Qt widgets.
 - The bundled `croc` version is pinned in `pyproject.toml`; supported release
   archives are verified with versioned SHA-256 hashes before extraction.
-- When sending, MoonTransfer generates metadata and main file codes itself. The
+- When sending, MoonTransfer generates metadata and main payload codes itself.
+  Protocol v2 describes one or more roots with a bounded flat manifest of files
+  and directories. Each file entry includes its exact size and SHA-256 hash.
+  A v2 receiver can also normalize a legacy v1 single-file proposal. The
   visible code is only the metadata code. Transfer codes are passed through
   `CROC_SECRET`, because modern non-classic `croc` does not accept custom send
   codes through `--code` on Unix systems:
 
 ```text
-CROC_SECRET=<hidden> croc --classic=false --ignore-stdin --disable-clipboard send --no-local <file>
+CROC_SECRET=<hidden> croc --classic=false --ignore-stdin --disable-clipboard send --no-local <path> [<path> ...]
 ```
 
 `--no-local` avoids `croc`'s local relay, which can make negotiation unstable
@@ -1036,12 +1079,13 @@ in tests with two instances on the same machine.
 `--classic=false` keeps MoonTransfer on `croc`'s modern transfer mode even if
 the user's global `croc` configuration has remembered classic mode.
 
-After the metadata transfer, the sender starts the main `croc send` process and
-waits. The receiver starts the main `croc` process without `--yes`, then
+After the metadata transfer, the sender verifies that the inventoried roots
+have not changed, starts one main `croc send` process with every selected root,
+and waits. The receiver starts the main `croc` process without `--yes`, then
 MoonTransfer writes `y` or `n` to that process based on the user's GUI choice.
 This uses `croc`'s own accept/reject prompt instead of a separate MoonTransfer
-decision transfer. If the receiver rejects the file, the main transfer is
-refused and no file content is downloaded.
+decision transfer. If the receiver rejects the payload, the main transfer is
+refused and no payload content is downloaded.
 
 - When receiving metadata, control files are received into temporary session
   directories first. Transfer codes are passed through `CROC_SECRET`, not as
@@ -1051,7 +1095,7 @@ refused and no file content is downloaded.
 CROC_SECRET=<hidden> croc --classic=false --ignore-stdin --yes --overwrite
 ```
 
-The main file receive process intentionally keeps stdin open and does not use
+The main payload receive process intentionally keeps stdin open and does not use
 `--yes`, so MoonTransfer can answer `croc`'s prompt:
 
 ```text
@@ -1063,14 +1107,19 @@ directory, so MoonTransfer does not depend on or modify the user's global
 `croc` settings.
 
 The command preview shown in the technical details masks internal transfer
-codes. The final file is moved to the selected destination only after the
-expected size and SHA-256 hash are verified.
+codes. The main payload is received into a fresh staging directory. MoonTransfer
+rejects unlisted paths, missing entries, type changes, links, special files,
+size mismatches, and SHA-256 mismatches before publishing the verified result.
+Multiple selected roots are published inside one container directory so a
+group is not intentionally merged into existing destination content.
 
 - Potentially long local operations run in a cancellable background `QThread`:
-  sender fingerprinting, comparison with an existing destination file, final
-  received-file verification, and cross-device copies. The sender records the
-  source file identity together with its hash and checks it again before
-  starting the main `croc` process.
+  sender inventory and fingerprinting, comparison with existing destination
+  content, final received-tree verification, and cross-device copies. The
+  sender records every source file identity together with its hash, rescans the
+  selected roots, and checks the fingerprints before starting the main `croc`
+  process. Final receiver verification remains authoritative because `croc`
+  opens source paths after MoonTransfer's last local check.
 - Build reproducibility depends on `uv.lock`, the pinned `croc` version, and
   the versioned SHA-256 hashes in `pyproject.toml`.
 
@@ -1091,6 +1140,7 @@ MoonTransfer/
 │     ├─ desktop.py
 │     ├─ files.py
 │     ├─ messages.py
+│     ├─ payload.py
 │     ├─ protocol.py
 │     ├─ progress.py
 │     ├─ resources.py
@@ -1113,6 +1163,7 @@ MoonTransfer/
 │  ├─ test_fetch_croc.py
 │  ├─ test_files.py
 │  ├─ test_messages.py
+│  ├─ test_payload.py
 │  ├─ test_protocol.py
 │  ├─ test_progress.py
 │  ├─ test_runner.py

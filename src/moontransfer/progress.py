@@ -34,6 +34,105 @@ class TransferProgressSample:
     speed_bps: float | None = None
 
 
+class AggregateTransferProgress:
+    def __init__(self) -> None:
+        self.reset(())
+
+    def reset(self, file_sizes: tuple[int, ...]) -> None:
+        self.file_sizes = file_sizes
+        self.total_bytes = sum(file_sizes)
+        self.current_index = 0
+        self.completed_bytes = 0
+        while (
+            self.current_index < len(self.file_sizes) - 1
+            and self.file_sizes[self.current_index] == 0
+        ):
+            self.current_index += 1
+        self.last_percent: int | None = None
+        self.last_transferred: int | None = None
+        self.last_item_total: int | None = None
+
+    def apply(
+        self,
+        sample: TransferProgressSample,
+    ) -> TransferProgressSample:
+        if not self.file_sizes:
+            return sample
+
+        if self._starts_next_item(sample):
+            self.completed_bytes += self.file_sizes[self.current_index]
+            self.current_index += 1
+            while (
+                self.current_index < len(self.file_sizes) - 1
+                and self.file_sizes[self.current_index] == 0
+            ):
+                self.completed_bytes += self.file_sizes[self.current_index]
+                self.current_index += 1
+
+        current_size = self.file_sizes[self.current_index]
+        current_bytes = self._current_item_bytes(sample, current_size)
+        transferred_bytes = min(
+            self.total_bytes,
+            self.completed_bytes + current_bytes,
+        )
+        percent = (
+            round(transferred_bytes * 100 / self.total_bytes)
+            if self.total_bytes
+            else 100
+        )
+
+        self.last_percent = sample.percent
+        self.last_transferred = sample.transferred_bytes
+        self.last_item_total = sample.total_bytes
+        return TransferProgressSample(
+            percent=max(0, min(100, percent)),
+            transferred_bytes=transferred_bytes,
+            total_bytes=self.total_bytes,
+            speed_bps=sample.speed_bps,
+        )
+
+    def _starts_next_item(self, sample: TransferProgressSample) -> bool:
+        if self.current_index >= len(self.file_sizes) - 1:
+            return False
+        if self.last_percent == 100:
+            return True
+        if (
+            self.last_transferred is not None
+            and sample.transferred_bytes is not None
+            and sample.transferred_bytes < self.last_transferred
+        ):
+            return True
+        if (
+            self.last_percent is not None
+            and sample.percent is not None
+            and sample.percent < self.last_percent
+        ):
+            return True
+        return bool(
+            self.last_percent is not None
+            and self.last_percent >= 95
+            and self.last_item_total is not None
+            and sample.total_bytes is not None
+            and sample.total_bytes != self.last_item_total
+        )
+
+    @staticmethod
+    def _current_item_bytes(
+        sample: TransferProgressSample,
+        current_size: int,
+    ) -> int:
+        if sample.percent is not None:
+            return round(current_size * sample.percent / 100)
+        if (
+            sample.transferred_bytes is not None
+            and sample.total_bytes
+            and sample.total_bytes > 0
+        ):
+            ratio = sample.transferred_bytes / sample.total_bytes
+            return round(current_size * max(0.0, min(1.0, ratio)))
+        return min(sample.transferred_bytes or 0, current_size)
+
+
 def format_file_size(num_bytes: int) -> str:
     if num_bytes < 1024:
         return f"{num_bytes} B"

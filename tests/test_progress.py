@@ -3,6 +3,8 @@ from __future__ import annotations
 import unittest
 
 from moontransfer.progress import (
+    AggregateTransferProgress,
+    TransferProgressSample,
     format_duration,
     format_file_size,
     format_transfer_rate,
@@ -76,6 +78,64 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(sample.transferred_bytes, 0)
         self.assertEqual(sample.total_bytes, 21_000_000)
         self.assertIsNone(sample.speed_bps)
+
+    def test_aggregates_progress_across_multiple_files(self) -> None:
+        aggregate = AggregateTransferProgress()
+        aggregate.reset((100, 300))
+
+        first = aggregate.apply(
+            TransferProgressSample(
+                percent=100,
+                transferred_bytes=100,
+                total_bytes=100,
+                speed_bps=50,
+            )
+        )
+        second = aggregate.apply(
+            TransferProgressSample(
+                percent=50,
+                transferred_bytes=150,
+                total_bytes=300,
+                speed_bps=75,
+            )
+        )
+
+        self.assertEqual(first.transferred_bytes, 100)
+        self.assertEqual(first.percent, 25)
+        self.assertEqual(second.transferred_bytes, 250)
+        self.assertEqual(second.percent, 62)
+        self.assertEqual(second.total_bytes, 400)
+
+    def test_aggregate_progress_keeps_single_file_exact_size(self) -> None:
+        aggregate = AggregateTransferProgress()
+        aggregate.reset((1234,))
+
+        sample = aggregate.apply(
+            TransferProgressSample(
+                percent=50,
+                transferred_bytes=600,
+                total_bytes=1200,
+            )
+        )
+
+        self.assertEqual(sample.transferred_bytes, 617)
+        self.assertEqual(sample.total_bytes, 1234)
+        self.assertEqual(sample.percent, 50)
+
+    def test_aggregate_progress_skips_leading_empty_files(self) -> None:
+        aggregate = AggregateTransferProgress()
+        aggregate.reset((0, 200))
+
+        sample = aggregate.apply(
+            TransferProgressSample(
+                percent=50,
+                transferred_bytes=100,
+                total_bytes=200,
+            )
+        )
+
+        self.assertEqual(sample.transferred_bytes, 100)
+        self.assertEqual(sample.percent, 50)
 
     def test_parse_hashing_progress_is_not_transfer_progress(self) -> None:
         self.assertIsNone(

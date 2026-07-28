@@ -5,6 +5,7 @@ import re
 import shlex
 import shutil
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 
@@ -49,14 +50,18 @@ def parse_send_code(line: str) -> str | None:
     return code or None
 
 
-def build_send_args(path: Path) -> list[str]:
+def build_send_args(paths: Path | Sequence[Path]) -> list[str]:
+    selected = (paths,) if isinstance(paths, Path) else tuple(paths)
+    if not selected:
+        raise ValueError("Nessun percorso da inviare.")
+
     return [
         NON_CLASSIC_ARG,
         "--ignore-stdin",
         "--disable-clipboard",
         "send",
         "--no-local",
-        str(path),
+        *(str(path) for path in selected),
     ]
 
 
