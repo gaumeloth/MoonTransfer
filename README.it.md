@@ -524,12 +524,12 @@ Sul computer del mittente:
 
 1. apri MoonTransfer;
 2. vai nella scheda **Invia**;
-3. usa **Aggiungi file** per selezionare uno o più file;
-4. usa **Aggiungi cartella** per ogni cartella che vuoi includere;
-5. controlla l'elenco e, se necessario, usa **Rimuovi** o **Svuota**;
-6. premi **Invia**;
-7. attendi che MoonTransfer analizzi la selezione e calcoli gli hash SHA-256;
-8. comunica al destinatario il codice visualizzato.
+3. trascina file e cartelle nell'elenco di selezione oppure usa **Aggiungi
+   file** e **Aggiungi cartella**;
+4. controlla l'elenco e, se necessario, usa **Rimuovi** o **Svuota**;
+5. premi **Invia**;
+6. attendi che MoonTransfer analizzi la selezione e calcoli gli hash SHA-256;
+7. comunica al destinatario il codice visualizzato.
 
 Il codice permette prima al destinatario di scaricare un manifest con limiti
 espliciti contenente percorsi selezionati, dimensioni e hash SHA-256 di ogni
@@ -618,7 +618,6 @@ buildano l'applicazione localmente.
 Possibili miglioramenti futuri, in ordine indicativo:
 
 - pubblicare release scaricabili già buildate per Linux, Windows e macOS;
-- aggiungere drag and drop per file e cartelle;
 - permettere al mittente di scegliere il nome del contenitore per payload con
   più elementi principali;
 - ricordare l'ultima cartella di destinazione usata;
