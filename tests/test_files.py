@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import errno
+import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,8 +17,11 @@ from moontransfer.files import (
     ensure_receive_capacity,
     ensure_file_unchanged,
     fingerprint_file,
+    is_link_or_reparse,
     move_verified_file,
+    path_entry_exists,
     sha256_file,
+    unique_directory_path,
     unique_destination_path,
     verify_received_file,
 )
@@ -25,6 +29,24 @@ from moontransfer.protocol import create_proposal
 
 
 class FileHelperTests(unittest.TestCase):
+    def test_reparse_points_are_treated_as_links(self) -> None:
+        item_stat = mock.Mock(
+            st_mode=stat.S_IFDIR,
+            st_file_attributes=stat.FILE_ATTRIBUTE_REPARSE_POINT,
+        )
+
+        self.assertTrue(is_link_or_reparse(item_stat))
+
+    def test_path_entry_exists_detects_broken_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "broken-link"
+            try:
+                path.symlink_to(Path(tmp) / "missing")
+            except OSError as exc:
+                self.skipTest(f"Symlink non disponibile: {exc}")
+
+            self.assertTrue(path_entry_exists(path))
+
     def test_sha256_file_hashes_content_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "different-name.txt"
@@ -100,6 +122,17 @@ class FileHelperTests(unittest.TestCase):
             self.assertEqual(
                 unique_destination_path(directory / "example.txt"),
                 directory / "example (2).txt",
+            )
+
+    def test_unique_directory_path_adds_counter_after_full_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            path = directory / "photos.2026"
+            path.mkdir()
+
+            self.assertEqual(
+                unique_directory_path(path),
+                directory / "photos.2026 (1)",
             )
 
     def test_verify_received_file_rejects_wrong_hash(self) -> None:

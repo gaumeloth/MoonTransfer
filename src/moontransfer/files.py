@@ -48,6 +48,22 @@ class FileFingerprint:
     modified_ns: int
 
 
+def is_link_or_reparse(item_stat: os.stat_result) -> bool:
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    file_attributes = getattr(item_stat, "st_file_attributes", 0)
+    return stat.S_ISLNK(item_stat.st_mode) or bool(
+        reparse_flag and file_attributes & reparse_flag
+    )
+
+
+def path_entry_exists(path: Path) -> bool:
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return False
+    return True
+
+
 def create_session_paths(
     *,
     main_receive_parent: Path | None = None,
@@ -124,6 +140,10 @@ def fingerprint_file(
     cancel_requested: Callable[[], bool] | None = None,
 ) -> FileFingerprint:
     digest = hashlib.sha256()
+    path_stat = path.lstat()
+    if is_link_or_reparse(path_stat) or not stat.S_ISREG(path_stat.st_mode):
+        raise OSError(f"Il percorso sorgente non è un file regolare: {path}")
+
     with path.open("rb") as source:
         initial = os.fstat(source.fileno())
         if not stat.S_ISREG(initial.st_mode):
@@ -141,7 +161,7 @@ def fingerprint_file(
     if cancel_requested and cancel_requested():
         raise OperationCancelled
 
-    current = path.stat()
+    current = path.lstat()
     identity_before = (
         initial.st_dev,
         initial.st_ino,
@@ -160,7 +180,12 @@ def fingerprint_file(
         current.st_size,
         current.st_mtime_ns,
     )
-    if identity_before != identity_after or identity_after != identity_current:
+    if (
+        is_link_or_reparse(current)
+        or not stat.S_ISREG(current.st_mode)
+        or identity_before != identity_after
+        or identity_after != identity_current
+    ):
         raise OSError(f"Il file è cambiato durante il calcolo dell'hash: {path}")
 
     return FileFingerprint(
@@ -173,7 +198,7 @@ def fingerprint_file(
 
 
 def ensure_file_unchanged(path: Path, fingerprint: FileFingerprint) -> None:
-    current = path.stat()
+    current = path.lstat()
     identity = (
         current.st_dev,
         current.st_ino,
@@ -186,7 +211,11 @@ def ensure_file_unchanged(path: Path, fingerprint: FileFingerprint) -> None:
         fingerprint.size,
         fingerprint.modified_ns,
     )
-    if identity != expected or not stat.S_ISREG(current.st_mode):
+    if (
+        identity != expected
+        or is_link_or_reparse(current)
+        or not stat.S_ISREG(current.st_mode)
+    ):
         raise OSError(
             "Il file selezionato è cambiato dopo il calcolo dell'hash."
         )
@@ -199,26 +228,27 @@ def check_destination(
     cancel_requested: Callable[[], bool] | None = None,
 ) -> DestinationCheck:
     target = destination_dir / proposal.filename
-    if not target.exists() and not target.is_symlink():
+    if not path_entry_exists(target):
         return DestinationCheck(DestinationConflict.NONE, target)
 
     try:
-        if not stat.S_ISREG(target.lstat().st_mode):
+        target_stat = target.lstat()
+        if (
+            is_link_or_reparse(target_stat)
+            or not stat.S_ISREG(target_stat.st_mode)
+        ):
             return DestinationCheck(DestinationConflict.DIFFERENT, target)
     except OSError:
         return DestinationCheck(DestinationConflict.DIFFERENT, target)
 
     try:
-        if target.stat().st_size != proposal.size:
+        if target_stat.st_size != proposal.size:
             return DestinationCheck(DestinationConflict.DIFFERENT, target)
-
-        if (
-            sha256_file(
-                target,
-                cancel_requested=cancel_requested,
-            )
-            == proposal.sha256
-        ):
+        fingerprint = fingerprint_file(
+            target,
+            cancel_requested=cancel_requested,
+        )
+        if fingerprint.sha256 == proposal.sha256:
             return DestinationCheck(DestinationConflict.IDENTICAL, target)
     except OSError:
         return DestinationCheck(DestinationConflict.DIFFERENT, target)
@@ -227,7 +257,7 @@ def check_destination(
 
 
 def unique_destination_path(path: Path) -> Path:
-    if not path.exists() and not path.is_symlink():
+    if not path_entry_exists(path):
         return path
 
     stem = path.stem
@@ -237,7 +267,19 @@ def unique_destination_path(path: Path) -> Path:
     index = 1
     while True:
         candidate = parent / f"{stem} ({index}){suffix}"
-        if not candidate.exists() and not candidate.is_symlink():
+        if not path_entry_exists(candidate):
+            return candidate
+        index += 1
+
+
+def unique_directory_path(path: Path) -> Path:
+    if not path_entry_exists(path):
+        return path
+
+    index = 1
+    while True:
+        candidate = path.parent / f"{path.name} ({index})"
+        if not path_entry_exists(candidate):
             return candidate
         index += 1
 
@@ -253,24 +295,24 @@ def verify_received_file(
     cancel_requested: Callable[[], bool] | None = None,
 ) -> None:
     try:
-        mode = path.lstat().st_mode
+        item_stat = path.lstat()
     except FileNotFoundError:
         raise FileNotFoundError(f"File ricevuto non trovato: {path}")
 
-    if not stat.S_ISREG(mode):
+    if is_link_or_reparse(item_stat) or not stat.S_ISREG(item_stat.st_mode):
         raise ValueError(f"Il file ricevuto non è un file regolare: {path}")
 
-    size = path.stat().st_size
-    if size != proposal.size:
-        raise ValueError(
-            f"Dimensione file non valida: atteso {proposal.size}, ricevuto {size}"
-        )
-
-    digest = sha256_file(
+    fingerprint = fingerprint_file(
         path,
         cancel_requested=cancel_requested,
     )
-    if digest != proposal.sha256:
+    if fingerprint.size != proposal.size:
+        raise ValueError(
+            "Dimensione file non valida: "
+            f"atteso {proposal.size}, ricevuto {fingerprint.size}"
+        )
+
+    if fingerprint.sha256 != proposal.sha256:
         raise ValueError("Hash SHA-256 del file ricevuto non corrispondente.")
 
 
@@ -281,6 +323,8 @@ def directory_payload_size(directory: Path) -> int:
             item_stat = path.lstat()
         except FileNotFoundError:
             continue
+        if is_link_or_reparse(item_stat):
+            raise ValueError(f"Elemento temporaneo non regolare: {path}")
         if stat.S_ISREG(item_stat.st_mode):
             total += item_stat.st_size
         elif stat.S_ISDIR(item_stat.st_mode):
@@ -319,7 +363,7 @@ def move_verified_file(
     cancel_requested: Callable[[], bool] | None = None,
 ) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
-    if destination.exists() and not overwrite:
+    if path_entry_exists(destination) and not overwrite:
         destination = unique_destination_path(destination)
 
     if cancel_requested and cancel_requested():

@@ -132,5 +132,123 @@ class ProtocolTests(unittest.TestCase):
 
             self.assertEqual(protocol.read_proposal(path), proposal)
 
+    def test_round_trip_payload_manifest(self) -> None:
+        proposal = protocol.create_payload_proposal(
+            roots=("folder", "note.txt"),
+            entries=(
+                protocol.PayloadEntry(
+                    path="folder",
+                    type=protocol.ENTRY_DIRECTORY,
+                ),
+                protocol.PayloadEntry(
+                    path="folder/empty",
+                    type=protocol.ENTRY_DIRECTORY,
+                ),
+                protocol.PayloadEntry(
+                    path="folder/data.bin",
+                    type=protocol.ENTRY_FILE,
+                    size=4,
+                    sha256="a" * 64,
+                ),
+                protocol.PayloadEntry(
+                    path="note.txt",
+                    type=protocol.ENTRY_FILE,
+                    size=3,
+                    sha256="b" * 64,
+                ),
+            ),
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "metadata.json"
+            protocol.write_control_file(path, proposal)
+            restored = protocol.read_proposal(path)
+
+        self.assertEqual(restored, proposal)
+        self.assertEqual(restored.total_size, 7)
+        self.assertEqual(restored.file_count, 2)
+        self.assertEqual(restored.directory_count, 2)
+
+    def test_reads_legacy_single_file_proposal(self) -> None:
+        data = {
+            "version": protocol.LEGACY_PROTOCOL_VERSION,
+            "type": protocol.PROPOSAL_TYPE,
+            "session_id": "a" * 32,
+            "filename": "legacy.txt",
+            "size": 6,
+            "hash_algorithm": protocol.HASH_ALGORITHM,
+            "sha256": "b" * 64,
+            "main_code": "c" * 32,
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "metadata.json"
+            path.write_text(json.dumps(data), encoding="utf-8")
+            proposal = protocol.read_proposal(path)
+
+        self.assertEqual(proposal.version, protocol.LEGACY_PROTOCOL_VERSION)
+        self.assertTrue(proposal.is_single_file)
+        self.assertEqual(proposal.filename, "legacy.txt")
+        self.assertEqual(proposal.sha256, "b" * 64)
+
+    def test_rejects_payload_path_traversal(self) -> None:
+        with self.assertRaises(protocol.ProtocolError):
+            protocol.create_payload_proposal(
+                roots=("folder",),
+                entries=(
+                    protocol.PayloadEntry(
+                        path="folder",
+                        type=protocol.ENTRY_DIRECTORY,
+                    ),
+                    protocol.PayloadEntry(
+                        path="folder/../secret.txt",
+                        type=protocol.ENTRY_FILE,
+                        size=1,
+                        sha256="a" * 64,
+                    ),
+                ),
+            )
+
+    def test_rejects_case_insensitive_payload_collision(self) -> None:
+        with self.assertRaises(protocol.ProtocolError):
+            protocol.create_payload_proposal(
+                roots=("folder",),
+                entries=(
+                    protocol.PayloadEntry(
+                        path="folder",
+                        type=protocol.ENTRY_DIRECTORY,
+                    ),
+                    protocol.PayloadEntry(
+                        path="folder/File.txt",
+                        type=protocol.ENTRY_FILE,
+                        size=1,
+                        sha256="a" * 64,
+                    ),
+                    protocol.PayloadEntry(
+                        path="folder/file.txt",
+                        type=protocol.ENTRY_FILE,
+                        size=1,
+                        sha256="b" * 64,
+                    ),
+                ),
+            )
+
+    def test_read_rejects_manifest_totals_that_do_not_match_entries(self) -> None:
+        proposal = protocol.create_proposal(
+            filename="example.txt",
+            size=12,
+            sha256="a" * 64,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "metadata.json"
+            protocol.write_control_file(path, proposal)
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["total_size"] = 13
+            path.write_text(json.dumps(data), encoding="utf-8")
+
+            with self.assertRaises(protocol.ProtocolError):
+                protocol.read_proposal(path)
+
 if __name__ == "__main__":
     unittest.main()
