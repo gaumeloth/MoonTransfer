@@ -10,7 +10,8 @@ from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QProcess
+from PySide6.QtCore import QMimeData, QPoint, QPointF, QProcess, Qt, QUrl
+from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from moontransfer.app import (
@@ -131,6 +132,86 @@ class ApplicationConfigurationTests(unittest.TestCase):
             self.assertTrue(window.windowIcon().availableSizes())
         finally:
             window.close()
+
+
+class SendTabSelectionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_dropped_paths_use_the_existing_selection_pipeline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source_file = Path(tmp) / "note.txt"
+            source_folder = Path(tmp) / "photos"
+            source_file.write_text("note", encoding="utf-8")
+            source_folder.mkdir()
+            with mock.patch("moontransfer.widgets.QTimer.singleShot"):
+                tab = SendTab("/fake/croc")
+
+            mime_data = QMimeData()
+            mime_data.setUrls(
+                [
+                    QUrl.fromLocalFile(str(source_file)),
+                    QUrl.fromLocalFile(str(source_folder)),
+                    QUrl.fromLocalFile(str(source_file)),
+                ]
+            )
+            enter_event = QDragEnterEvent(
+                QPoint(1, 1),
+                Qt.DropAction.CopyAction,
+                mime_data,
+                Qt.MouseButton.LeftButton,
+                Qt.KeyboardModifier.NoModifier,
+            )
+            QApplication.sendEvent(
+                tab.source_list.viewport(),
+                enter_event,
+            )
+            drop_event = QDropEvent(
+                QPointF(1, 1),
+                Qt.DropAction.CopyAction,
+                mime_data,
+                Qt.MouseButton.LeftButton,
+                Qt.KeyboardModifier.NoModifier,
+            )
+            QApplication.sendEvent(tab.source_list.viewport(), drop_event)
+
+            self.assertTrue(enter_event.isAccepted())
+            self.assertTrue(drop_event.isAccepted())
+            self.assertEqual(
+                tab.source_paths,
+                [source_file, source_folder],
+            )
+            self.assertEqual(tab.source_list.count(), 2)
+            self.assertTrue(tab.start_button.isEnabled())
+
+    def test_drop_is_disabled_while_a_transfer_is_active(self) -> None:
+        with mock.patch("moontransfer.widgets.QTimer.singleShot"):
+            tab = SendTab("/fake/croc")
+
+        self.assertTrue(tab.source_list.drop_enabled)
+
+        tab._set_running(True)
+
+        self.assertFalse(tab.source_list.drop_enabled)
+        self.assertFalse(tab.source_list.isEnabled())
+
+    def test_selection_limit_rejects_the_whole_new_batch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            first = Path(tmp) / "first.txt"
+            second = Path(tmp) / "second.txt"
+            first.touch()
+            second.touch()
+            with (
+                mock.patch("moontransfer.app.MAX_PAYLOAD_ROOTS", 1),
+                mock.patch("moontransfer.widgets.QTimer.singleShot"),
+            ):
+                tab = SendTab("/fake/croc")
+                tab._add_paths((first, second))
+
+            self.assertEqual(tab.source_paths, [])
+            self.assertEqual(tab.source_list.count(), 0)
+            self.assertIn("al massimo 1", tab.status_label.text())
 
 
 class ReceiveFlowSecurityTests(unittest.TestCase):

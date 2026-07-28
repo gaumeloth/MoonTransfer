@@ -519,12 +519,12 @@ On the sending computer:
 
 1. open MoonTransfer;
 2. go to the **Invia** (Send) tab;
-3. use **Aggiungi file** (Add files) to select one or more files;
-4. use **Aggiungi cartella** (Add folder) for each folder you want to include;
-5. review the list and use **Rimuovi** (Remove) or **Svuota** (Clear) if needed;
-6. press **Invia** (Send);
-7. wait while MoonTransfer scans the selection and calculates SHA-256 hashes;
-8. share the displayed code with the receiver.
+3. drag files and folders into the selection list, or use **Aggiungi file**
+   (Add files) and **Aggiungi cartella** (Add folder);
+4. review the list and use **Rimuovi** (Remove) or **Svuota** (Clear) if needed;
+5. press **Invia** (Send);
+6. wait while MoonTransfer scans the selection and calculates SHA-256 hashes;
+7. share the displayed code with the receiver.
 
 The code first lets the receiver download a bounded manifest containing the
 selected paths, sizes, and per-file SHA-256 hashes. MoonTransfer then opens one
@@ -609,7 +609,6 @@ not published yet, so users currently build the application locally.
 Possible future improvements, in indicative order:
 
 - publish ready-made releases for Linux, Windows, and macOS;
-- add drag and drop for files and folders;
 - let the sender choose the container name for multi-root payloads;
 - remember the last destination folder used;
 - add advanced settings for custom `croc` relays;
