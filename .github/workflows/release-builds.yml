@@ -134,6 +134,7 @@ jobs:
       - name: Create or refresh the draft release
         shell: bash
         env:
+          GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
