@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import stat
 import tarfile
 import tempfile
@@ -102,7 +103,8 @@ class PackageReleaseTests(unittest.TestCase):
                 executable = archive.getmember(
                     "MoonTransfer-0.1.0-alpha.1/MoonTransfer"
                 )
-                self.assertTrue(executable.mode & stat.S_IXUSR)
+                if os.name != "nt":
+                    self.assertTrue(executable.mode & stat.S_IXUSR)
                 self.assertIn(
                     "MoonTransfer-0.1.0-alpha.1/_internal/croc",
                     archive.getnames(),

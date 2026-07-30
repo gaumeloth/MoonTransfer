@@ -55,23 +55,26 @@ class LatestCrocCheckTests(unittest.TestCase):
         )
 
     def test_smoke_command_args_use_moontransfer_flags(self) -> None:
-        commands = check_latest_croc.smoke_command_args(Path("/tmp/croc"))
+        binary = Path("/tmp/croc")
+        commands = check_latest_croc.smoke_command_args(binary)
 
         flattened = [" ".join(command) for command in commands]
-        self.assertIn("/tmp/croc --version", flattened)
+        program = str(binary)
+        self.assertIn(f"{program} --version", flattened)
         self.assertIn(
-            "/tmp/croc --classic=false --ignore-stdin --disable-clipboard "
+            f"{program} --classic=false --ignore-stdin --disable-clipboard "
             "send --no-local --help",
             flattened,
         )
         self.assertIn(
-            "/tmp/croc --classic=false --ignore-stdin --yes --overwrite --help",
+            f"{program} --classic=false --ignore-stdin --yes --overwrite --help",
             flattened,
         )
 
     def test_compatibility_environment_drops_maintainer_secrets(self) -> None:
+        config_dir = Path("/tmp/croc-config")
         environment = check_latest_croc.compatibility_process_environment(
-            Path("/tmp/croc-config"),
+            config_dir,
             base_env={
                 "GITHUB_TOKEN": "github-secret",
                 "SSH_AUTH_SOCK": "/tmp/agent.sock",
@@ -88,7 +91,7 @@ class LatestCrocCheckTests(unittest.TestCase):
         self.assertNotIn("LD_PRELOAD", environment)
         self.assertEqual(environment["HTTPS_PROXY"], "http://proxy.example")
         self.assertEqual(environment["LANG"], "it_IT.UTF-8")
-        self.assertEqual(environment["HOME"], "/tmp/croc-config/home")
+        self.assertEqual(environment["HOME"], str(config_dir / "home"))
 
 
 if __name__ == "__main__":

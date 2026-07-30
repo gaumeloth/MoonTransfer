@@ -57,7 +57,10 @@ class PayloadTests(unittest.TestCase):
             payload = scan_source_payload((second, first))
 
             self.assertEqual(payload.roots, ("second.txt", "first.txt"))
-            self.assertEqual(payload.root_paths, (second, first))
+            self.assertEqual(
+                payload.root_paths,
+                (second.resolve(), first.resolve()),
+            )
 
     def test_rejects_overlapping_roots(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -73,11 +76,28 @@ class PayloadTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "folder"
             root.mkdir()
-            (root / "Report.txt").write_text("one", encoding="utf-8")
-            (root / "report.txt").write_text("two", encoding="utf-8")
+            first = root / "Report.txt"
+            second = root / "report.txt"
+            first.write_text("one", encoding="utf-8")
+            second.write_text("two", encoding="utf-8")
+            if first.samefile(second):
+                self.skipTest("filesystem is case-insensitive")
 
             with self.assertRaises(ProtocolError):
                 scan_source_payload((root,))
+
+    def test_rejects_portable_root_name_collision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            first = base / "first" / "Report.txt"
+            second = base / "second" / "report.txt"
+            first.parent.mkdir()
+            second.parent.mkdir()
+            first.write_text("one", encoding="utf-8")
+            second.write_text("two", encoding="utf-8")
+
+            with self.assertRaises(ProtocolError):
+                scan_source_payload((first, second))
 
     @unittest.skipUnless(hasattr(os, "symlink"), "symlinks not supported")
     def test_rejects_symbolic_links(self) -> None:
