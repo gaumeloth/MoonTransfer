@@ -39,7 +39,10 @@ def main() -> None:
 
     print()
     print("[done] Build completata.")
-    print("[done] Output: dist/MoonTransfer/")
+    if sys.platform == "darwin":
+        print("[done] Output: dist/MoonTransfer.app")
+    else:
+        print("[done] Output: dist/MoonTransfer/")
 
 
 if __name__ == "__main__":
