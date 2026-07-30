@@ -8,25 +8,27 @@ from moontransfer.desktop import external_process_environment, folder_open_comma
 
 class DesktopTests(unittest.TestCase):
     def test_linux_folder_open_command_prefers_xdg_open(self) -> None:
+        folder = Path("/tmp")
         path = "/usr/bin/xdg-open"
 
         self.assertEqual(
             folder_open_command(
-                Path("/tmp"),
+                folder,
                 platform_name="linux",
                 which=lambda command: path if command == "xdg-open" else None,
             ),
-            [path, "/tmp"],
+            [path, str(folder)],
         )
 
     def test_linux_folder_open_command_falls_back_to_gio(self) -> None:
+        folder = Path("/tmp")
         self.assertEqual(
             folder_open_command(
-                Path("/tmp"),
+                folder,
                 platform_name="linux",
                 which=lambda command: "/usr/bin/gio" if command == "gio" else None,
             ),
-            ["/usr/bin/gio", "open", "/tmp"],
+            ["/usr/bin/gio", "open", str(folder)],
         )
 
     def test_unknown_folder_open_command_returns_none(self) -> None:

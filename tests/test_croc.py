@@ -49,8 +49,7 @@ class CrocCommandTests(unittest.TestCase):
                 "--disable-clipboard",
                 "send",
                 "--no-local",
-                "/tmp/first.txt",
-                "/tmp/folder",
+                *(str(path) for path in paths),
             ],
         )
 

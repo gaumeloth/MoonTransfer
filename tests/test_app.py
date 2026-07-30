@@ -371,7 +371,7 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
             main_args = main_runner.starts[-1]["args"]
             self.assertEqual(
                 main_args[-2:],
-                [str(source_file), str(source_folder)],
+                [str(source_file.resolve()), str(source_folder.resolve())],
             )
 
             main_runner.finish()

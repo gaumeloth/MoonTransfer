@@ -2,6 +2,8 @@
 
 from pathlib import Path
 import os
+import sys
+import tomllib
 
 
 # PyInstaller non garantisce __file__ dentro lo spec.
@@ -9,6 +11,9 @@ import os
 ROOT = Path(SPECPATH).resolve()
 SRC = ROOT / "src"
 APP_ICON = SRC / "moontransfer" / "assets" / "icons" / "moontransfer-icon.png"
+
+with (ROOT / "pyproject.toml").open("rb") as stream:
+    APP_VERSION = tomllib.load(stream)["project"]["version"]
 
 if os.name == "nt":
     CROC_BIN = ROOT / "third_party" / "croc" / "croc.exe"
@@ -57,7 +62,7 @@ exe = EXE(
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
-    icon=str(APP_ICON) if os.name == "nt" else None,
+    icon=str(APP_ICON) if sys.platform in {"darwin", "win32"} else None,
 )
 
 coll = COLLECT(
@@ -69,3 +74,16 @@ coll = COLLECT(
     upx=True,
     name="MoonTransfer",
 )
+
+if sys.platform == "darwin":
+    app = BUNDLE(
+        coll,
+        name="MoonTransfer.app",
+        icon=str(APP_ICON),
+        bundle_identifier="io.github.gaumeloth.moontransfer",
+        info_plist={
+            "CFBundleDisplayName": "MoonTransfer",
+            "CFBundleShortVersionString": APP_VERSION,
+            "NSHighResolutionCapable": True,
+        },
+    )
