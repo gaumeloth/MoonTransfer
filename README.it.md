@@ -1264,11 +1264,15 @@ Esiste anche un controllo end-to-end opzionale del trasferimento:
 uv run --frozen python tools/check_latest_croc.py --force --transfer
 ```
 
-Il controllo di trasferimento avvia un mittente e un destinatario con il
-binario `croc` più recente, trasferisce più elementi principali includendo una
-cartella annidata, una cartella vuota e un nome file Unicode, quindi verifica il
-contenuto ricevuto. Richiede accesso a Internet e un relay `croc` raggiungibile,
-quindi non fa parte del controllo predefinito.
+Il controllo di trasferimento esegue tre brevi sessioni con il binario `croc`
+più recente: ricezione automatica con i flag usati per i metadati, accettazione
+tramite prompt con i flag usati per il payload principale e rifiuto tramite
+prompt. Le sessioni accettate trasferiscono più elementi principali includendo
+una cartella annidata, una cartella vuota e un nome file Unicode, quindi
+verificano il contenuto ricevuto. La sessione rifiutata controlla che non venga
+creato alcun contenuto nella destinazione. Questi controlli richiedono accesso a
+Internet e un relay `croc` raggiungibile, quindi non fanno parte del controllo
+predefinito.
 
 Se il controllo passa per una nuova release, aggiorna `[tool.moontransfer.croc]`
 in `pyproject.toml` con la nuova versione e gli hash ufficiali, poi esegui la

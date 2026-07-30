@@ -23,6 +23,21 @@ class CrocCommandTests(unittest.TestCase):
             "alpha beta",
         )
 
+    def test_parse_version_output_accepts_legacy_v_prefix(self) -> None:
+        self.assertEqual(
+            croc.parse_version_output("croc version v10.4.13"),
+            "10.4.13",
+        )
+
+    def test_parse_version_output_accepts_current_format(self) -> None:
+        self.assertEqual(
+            croc.parse_version_output("croc version 10.7.0"),
+            "10.7.0",
+        )
+
+    def test_parse_version_output_rejects_unrelated_versions(self) -> None:
+        self.assertIsNone(croc.parse_version_output("Python 3.13.11"))
+
     def test_build_send_args(self) -> None:
         path = Path("/tmp/example file.txt")
 

@@ -1221,10 +1221,13 @@ There is also an optional end-to-end transfer check:
 uv run --frozen python tools/check_latest_croc.py --force --transfer
 ```
 
-The transfer check starts a sender and a receiver with the latest `croc`
-binary, transfers multiple roots including a nested folder, an empty folder,
-and a Unicode filename, and verifies the received content. It requires Internet
-access and a reachable `croc` relay, so it is intentionally not part of the
+The transfer check runs three short sessions with the latest `croc` binary:
+automatic receive with the flags used for metadata, prompted acceptance with
+the flags used for the main payload, and prompted rejection. The accepted
+sessions transfer multiple roots including a nested folder, an empty folder,
+and a Unicode filename, then verify the received content. The rejected session
+checks that no destination content is created. These checks require Internet
+access and a reachable `croc` relay, so they are intentionally not part of the
 default check.
 
 If the check passes for a new release, update `[tool.moontransfer.croc]` in

@@ -11,6 +11,8 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from moontransfer import croc
+
 
 VERSION_RE = re.compile(r"^[0-9A-Za-z](?:[0-9A-Za-z._-]*[0-9A-Za-z])?$")
 
@@ -183,9 +185,13 @@ def verify_croc_version(croc_path: Path, expected_version: str) -> None:
         raise RuntimeError(
             f"Il croc incluso non si avvia correttamente: {output or result.returncode}"
         )
-    if not re.search(rf"\bv{re.escape(expected_version)}\b", output):
+    reported_version = croc.parse_version_output(output)
+    normalized_expected = expected_version.strip().removeprefix("v")
+    if reported_version != normalized_expected:
         raise RuntimeError(
-            f"Versione croc inattesa: attesa v{expected_version}, output {output!r}."
+            "Versione croc inattesa: "
+            f"attesa {normalized_expected}, "
+            f"rilevata {reported_version or 'sconosciuta'}, output {output!r}."
         )
 
 
