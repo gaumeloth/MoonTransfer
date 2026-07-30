@@ -18,15 +18,15 @@ dev = [
 ]
 
 [tool.moontransfer.croc]
-version = "10.4.13"
+version = "10.7.0"
 
 [tool.moontransfer.croc.hashes]
-"croc_v10.4.13_Linux-64bit.tar.gz" = "sha256:656125605320b424ca37594cb5caf3860a6c9fd7081b9ba385f5c4548838cfb3"
-"croc_v10.4.13_Linux-ARM64.tar.gz" = "sha256:e84f088cb67e204fe23425ca58e2f4c0eeb9e221fd154cff6f4301c1f48e73c4"
-"croc_v10.4.13_macOS-64bit.tar.gz" = "sha256:34cc265e655238e41eba3c77de9ee436752d8c8422c92dc62fc5daf611df7c34"
-"croc_v10.4.13_macOS-ARM64.tar.gz" = "sha256:1613fb661cb04d497f16aeb3ecf359c269dc586ed9a45ece982c6c874048044f"
-"croc_v10.4.13_Windows-64bit.zip" = "sha256:abd6357f03fec4c0cb1e7de4d671a7ea6a70c6d03b436416603d8daefc5a613b"
-"croc_v10.4.13_Windows-ARM64.zip" = "sha256:6f6745299c1570d8cdd5572659dfb7d6bd6311ff8c02b831909263b772ee68d6"
+"croc_v10.7.0_Linux-64bit.tar.gz" = "sha256:58ac4e1cc6f47e5982d08936b6484456286bfbdb4bc47e13b6894674a5f1ddca"
+"croc_v10.7.0_Linux-ARM64.tar.gz" = "sha256:1607e11c0a6304d6e88b201f015daa8a87d9d8696b4dd728c4e95c4fbd6f7f89"
+"croc_v10.7.0_macOS-64bit.tar.gz" = "sha256:be8f34ab4e9666088fc29cc982cf18d22978fcd0fbf4a428fd2ac7be99af5943"
+"croc_v10.7.0_macOS-ARM64.tar.gz" = "sha256:be7a6716068277002d2fc30a5c37c8786641b40226b412ace20b44aebacd594c"
+"croc_v10.7.0_Windows-64bit.zip" = "sha256:0eb2755ce9e73c172ec306167f3274c11b6d96de10f71a13abc7c0a2db7cd26a"
+"croc_v10.7.0_Windows-ARM64.zip" = "sha256:4ab2822fecfb3b4ec57ccab40b9c5546b5b214dbe05dd41242fe26a2ffb73d49"
 
 [build-system]
 requires = ["uv_build>=0.10.0,<0.11.0"]
