@@ -41,15 +41,21 @@ MoonTransfer è in fase iniziale. Il flusso principale è già funzionante:
 - build locale con PyInstaller;
 - download automatico del binario `croc` durante la build;
 - versione `croc` fissata e verifica SHA-256 per le piattaforme supportate;
-- bundle finale con `croc` incluso.
+- bundle finale con `croc` incluso;
+- artefatti `onedir` automatizzati e testabili per Linux x86_64, Windows
+  x86_64, macOS Intel e macOS Apple Silicon.
 
-Al momento il progetto non fornisce ancora installer firmati o pacchetti di
-release già pronti. Per usarlo è necessario scaricare il codice sorgente e
-creare localmente la build per il proprio sistema operativo.
+Al momento il progetto non fornisce installer firmati o una release
+pre-buildata pubblicata. La repository contiene un workflow automatizzato che
+crea artefatti di prova scaricabili per le piattaforme principali, ma devono
+ancora essere validati prima di pubblicare la prima pre-release alpha. Fino ad
+allora, gli utenti finali devono scaricare il sorgente e creare localmente la
+build.
 
-La build produce una cartella portabile `MoonTransfer`: per spostarla su un
-altro computer bisogna copiare l'intera cartella generata, non solo
-l'eseguibile.
+Su Linux e Windows la build produce una cartella portabile `MoonTransfer`: va
+copiata interamente, non soltanto il suo eseguibile. Su macOS produce invece il
+bundle applicazione `MoonTransfer.app`, che deve essere mantenuto integro allo
+stesso modo.
 
 ## Guida rapida
 
@@ -60,7 +66,7 @@ Per usare MoonTransfer oggi, segui questi passaggi nell'ordine:
 3. installa `uv`;
 4. lascia che `uv` trovi o installi Python 3.13.x/3.14.x;
 5. esegui lo script di build per il tuo sistema operativo;
-6. apri la cartella `dist/MoonTransfer/`;
+6. apri la cartella o il bundle applicazione generato per il tuo sistema;
 7. avvia MoonTransfer.
 
 Non devi installare `croc` a mano: viene scaricato automaticamente durante la
@@ -355,7 +361,7 @@ prerequisiti principali, eseguono `uv sync --frozen --dev` usando `uv.lock`
 committato e poi chiamano `tools/build.py`.
 
 <details>
-<summary>Linux/macOS</summary>
+<summary>Linux</summary>
 
 Dalla cartella del progetto:
 
@@ -370,6 +376,26 @@ Se la build termina correttamente, troverai il programma in:
 
 ```text
 dist/MoonTransfer/
+```
+
+</details>
+
+<details>
+<summary>macOS</summary>
+
+Dalla cartella del progetto:
+
+```sh
+./scripts/build.sh
+```
+
+Il comando può essere lanciato da fish, bash o zsh come `./scripts/build.sh`.
+Non eseguirlo come `fish scripts/build.sh`.
+
+Se la build termina correttamente, troverai il bundle applicazione in:
+
+```text
+dist/MoonTransfer.app
 ```
 
 </details>
@@ -405,9 +431,10 @@ uv run --frozen --dev python tools/build.py
 poi PyInstaller usando `MoonTransfer.spec`.
 
 L'icona dell'applicazione ha un unico sorgente PNG versionato. Qt carica
-direttamente quel PNG durante l'esecuzione. Su Windows, PyInstaller usa la
-dipendenza di sviluppo Pillow per convertirlo nell'icona nativa dell'eseguibile
-durante la build, quindi non è necessario mantenere un file `.ico` separato.
+direttamente quel PNG durante l'esecuzione. Su Windows e macOS, PyInstaller usa
+la dipendenza di sviluppo Pillow per convertirlo nell'icona nativa
+dell'applicazione durante la build, quindi non è necessario mantenere sorgenti
+`.ico` e `.icns` separati.
 
 Per controllare l'ultima release upstream di `croc` senza cambiare il pin di
 build:
@@ -420,14 +447,10 @@ uv run --frozen python tools/fetch_croc.py --latest
 
 ## Avviare MoonTransfer
 
-Dopo la build, apri la cartella generata:
-
-```text
-dist/MoonTransfer/
-```
-
-Non spostare solo l'eseguibile: deve restare accanto ai file e alle cartelle
-generati da PyInstaller.
+Dopo la build, usa l'output descritto qui sotto per il tuo sistema operativo. Su
+Linux e Windows mantieni unita l'intera cartella generata: l'eseguibile deve
+restare accanto ai file e alle cartelle creati da PyInstaller. Su macOS mantieni
+intatto il bundle dell'applicazione.
 
 <details>
 <summary>Linux</summary>
@@ -446,13 +469,22 @@ Se il file manager non lo avvia con doppio click, puoi usare il terminale:
 <details>
 <summary>macOS</summary>
 
-Apri la cartella generata dalla build e avvia l'eseguibile `MoonTransfer`.
+Apri `dist/` nel Finder e avvia:
 
-Se macOS blocca l'apertura perché l'app non è firmata, aprila dalle impostazioni
-di sicurezza del sistema oppure avviala da terminale dalla cartella del progetto:
+```text
+MoonTransfer.app
+```
+
+Al momento l'applicazione non è firmata né notarizzata. Se macOS ne blocca il
+primo avvio, fai Control-click su `MoonTransfer.app`, scegli **Apri** e conferma.
+A seconda della versione di macOS, puoi autorizzarla anche da **Impostazioni di
+Sistema > Privacy e sicurezza**.
+
+Dalla cartella del progetto puoi anche chiedere al Finder di aprire
+l'applicazione con:
 
 ```sh
-./dist/MoonTransfer/MoonTransfer
+open dist/MoonTransfer.app
 ```
 
 </details>
@@ -611,13 +643,18 @@ usate da `croc`.
 
 MoonTransfer è in una fase di sviluppo iniziale attiva. Offre già un flusso
 grafico di invio/ricezione, include nella build un binario `croc` fissato e
-verificato tramite checksum, e contiene test unitari per la logica non-GUI. Le
-release già pronte non sono ancora pubblicate, quindi al momento gli utenti
-buildano l'applicazione localmente.
+verificato tramite checksum, contiene test unitari per la logica non-GUI e può
+produrre artefatti nativi testabili sulle piattaforme principali. Non è ancora
+stata pubblicata una release già pronta, quindi al momento gli utenti buildano
+l'applicazione localmente.
 
 Possibili miglioramenti futuri, in ordine indicativo:
 
-- pubblicare release scaricabili già buildate per Linux, Windows e macOS;
+- validare gli artefatti `onedir` automatizzati sui rispettivi sistemi e
+  pubblicare la prima pre-release alpha;
+- aggiungere firma e notarizzazione dove opportuno, quindi valutare formati di
+  distribuzione più nativi come AppImage, un installer Windows e un'immagine
+  disco macOS;
 - permettere al mittente di scegliere il nome del contenitore per payload con
   più elementi principali;
 - ricordare l'ultima cartella di destinazione usata;
@@ -626,8 +663,6 @@ Possibili miglioramenti futuri, in ordine indicativo:
   interfaccia grafica;
 - aggiungere altri test automatici per parsing output, argomenti di `croc` e
   gestione errori;
-- aggiungere una pipeline CI per controllare build e test sulle piattaforme
-  principali;
 - eseguire automaticamente sui sistemi principali il controllo di compatibilità
   con l'ultima release di `croc`.
 
@@ -851,9 +886,17 @@ modifica:
   bundle.
 - `tools/check_latest_croc.py`: controlli di compatibilità con l'ultima release
   upstream di `croc`.
+- `tools/package_release.py`: controllo host/target, verifica della versione di
+  `croc` inclusa e creazione degli archivi di release versionati con licenza e
+  documentazione.
 - `scripts/build.sh` e `scripts/build.ps1`: wrapper di build rivolti all'utente
   e controlli dei prerequisiti.
-- `MoonTransfer.spec`: configurazione di packaging PyInstaller.
+- `MoonTransfer.spec`: configurazione di packaging `onedir` PyInstaller,
+  compreso il bundle applicazione nativo per macOS.
+- `.github/workflows/release-builds.yml`: automazione di test, build, artefatti,
+  checksum e bozze di pre-release su runner nativi.
+- `.github/dependabot.yml`: pull request mensili per aggiornare le GitHub Action
+  fissate.
 
 Quando modifichi un modulo runtime, aggiorna o aggiungi quando possibile il test
 corrispondente in `tests/`. I nomi dei test rispecchiano già la maggior parte
@@ -941,7 +984,7 @@ strumenti di manutenzione: inventario dei payload e verifica esatta degli
 alberi, validazione del protocollo, costruzione dei comandi, parsing dell'output
 di trasferimento, messaggi di stato, helper di integrazione desktop, separazione
 dell'output dei processi, selezione degli archivi `croc` fissati e helper per il
-controllo dell'ultima release.
+packaging degli archivi di release e per il controllo dell'ultima release.
 
 Non esercitano l'interazione reale con la GUI e non eseguono un trasferimento
 reale per impostazione predefinita. Usa il test manuale di trasferimento per
@@ -1028,6 +1071,77 @@ git diff --check
 
 Se tocchi script di build, packaging o `MoonTransfer.spec`, esegui anche lo
 script di build per la piattaforma modificata.
+
+### Artefatti di release automatizzati
+
+`.github/workflows/release-builds.yml` verifica lo stesso flusso di packaging
+`onedir` su runner GitHub nativi. Al momento copre:
+
+- Linux x86_64 su Ubuntu 22.04;
+- Windows x86_64 su Windows Server 2022;
+- macOS x86_64 su un runner Intel;
+- macOS ARM64 su un runner Apple Silicon.
+
+Ogni job installa le versioni fissate nel workflow di `uv` e Python 3.13,
+controlla `uv.lock`, installa le dipendenze bloccate, esegue l'intera suite di
+test unitari, scarica il binario `croc` verificato tramite checksum, builda
+MoonTransfer, controlla la versione di `croc` inclusa e crea un archivio
+scaricabile.
+
+Gli artefatti Linux e macOS usano `tar.gz` per conservare permessi eseguibili e
+link simbolici. Windows usa ZIP. L'archivio macOS contiene un bundle
+`MoonTransfer.app`, mentre le altre piattaforme mantengono la normale struttura
+`onedir` di PyInstaller. Ogni archivio contiene anche `LICENSE`,
+`THIRD_PARTY_NOTICES.md`, `README.md` e `README.it.md`.
+
+Le pull request, i push su `main` e le esecuzioni manuali del workflow creano
+artefatti di prova senza pubblicare una release. Le build senza tag usano una
+versione `dev` contenente il numero dell'esecuzione e il prefisso del commit.
+Gli artefatti sono disponibili nel riepilogo dell'esecuzione del workflow per
+14 giorni e possono essere scaricati per i test manuali sui sistemi
+destinazione.
+
+La pubblicazione è intenzionalmente più restrittiva:
+
+- solo tag come `v0.1.0-alpha.1`, `v0.1.0-beta.1` o `v0.1.0-rc.1` avviano il
+  job di release;
+- la base numerica del tag deve corrispondere a `[project].version` in
+  `pyproject.toml`;
+- tutte le build di piattaforma devono terminare prima di avviare il job di
+  release;
+- il workflow genera `SHA256SUMS`;
+- GitHub crea una bozza marcata come pre-release, mai una release pubblicata
+  immediatamente;
+- una nuova esecuzione può aggiornare una bozza esistente ma si rifiuta di
+  sovrascrivere una release pubblicata.
+
+Il progetto è attualmente in fase alpha: comportamento principale e
+distribuzione sono ancora in espansione e validazione. Il passaggio a beta
+andrebbe fatto solo quando l'insieme di funzionalità previsto per la prima
+release stabile sarà completo e lo sviluppo si concentrerà soprattutto su
+compatibilità, correzioni di usabilità e stabilizzazione. Il workflow attuale
+non accetta intenzionalmente tag stabili.
+
+Per preparare una release alpha o beta:
+
+1. assicurati che il commit previsto sia su `main` e che tutti i controlli
+   normali passino;
+2. aggiorna `[project].version` e `uv.lock` se cambia la versione numerica di
+   base;
+3. crea un tag annotato di pre-release, per esempio
+   `git tag -a v0.1.0-alpha.1 -m "MoonTransfer 0.1.0 alpha 1"`;
+4. invia quel tag esatto con `git push origin v0.1.0-alpha.1`;
+5. attendi il completamento di tutte le build native e del job che crea la
+   bozza;
+6. scarica ogni archivio dalla bozza e provalo sul sistema operativo
+   corrispondente;
+7. confronta i file scaricati con `SHA256SUMS` e controlla note di release e
+   documenti inclusi;
+8. pubblica manualmente la bozza solo dopo il superamento dei test richiesti.
+
+Non spostare o riutilizzare un tag che potrebbe essere già stato scaricato. Se
+una release candidata è difettosa, correggi il problema e crea il tag di
+pre-release successivo, per esempio `v0.1.0-alpha.2`.
 
 ### Attività di manutenzione
 
@@ -1169,6 +1283,10 @@ non viene unito intenzionalmente a contenuto già presente nella destinazione.
 
 ```text
 MoonTransfer/
+├─ .github/
+│  ├─ workflows/
+│  │  └─ release-builds.yml
+│  └─ dependabot.yml
 ├─ src/
 │  └─ moontransfer/
 │     ├─ assets/
@@ -1193,7 +1311,8 @@ MoonTransfer/
 ├─ tools/
 │  ├─ build.py
 │  ├─ check_latest_croc.py
-│  └─ fetch_croc.py
+│  ├─ fetch_croc.py
+│  └─ package_release.py
 ├─ scripts/
 │  ├─ build.ps1
 │  └─ build.sh
@@ -1205,6 +1324,7 @@ MoonTransfer/
 │  ├─ test_fetch_croc.py
 │  ├─ test_files.py
 │  ├─ test_messages.py
+│  ├─ test_package_release.py
 │  ├─ test_payload.py
 │  ├─ test_protocol.py
 │  ├─ test_progress.py
@@ -1230,6 +1350,7 @@ Questi percorsi sono generati localmente e non vanno committati:
 .cache/
 build/
 dist/
+release/
 third_party/croc/
 __pycache__/
 ```
