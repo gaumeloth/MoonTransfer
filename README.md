@@ -44,32 +44,117 @@ MoonTransfer is in an early stage. The main flow is already working:
 - automated testable `onedir` artifacts for Linux x86_64, Windows x86_64,
   macOS Intel, and macOS Apple Silicon.
 
-The project does not currently provide signed installers or a publicly
-published pre-built release. The repository contains an automated workflow that
-builds downloadable test artifacts on the main platforms, but those artifacts
-must still be validated before the first alpha pre-release is published. Until
-then, end users should download the source code and build it locally.
+The first public alpha is distributed from the
+[GitHub Releases page](https://github.com/gaumeloth/MoonTransfer/releases) as
+pre-built `onedir` archives. The builds are not signed or notarized and are
+intended for early testing rather than production use. Native installers are
+not available yet.
 
-On Linux and Windows, the build produces a portable `MoonTransfer` folder: copy
-the entire folder, not just its executable. On macOS, it produces a
+On Linux and Windows, the archive contains a portable `MoonTransfer` folder:
+keep the entire folder, not just its executable. On macOS, it contains a
 `MoonTransfer.app` application bundle, which must likewise be kept intact.
 
 ## Quick guide
 
-To use MoonTransfer today, follow these steps in order:
+To use the pre-built alpha, follow these steps in order:
 
-1. download the source code, with Git or as a ZIP archive;
-2. open a terminal in the project folder;
-3. install `uv`;
-4. let `uv` find or install Python 3.13.x/3.14.x;
-5. run the build script for your operating system;
-6. open the generated folder or application bundle for your operating system;
-7. start MoonTransfer.
+1. open the [Releases page](https://github.com/gaumeloth/MoonTransfer/releases);
+2. open the most recent alpha release;
+3. download the archive matching your operating system and architecture;
+4. extract the complete archive;
+5. open the extracted folder and start MoonTransfer.
 
-You do not need to install `croc` manually: it is downloaded automatically
-during the build.
+You do not need to install Python, `uv`, or `croc` when using a pre-built
+archive.
+
+## Download a pre-built alpha
+
+Release files use names such as:
+
+```text
+MoonTransfer-0.1.0-alpha.1-linux-x86_64.tar.gz
+MoonTransfer-0.1.0-alpha.1-windows-x86_64.zip
+MoonTransfer-0.1.0-alpha.1-macos-x86_64.tar.gz
+MoonTransfer-0.1.0-alpha.1-macos-arm64.tar.gz
+```
+
+The version number may be newer than the example. Download only files attached
+to the official [MoonTransfer Releases
+page](https://github.com/gaumeloth/MoonTransfer/releases).
+
+Expand only the operating system you are using.
+
+<details>
+<summary>Linux</summary>
+
+The published Linux archive currently supports x86_64 Intel/AMD systems. You
+can check your architecture with:
+
+```sh
+uname -m
+```
+
+If the output is `x86_64`, download the file ending in
+`linux-x86_64.tar.gz`. Extract it, open the resulting versioned folder, and
+start the `MoonTransfer` file.
+
+From a terminal inside the extracted folder, you can instead run:
+
+```sh
+./MoonTransfer
+```
+
+Linux ARM64 is supported by the build tools but is not currently published as
+an automated release artifact. Build from source on that architecture.
+
+</details>
+
+<details>
+<summary>Windows</summary>
+
+The published Windows archive currently supports x86_64 Intel/AMD systems,
+which includes most Windows 10 and Windows 11 computers.
+
+1. Download the file ending in `windows-x86_64.zip`.
+2. Right-click the ZIP file and choose **Extract All**.
+3. Open the extracted versioned folder.
+4. Double-click `MoonTransfer.exe`.
+
+Do not run the executable directly from inside the ZIP and do not move it away
+from the `_internal` folder.
+
+The alpha is not code-signed, so Microsoft Defender SmartScreen may show an
+unknown-publisher warning. Confirm that the archive came from the official
+Releases page and verify its checksum before choosing **More info > Run
+anyway**.
+
+</details>
+
+<details>
+<summary>macOS</summary>
+
+Download the archive matching the Mac processor:
+
+- `macos-arm64.tar.gz` for Apple Silicon Macs with an M-series processor;
+- `macos-x86_64.tar.gz` for Intel Macs.
+
+Double-click the downloaded archive to extract it, open the resulting versioned
+folder, and start `MoonTransfer.app`.
+
+The alpha is not signed or notarized. On first start, Control-click
+`MoonTransfer.app`, choose **Open**, and confirm. Depending on the macOS
+version, it can also be allowed from **System Settings > Privacy & Security**.
+
+</details>
+
+Each alpha release also contains `SHA256SUMS`. It lists the expected SHA-256
+digest of every downloadable archive and can be used to check that a download
+is complete and unchanged.
 
 ## Download the source
+
+Building from source remains useful for contributors, unsupported release
+architectures, or anyone who wants to inspect the complete build process.
 
 The project repository is:
 
@@ -632,14 +717,13 @@ connections used by `croc`.
 
 MoonTransfer is in active early development. It already provides a graphical
 send/receive flow, bundles a pinned and checksum-verified `croc` binary during
-builds, includes unit tests for the non-GUI logic, and can produce native
-testable artifacts on the main platforms. A ready-made release has not been
-published yet, so users currently build the application locally.
+builds, includes unit tests for the non-GUI logic, and publishes native
+pre-built alpha archives for the main platforms.
 
 Possible future improvements, in indicative order:
 
-- validate the automated `onedir` artifacts on their target systems and publish
-  the first alpha pre-release;
+- collect feedback from the first alpha and continue validating the automated
+  `onedir` artifacts on their target systems;
 - add signing and notarization where appropriate, then evaluate more native
   distribution formats such as AppImage, a Windows installer, and a macOS disk
   image;

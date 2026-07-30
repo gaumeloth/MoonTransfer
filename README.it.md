@@ -45,34 +45,120 @@ MoonTransfer è in fase iniziale. Il flusso principale è già funzionante:
 - artefatti `onedir` automatizzati e testabili per Linux x86_64, Windows
   x86_64, macOS Intel e macOS Apple Silicon.
 
-Al momento il progetto non fornisce installer firmati o una release
-pre-buildata pubblicata. La repository contiene un workflow automatizzato che
-crea artefatti di prova scaricabili per le piattaforme principali, ma devono
-ancora essere validati prima di pubblicare la prima pre-release alpha. Fino ad
-allora, gli utenti finali devono scaricare il sorgente e creare localmente la
-build.
+La prima alpha pubblica viene distribuita dalla
+[pagina GitHub Releases](https://github.com/gaumeloth/MoonTransfer/releases)
+come archivi `onedir` pre-buildati. Le build non sono firmate né notarizzate e
+sono destinate ai primi test, non all'uso in produzione. Non sono ancora
+disponibili installer nativi.
 
-Su Linux e Windows la build produce una cartella portabile `MoonTransfer`: va
-copiata interamente, non soltanto il suo eseguibile. Su macOS produce invece il
-bundle applicazione `MoonTransfer.app`, che deve essere mantenuto integro allo
-stesso modo.
+Su Linux e Windows l'archivio contiene una cartella portabile `MoonTransfer`: va
+mantenuta interamente, non soltanto il suo eseguibile. Su macOS contiene invece
+il bundle applicazione `MoonTransfer.app`, che deve essere mantenuto integro
+allo stesso modo.
 
 ## Guida rapida
 
-Per usare MoonTransfer oggi, segui questi passaggi nell'ordine:
+Per usare l'alpha pre-buildata, segui questi passaggi nell'ordine:
 
-1. scarica il codice sorgente, con Git oppure come archivio ZIP;
-2. apri un terminale nella cartella del progetto;
-3. installa `uv`;
-4. lascia che `uv` trovi o installi Python 3.13.x/3.14.x;
-5. esegui lo script di build per il tuo sistema operativo;
-6. apri la cartella o il bundle applicazione generato per il tuo sistema;
-7. avvia MoonTransfer.
+1. apri la [pagina Releases](https://github.com/gaumeloth/MoonTransfer/releases);
+2. apri la release alpha più recente;
+3. scarica l'archivio adatto al tuo sistema operativo e alla tua architettura;
+4. estrai l'intero archivio;
+5. apri la cartella estratta e avvia MoonTransfer.
 
-Non devi installare `croc` a mano: viene scaricato automaticamente durante la
-build.
+Quando usi un archivio pre-buildato non devi installare Python, `uv` o `croc`.
+
+## Scaricare un'alpha pre-buildata
+
+I file delle release hanno nomi come:
+
+```text
+MoonTransfer-0.1.0-alpha.1-linux-x86_64.tar.gz
+MoonTransfer-0.1.0-alpha.1-windows-x86_64.zip
+MoonTransfer-0.1.0-alpha.1-macos-x86_64.tar.gz
+MoonTransfer-0.1.0-alpha.1-macos-arm64.tar.gz
+```
+
+Il numero di versione potrebbe essere più recente rispetto all'esempio. Scarica
+soltanto file allegati alla [pagina Releases ufficiale di
+MoonTransfer](https://github.com/gaumeloth/MoonTransfer/releases).
+
+Espandi solo il sistema operativo che stai usando.
+
+<details>
+<summary>Linux</summary>
+
+L'archivio Linux pubblicato supporta attualmente sistemi Intel/AMD x86_64. Puoi
+controllare la tua architettura con:
+
+```sh
+uname -m
+```
+
+Se l'output è `x86_64`, scarica il file che termina in
+`linux-x86_64.tar.gz`. Estrailo, apri la cartella con la versione ottenuta e
+avvia il file `MoonTransfer`.
+
+Da un terminale aperto dentro la cartella estratta puoi invece eseguire:
+
+```sh
+./MoonTransfer
+```
+
+Linux ARM64 è supportato dagli strumenti di build ma al momento non viene
+pubblicato come artefatto di release automatizzato. Su quell'architettura crea
+la build dal sorgente.
+
+</details>
+
+<details>
+<summary>Windows</summary>
+
+L'archivio Windows pubblicato supporta attualmente sistemi Intel/AMD x86_64,
+inclusa la maggior parte dei computer con Windows 10 e Windows 11.
+
+1. Scarica il file che termina in `windows-x86_64.zip`.
+2. Fai click destro sul file ZIP e scegli **Estrai tutto**.
+3. Apri la cartella con la versione estratta.
+4. Fai doppio click su `MoonTransfer.exe`.
+
+Non avviare l'eseguibile direttamente da dentro il file ZIP e non separarlo
+dalla cartella `_internal`.
+
+L'alpha non è firmata, quindi Microsoft Defender SmartScreen potrebbe mostrare
+un avviso relativo a un autore sconosciuto. Controlla che l'archivio provenga
+dalla pagina Releases ufficiale e verificane il checksum prima di scegliere
+**Ulteriori informazioni > Esegui comunque**.
+
+</details>
+
+<details>
+<summary>macOS</summary>
+
+Scarica l'archivio corrispondente al processore del Mac:
+
+- `macos-arm64.tar.gz` per Mac Apple Silicon con processore serie M;
+- `macos-x86_64.tar.gz` per Mac Intel.
+
+Fai doppio click sull'archivio scaricato per estrarlo, apri la cartella con la
+versione ottenuta e avvia `MoonTransfer.app`.
+
+L'alpha non è firmata né notarizzata. Al primo avvio fai Control-click su
+`MoonTransfer.app`, scegli **Apri** e conferma. A seconda della versione di
+macOS, puoi autorizzarla anche da **Impostazioni di Sistema > Privacy e
+sicurezza**.
+
+</details>
+
+Ogni release alpha contiene anche `SHA256SUMS`, che elenca il digest SHA-256
+atteso per ogni archivio scaricabile e permette di controllare che il download
+sia completo e non modificato.
 
 ## Scaricare il sorgente
+
+Creare la build dal sorgente resta utile per chi contribuisce, per le
+architetture non distribuite come release o per chi vuole controllare l'intero
+processo di build.
 
 La repository del progetto è:
 
@@ -643,15 +729,13 @@ usate da `croc`.
 
 MoonTransfer è in una fase di sviluppo iniziale attiva. Offre già un flusso
 grafico di invio/ricezione, include nella build un binario `croc` fissato e
-verificato tramite checksum, contiene test unitari per la logica non-GUI e può
-produrre artefatti nativi testabili sulle piattaforme principali. Non è ancora
-stata pubblicata una release già pronta, quindi al momento gli utenti buildano
-l'applicazione localmente.
+verificato tramite checksum, contiene test unitari per la logica non-GUI e
+pubblica archivi alpha nativi pre-buildati per le piattaforme principali.
 
 Possibili miglioramenti futuri, in ordine indicativo:
 
-- validare gli artefatti `onedir` automatizzati sui rispettivi sistemi e
-  pubblicare la prima pre-release alpha;
+- raccogliere feedback sulla prima alpha e continuare a validare gli artefatti
+  `onedir` automatizzati sui rispettivi sistemi;
 - aggiungere firma e notarizzazione dove opportuno, quindi valutare formati di
   distribuzione più nativi come AppImage, un installer Windows e un'immagine
   disco macOS;
