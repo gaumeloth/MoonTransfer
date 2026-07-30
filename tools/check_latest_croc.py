@@ -217,9 +217,13 @@ def run_smoke_tests(binary: Path, version: str) -> None:
         environment = compatibility_process_environment(Path(tmp) / "croc-config")
 
         version_output = command_output(version_command, env=environment)
-        if f"v{fetch_croc.normalize_version(version)}" not in version_output:
+        reported_version = croc.parse_version_output(version_output)
+        expected_version = fetch_croc.normalize_version(version)
+        if reported_version != expected_version:
             raise RuntimeError(
-                f"Unexpected croc version output for {binary}:\n{version_output}"
+                f"Unexpected croc version for {binary}: "
+                f"expected {expected_version}, got "
+                f"{reported_version or 'unknown'}\n{version_output}"
             )
 
         send_help = command_output(send_help_command, env=environment)
@@ -250,8 +254,19 @@ def _enqueue_output(
         stream.close()
 
 
-def run_transfer_test(binary: Path, *, timeout: int = DEFAULT_TIMEOUT) -> None:
-    print("[transfer] running end-to-end transfer test with latest croc")
+def run_transfer_test(
+    binary: Path,
+    *,
+    prompt_response: bool | None = None,
+    timeout: int = DEFAULT_TIMEOUT,
+) -> None:
+    if prompt_response is None:
+        mode = "automatic receive"
+    elif prompt_response:
+        mode = "prompt acceptance"
+    else:
+        mode = "prompt rejection"
+    print(f"[transfer] running {mode} test with latest croc")
 
     with tempfile.TemporaryDirectory(prefix="moontransfer-croc-latest-") as tmp:
         base = Path(tmp)
@@ -334,14 +349,30 @@ def run_transfer_test(binary: Path, *, timeout: int = DEFAULT_TIMEOUT) -> None:
                 base / "receiver-croc-config",
                 secret=code,
             )
+            receive_args = (
+                croc.build_receive_args()
+                if prompt_response is None
+                else croc.build_prompted_receive_args()
+            )
             receiver = subprocess.Popen(
-                [str(binary), *croc.build_receive_args()],
+                [str(binary), *receive_args],
+                stdin=(
+                    subprocess.PIPE
+                    if prompt_response is not None
+                    else subprocess.DEVNULL
+                ),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
                 cwd=str(dest_dir),
                 env=receiver_env,
             )
+
+            if prompt_response is not None:
+                assert receiver.stdin is not None
+                receiver.stdin.write("y\n" if prompt_response else "n\n")
+                receiver.stdin.flush()
+                receiver.stdin.close()
 
             assert receiver.stdout is not None
             receiver_thread = threading.Thread(
@@ -353,6 +384,28 @@ def run_transfer_test(binary: Path, *, timeout: int = DEFAULT_TIMEOUT) -> None:
 
             receiver.wait(timeout=timeout)
             sender.wait(timeout=timeout)
+            receiver_thread.join(timeout=2)
+            sender_reader.join(timeout=2)
+
+            if prompt_response is False:
+                received_entries = tuple(dest_dir.iterdir())
+                if received_entries:
+                    raise RuntimeError(
+                        "prompt rejection created destination content\n"
+                        f"sender output:\n{''.join(sender_output[-80:])}\n"
+                        f"receiver output:\n{''.join(receiver_output[-80:])}"
+                    )
+                print(f"[ok] {mode} test passed")
+                return
+
+            if sender.returncode != 0 or receiver.returncode != 0:
+                raise RuntimeError(
+                    "accepted transfer process failed\n"
+                    f"sender exit code: {sender.returncode}\n"
+                    f"receiver exit code: {receiver.returncode}\n"
+                    f"sender output:\n{''.join(sender_output[-80:])}\n"
+                    f"receiver output:\n{''.join(receiver_output[-80:])}"
+                )
 
             received_file = dest_dir / source_file.name
             received_nested = (
@@ -391,8 +444,9 @@ def run_transfer_test(binary: Path, *, timeout: int = DEFAULT_TIMEOUT) -> None:
                         proc.wait(timeout=5)
                     except subprocess.TimeoutExpired:
                         proc.kill()
+                        proc.wait(timeout=5)
 
-    print("[ok] transfer test passed")
+    print(f"[ok] {mode} test passed")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -407,7 +461,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--transfer",
         action="store_true",
-        help="also run an end-to-end transfer test using the latest croc binary",
+        help=(
+            "also test automatic receive plus prompted acceptance and rejection "
+            "using the latest croc binary"
+        ),
     )
     parser.add_argument(
         "--timeout",
@@ -450,12 +507,25 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.transfer:
         run_transfer_test(binary, timeout=args.timeout)
+        run_transfer_test(
+            binary,
+            prompt_response=True,
+            timeout=args.timeout,
+        )
+        run_transfer_test(
+            binary,
+            prompt_response=False,
+            timeout=args.timeout,
+        )
 
     print("[done] latest croc check passed")
-    print(
-        "[next] if the result is acceptable, update "
-        "[tool.moontransfer.croc] in pyproject.toml and commit the new hashes"
-    )
+    if check.has_update:
+        print(
+            "[next] if the result is acceptable, update "
+            "[tool.moontransfer.croc] in pyproject.toml and commit the new hashes"
+        )
+    else:
+        print("[ok] pinned croc release validated")
 
 
 if __name__ == "__main__":

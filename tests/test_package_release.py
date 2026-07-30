@@ -85,6 +85,25 @@ class PackageReleaseTests(unittest.TestCase):
         ):
             package_release.verify_croc_version(Path("/fake/croc"), "10.4.13")
 
+    def test_verify_croc_version_accepts_supported_output_formats(self) -> None:
+        for output in ("croc version v10.4.13", "croc version 10.4.13"):
+            with (
+                self.subTest(output=output),
+                mock.patch.object(
+                    package_release.subprocess,
+                    "run",
+                    return_value=mock.Mock(
+                        returncode=0,
+                        stdout=output,
+                        stderr="",
+                    ),
+                ),
+            ):
+                package_release.verify_croc_version(
+                    Path("/fake/croc"),
+                    "10.4.13",
+                )
+
     def test_create_linux_package_preserves_executable_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

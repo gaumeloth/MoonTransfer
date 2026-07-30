@@ -12,6 +12,11 @@ from pathlib import Path
 CROC_SECRET_ENV = "CROC_SECRET"
 NON_CLASSIC_ARG = "--classic=false"
 CODE_RE = re.compile(r"Code is:\s*(.+)\s*$")
+CROC_VERSION_RE = re.compile(
+    r"\bcroc\s+version\s+v?"
+    r"(?P<version>\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)\b",
+    re.IGNORECASE,
+)
 
 
 def executable_name() -> str:
@@ -48,6 +53,13 @@ def parse_send_code(line: str) -> str | None:
 
     code = match.group(1).strip()
     return code or None
+
+
+def parse_version_output(output: str) -> str | None:
+    match = CROC_VERSION_RE.search(output)
+    if not match:
+        return None
+    return match.group("version")
 
 
 def build_send_args(paths: Path | Sequence[Path]) -> list[str]:
