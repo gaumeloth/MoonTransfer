@@ -22,3 +22,23 @@ Project: <https://doc.qt.io/qtforpython/>
 Package: <https://pypi.org/project/PySide6/>
 
 PySide6 is distributed under the licensing terms provided by Qt/PySide6.
+
+## Kivy
+
+The experimental Android client uses Kivy for its graphical interface. Kivy is
+not included in MoonTransfer desktop release artifacts.
+
+Project: <https://github.com/kivy/kivy>
+
+License: MIT License
+
+## Buildozer / python-for-android
+
+The experimental Android build uses Buildozer and python-for-android as
+build-time tooling. Their versions are pinned in the Android-specific project
+and Buildozer configuration.
+
+Projects: <https://github.com/kivy/buildozer> and
+<https://github.com/kivy/python-for-android>
+
+License: MIT License

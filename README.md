@@ -724,6 +724,9 @@ Possible future improvements, in indicative order:
 
 - collect feedback from the first alpha and continue validating the automated
   `onedir` artifacts on their target systems;
+- validate the experimental Kivy Android target, including Storage Access
+  Framework integration, background execution, and packaging `croc`, before
+  treating Android as a supported platform;
 - add signing and notarization where appropriate, then evaluate more native
   distribution formats such as AppImage, a Windows installer, and a macOS disk
   image;
@@ -1314,6 +1317,19 @@ group is not intentionally merged into existing destination content.
 - Build reproducibility depends on `uv.lock`, the pinned `croc` version, and
   the versioned SHA-256 hashes in `pyproject.toml`.
 
+### Experimental Android target
+
+Android feasibility work is isolated under `android/` and does not replace the
+PySide6 desktop application. It uses a separate Python 3.13 environment, Kivy,
+Buildozer, and its own `uv.lock`. The Android source tree is generated from an
+explicit allowlist of Qt-independent MoonTransfer modules, so the protocol is
+shared without adding Kivy to desktop runtime dependencies.
+
+The scaffold currently validates Kivy startup and Android packaging
+configuration only. File selection, Android services, transfers, and the
+Android `croc` recipe are not implemented yet. Setup, diagnostics, and build
+commands are documented in [android/README.md](android/README.md).
+
 ### Structure
 
 ```text
@@ -1322,6 +1338,19 @@ MoonTransfer/
 │  ├─ workflows/
 │  │  └─ release-builds.yml
 │  └─ dependabot.yml
+├─ android/
+│  ├─ app/
+│  │  └─ moontransfer_android/
+│  │     ├─ __init__.py
+│  │     └─ application.py
+│  ├─ recipes/
+│  │  └─ README.md
+│  ├─ .python-version
+│  ├─ README.md
+│  ├─ README.it.md
+│  ├─ buildozer.spec
+│  ├─ pyproject.toml
+│  └─ uv.lock
 ├─ src/
 │  └─ moontransfer/
 │     ├─ assets/
@@ -1344,14 +1373,18 @@ MoonTransfer/
 │     ├─ transfer.py
 │     └─ widgets.py
 ├─ tools/
+│  ├─ android.py
 │  ├─ build.py
 │  ├─ check_latest_croc.py
 │  ├─ fetch_croc.py
-│  └─ package_release.py
+│  ├─ package_release.py
+│  └─ prepare_android.py
 ├─ scripts/
+│  ├─ android.sh
 │  ├─ build.ps1
 │  └─ build.sh
 ├─ tests/
+│  ├─ test_android_setup.py
 │  ├─ test_app.py
 │  ├─ test_check_latest_croc.py
 │  ├─ test_croc.py
@@ -1383,6 +1416,8 @@ These paths are generated locally and should not be committed:
 ```text
 .venv/
 .cache/
+android/.buildozer/
+android/.venv/
 build/
 dist/
 release/
@@ -1399,4 +1434,5 @@ See the full license text in [LICENSE](LICENSE).
 
 Third-party components keep their own licenses. See
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party components,
-in particular `croc` and PySide6/Qt for Python.
+in particular `croc`, PySide6/Qt for Python, Kivy, Buildozer, and
+python-for-android.
