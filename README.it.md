@@ -1380,10 +1380,12 @@ viene generato da una lista esplicita di moduli MoonTransfer indipendenti da Qt,
 così il protocollo viene condiviso senza aggiungere Kivy alle dipendenze runtime
 desktop.
 
-Al momento lo scaffold verifica solamente l'avvio di Kivy e la configurazione
-del packaging Android. La selezione dei file, i servizi Android, i trasferimenti
-e la recipe Android di `croc` non sono ancora implementati. Configurazione,
-diagnostica e comandi di build sono documentati in
+Il prototipo attuale include un eseguibile `croc` ARM64 verificato e può inviare
+un file selezionato tramite SAF da Android all'applicazione desktop usando il
+manifest condiviso del protocollo v2. Ricezione su Android, file multipli,
+cartelle, servizi in background e packaging release non sono implementati.
+Configurazione, diagnostica, comandi di build, dettagli progettuali e test
+manuale di compatibilità sono documentati in
 [android/README.it.md](android/README.it.md).
 
 ### Struttura
@@ -1398,8 +1400,13 @@ MoonTransfer/
 │  ├─ app/
 │  │  └─ moontransfer_android/
 │  │     ├─ __init__.py
-│  │     └─ application.py
+│  │     ├─ application.py
+│  │     ├─ sender.py
+│  │     ├─ storage.py
+│  │     └─ transport.py
 │  ├─ recipes/
+│  │  ├─ croc/
+│  │  │  └─ __init__.py
 │  │  └─ README.md
 │  ├─ .python-version
 │  ├─ README.md
@@ -1441,6 +1448,9 @@ MoonTransfer/
 │  └─ build.sh
 ├─ tests/
 │  ├─ test_android_setup.py
+│  ├─ test_android_sender.py
+│  ├─ test_android_storage.py
+│  ├─ test_android_transport.py
 │  ├─ test_app.py
 │  ├─ test_check_latest_croc.py
 │  ├─ test_croc.py

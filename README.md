@@ -1325,10 +1325,12 @@ Buildozer, and its own `uv.lock`. The Android source tree is generated from an
 explicit allowlist of Qt-independent MoonTransfer modules, so the protocol is
 shared without adding Kivy to desktop runtime dependencies.
 
-The scaffold currently validates Kivy startup and Android packaging
-configuration only. File selection, Android services, transfers, and the
-Android `croc` recipe are not implemented yet. Setup, diagnostics, and build
-commands are documented in [android/README.md](android/README.md).
+The current prototype packages a verified ARM64 `croc` executable and can send
+one SAF-selected file from Android to the desktop application using the shared
+protocol-v2 manifest. Receiving on Android, multiple files, folders, background
+services, and release packaging are not implemented. Setup, diagnostics, build
+commands, design details, and the manual compatibility test are documented in
+[android/README.md](android/README.md).
 
 ### Structure
 
@@ -1342,8 +1344,13 @@ MoonTransfer/
 │  ├─ app/
 │  │  └─ moontransfer_android/
 │  │     ├─ __init__.py
-│  │     └─ application.py
+│  │     ├─ application.py
+│  │     ├─ sender.py
+│  │     ├─ storage.py
+│  │     └─ transport.py
 │  ├─ recipes/
+│  │  ├─ croc/
+│  │  │  └─ __init__.py
 │  │  └─ README.md
 │  ├─ .python-version
 │  ├─ README.md
@@ -1385,6 +1392,9 @@ MoonTransfer/
 │  └─ build.sh
 ├─ tests/
 │  ├─ test_android_setup.py
+│  ├─ test_android_sender.py
+│  ├─ test_android_storage.py
+│  ├─ test_android_transport.py
 │  ├─ test_app.py
 │  ├─ test_check_latest_croc.py
 │  ├─ test_croc.py
