@@ -26,7 +26,10 @@ COMMON_BUILD_COMMANDS = (
     "javac",
     "cargo",
     "rustc",
+    "go",
 )
+MINIMUM_GO_VERSION = (1, 25)
+GO_VERSION_RE = re.compile(r"\bgo version go(\d+)\.(\d+)")
 LINUX_BUILD_COMMANDS = (
     "autoconf",
     "automake",
@@ -83,6 +86,26 @@ def javac_major_version() -> int | None:
     return int(match.group(1)) if match else None
 
 
+def parse_go_version(output: str) -> tuple[int, int] | None:
+    match = GO_VERSION_RE.search(output)
+    if match is None:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def go_version() -> tuple[int, int] | None:
+    go = shutil.which("go")
+    if go is None:
+        return None
+    result = subprocess.run(
+        [go, "version"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return parse_go_version(result.stdout + result.stderr)
+
+
 def build_environment_issues() -> tuple[str, ...]:
     issues: list[str] = []
     system = platform.system()
@@ -115,6 +138,15 @@ def build_environment_issues() -> tuple[str, ...]:
     java_major = javac_major_version()
     if java_major is not None and java_major != 17:
         issues.append(f"Java 17 is required (found Java {java_major}).")
+
+    if shutil.which("go") is not None:
+        installed_go = go_version()
+        if installed_go is None:
+            issues.append("Unable to determine the installed Go version.")
+        elif installed_go < MINIMUM_GO_VERSION:
+            required = ".".join(str(part) for part in MINIMUM_GO_VERSION)
+            found = ".".join(str(part) for part in installed_go)
+            issues.append(f"Go {required} or newer is required (found Go {found}).")
 
     return tuple(issues)
 

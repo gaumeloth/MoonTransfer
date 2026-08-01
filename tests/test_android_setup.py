@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import configparser
 import os
 import re
@@ -62,12 +63,50 @@ class AndroidBuildConfigurationTests(unittest.TestCase):
         self.assertEqual(
             self.app["requirements"],
             "python3==3.13.14,hostpython3==3.13.14,kivy==2.3.1,"
-            "chardet==5.2.0",
+            "chardet==5.2.0,croc",
         )
         self.assertEqual(self.app["p4a.branch"], "v2026.05.09")
         self.assertEqual(self.app["android.ndk"], "28c")
         self.assertEqual(self.app["android.api"], "36")
         self.assertEqual(self.app["android.archs"], "arm64-v8a")
+
+    def test_croc_recipe_is_pinned_and_packaged_as_a_native_executable(self) -> None:
+        recipe_path = ROOT / "android" / "recipes" / "croc" / "__init__.py"
+        recipe_source = recipe_path.read_text(encoding="utf-8")
+        tree = ast.parse(recipe_source)
+        recipe_class = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name == "CrocRecipe"
+        )
+        assignments = {
+            target.id: ast.literal_eval(statement.value)
+            for statement in recipe_class.body
+            if isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and isinstance((target := statement.targets[0]), ast.Name)
+            and target.id in {"version", "url", "sha512sum", "built_libraries"}
+        }
+
+        project = read_toml(ROOT / "pyproject.toml")
+        self.assertEqual(
+            assignments["version"],
+            project["tool"]["moontransfer"]["croc"]["version"],
+        )
+        self.assertEqual(
+            assignments["url"],
+            "https://github.com/schollz/croc/archive/refs/tags/v{version}.tar.gz",
+        )
+        self.assertEqual(
+            assignments["sha512sum"],
+            "57dd2b4b0f9adf80e07bc1112c19c6b5376add4b1f08fd91b5ff2b720c88274a"
+            "a75d8a75cea0b3dfb61fc3f5285e6fbdc94f232085f29b29e814bcbd17ad72d8",
+        )
+        self.assertEqual(assignments["built_libraries"], {"libcroc.so": "."})
+        self.assertIn('"GOOS": "android"', recipe_source)
+        self.assertIn('"CGO_ENABLED": "1"', recipe_source)
+        self.assertIn("with_flags_in_cc=False", recipe_source)
+        self.assertIn("get_clang_exe(with_target=True)", recipe_source)
 
     def test_build_declares_no_broad_storage_permission(self) -> None:
         permissions = {
@@ -100,6 +139,23 @@ class AndroidSourcePreparationTests(unittest.TestCase):
             self.assertTrue((prepared / "main.py").is_file())
             self.assertTrue(
                 (prepared / "moontransfer_android" / "application.py").is_file()
+            )
+            self.assertTrue(
+                (prepared / "moontransfer_android" / "transport.py").is_file()
+            )
+            self.assertTrue(
+                (prepared / "moontransfer_android" / "storage.py").is_file()
+            )
+            self.assertTrue(
+                (prepared / "moontransfer_android" / "sender.py").is_file()
+            )
+            self.assertTrue(
+                (
+                    prepared
+                    / "moontransfer_android"
+                    / "licenses"
+                    / "croc.txt"
+                ).is_file()
             )
             for filename in prepare_android.SHARED_MODULES:
                 self.assertTrue((package / filename).is_file(), filename)
@@ -189,6 +245,7 @@ class AndroidDoctorTests(unittest.TestCase):
         macos = android_tool.required_build_commands("Darwin")
 
         self.assertIn("gcc", linux)
+        self.assertIn("go", linux)
         self.assertNotIn("clang", linux)
         self.assertIn("clang", macos)
         self.assertNotIn("gcc", macos)
@@ -202,6 +259,17 @@ class AndroidDoctorTests(unittest.TestCase):
         )
 
         self.assertEqual(missing, ("javac", "cargo"))
+
+    def test_go_version_parser_accepts_current_version_output(self) -> None:
+        self.assertEqual(
+            android_tool.parse_go_version(
+                "go version go1.26.5-X:nodwarf5 linux/amd64"
+            ),
+            (1, 26),
+        )
+
+    def test_go_version_parser_rejects_unrelated_output(self) -> None:
+        self.assertIsNone(android_tool.parse_go_version("Python 3.13.11"))
 
     def test_missing_python_module_detection_is_deterministic(self) -> None:
         available = {"pip": object()}
