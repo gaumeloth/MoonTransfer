@@ -724,6 +724,9 @@ Possible future improvements, in indicative order:
 
 - collect feedback from the first alpha and continue validating the automated
   `onedir` artifacts on their target systems;
+- validate the experimental Kivy Android target, including Storage Access
+  Framework integration, background execution, and packaging `croc`, before
+  treating Android as a supported platform;
 - add signing and notarization where appropriate, then evaluate more native
   distribution formats such as AppImage, a Windows installer, and a macOS disk
   image;
@@ -1314,6 +1317,26 @@ group is not intentionally merged into existing destination content.
 - Build reproducibility depends on `uv.lock`, the pinned `croc` version, and
   the versioned SHA-256 hashes in `pyproject.toml`.
 
+### Experimental Android target
+
+Android feasibility work is isolated under `android/` and does not replace the
+PySide6 desktop application. It uses a separate Python 3.13 environment, Kivy,
+Buildozer, and its own `uv.lock`. The Android source tree is generated from an
+explicit allowlist of Qt-independent MoonTransfer modules, so the protocol is
+shared without adding Kivy to desktop runtime dependencies.
+
+The current prototype packages a verified ARM64 `croc` executable and can send
+or receive one file between Android and the desktop application using the
+shared protocol-v2 manifest and Android's Storage Access Framework. A `dataSync`
+foreground service owns active transfers, so switching applications does not
+abort `croc`; a private state-aware notification reports phase and available
+progress metrics and provides a session-bound stop action, then leaves a
+dismissible result. The service handles Android 15 `dataSync` timeouts and
+invalid sticky restarts, but interrupted sessions still cannot be resumed.
+Multiple files, folders, and release packaging are not implemented.
+Setup, diagnostics, build commands, design details, and manual compatibility
+tests are documented in [android/README.md](android/README.md).
+
 ### Structure
 
 ```text
@@ -1322,6 +1345,30 @@ MoonTransfer/
 │  ├─ workflows/
 │  │  └─ release-builds.yml
 │  └─ dependabot.yml
+├─ android/
+│  ├─ app/
+│  │  └─ moontransfer_android/
+│  │     ├─ __init__.py
+│  │     ├─ android_runtime.py
+│  │     ├─ application.py
+│  │     ├─ receiver.py
+│  │     ├─ sender.py
+│  │     ├─ service.py
+│  │     ├─ service_client.py
+│  │     ├─ service_protocol.py
+│  │     ├─ storage.py
+│  │     ├─ transfer_service.py
+│  │     └─ transport.py
+│  ├─ recipes/
+│  │  ├─ croc/
+│  │  │  └─ __init__.py
+│  │  └─ README.md
+│  ├─ .python-version
+│  ├─ README.md
+│  ├─ README.it.md
+│  ├─ buildozer.spec
+│  ├─ pyproject.toml
+│  └─ uv.lock
 ├─ src/
 │  └─ moontransfer/
 │     ├─ assets/
@@ -1344,14 +1391,23 @@ MoonTransfer/
 │     ├─ transfer.py
 │     └─ widgets.py
 ├─ tools/
+│  ├─ android.py
 │  ├─ build.py
 │  ├─ check_latest_croc.py
 │  ├─ fetch_croc.py
-│  └─ package_release.py
+│  ├─ package_release.py
+│  └─ prepare_android.py
 ├─ scripts/
+│  ├─ android.sh
 │  ├─ build.ps1
 │  └─ build.sh
 ├─ tests/
+│  ├─ test_android_setup.py
+│  ├─ test_android_receiver.py
+│  ├─ test_android_sender.py
+│  ├─ test_android_service.py
+│  ├─ test_android_storage.py
+│  ├─ test_android_transport.py
 │  ├─ test_app.py
 │  ├─ test_check_latest_croc.py
 │  ├─ test_croc.py
@@ -1383,6 +1439,8 @@ These paths are generated locally and should not be committed:
 ```text
 .venv/
 .cache/
+android/.buildozer/
+android/.venv/
 build/
 dist/
 release/
@@ -1399,4 +1457,5 @@ See the full license text in [LICENSE](LICENSE).
 
 Third-party components keep their own licenses. See
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party components,
-in particular `croc` and PySide6/Qt for Python.
+in particular `croc`, PySide6/Qt for Python, Kivy, Buildozer, and
+python-for-android.
