@@ -158,16 +158,20 @@ class AndroidBuildConfigurationTests(unittest.TestCase):
         control = (java_root / "TransferControl.java").read_text(
             encoding="utf-8"
         )
+        action = (java_root / "TransferNotificationAction.java").read_text(
+            encoding="utf-8"
+        )
 
         self.assertIn("void onTimeout(int startId, int fgsType)", service)
         self.assertIn("TransferControl.requestCancel", service)
         self.assertIn("stopSelf(startId)", service)
         self.assertIn("if (intent == null)", service)
         self.assertIn("return START_NOT_STICKY", service)
-        self.assertIn("ACTION_CANCEL_TRANSFER.equals(intent.getAction())", service)
+        self.assertIn("ACTION_CANCEL_TRANSFER.equals(", service)
         self.assertIn("requestedSession.equals(activeSessionId)", service)
         self.assertIn('command.put("command", "cancel")', control)
         self.assertIn("getCanonicalFile()", control)
+        self.assertIn("public static void addCancelAction", action)
 
     def test_android_application_id_matches_desktop_bundle_identifier(self) -> None:
         self.assertEqual(
@@ -415,20 +419,32 @@ class AndroidNotificationSourceTests(unittest.TestCase):
         self.assertNotIn("notification_class.Builder", source)
 
     def test_cancel_action_is_explicit_immutable_and_session_bound(self) -> None:
-        source = (
+        runtime_source = (
             ROOT
             / "android"
             / "app"
             / "moontransfer_android"
             / "android_runtime.py"
         ).read_text(encoding="utf-8")
+        action_source = (
+            ROOT
+            / "android"
+            / "java"
+            / "io"
+            / "github"
+            / "gaumeloth"
+            / "moontransfer"
+            / "TransferNotificationAction.java"
+        ).read_text(encoding="utf-8")
 
-        self.assertIn("_cancel_transfer_pending_intent", source)
-        self.assertIn("intent_class(context, service_class)", source)
-        self.assertIn("pending_intent_class.FLAG_IMMUTABLE", source)
-        self.assertIn("pending_intent_class.FLAG_CANCEL_CURRENT", source)
-        self.assertIn("intent.putExtra(TRANSFER_SESSION_EXTRA, session_id)", source)
-        self.assertIn('"Interrompi"', source)
+        self.assertIn("_add_cancel_transfer_action", runtime_source)
+        self.assertIn("helper.addCancelAction", runtime_source)
+        self.assertNotIn("builder.addAction", runtime_source)
+        self.assertIn('context.getPackageName() + ".ServiceTransfer"', action_source)
+        self.assertIn("PendingIntent.FLAG_IMMUTABLE", action_source)
+        self.assertIn("PendingIntent.FLAG_CANCEL_CURRENT", action_source)
+        self.assertIn("intent.putExtra(EXTRA_SESSION_ID, sessionId)", action_source)
+        self.assertIn('"Interrompi"', action_source)
 
 
 class AndroidDoctorTests(unittest.TestCase):
