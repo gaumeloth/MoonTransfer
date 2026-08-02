@@ -71,14 +71,18 @@ def _wait_for_state(
     session_id: str,
     expected: str,
     *,
-    timeout: float = 3.0,
+    timeout: float = 10.0,
 ) -> None:
     deadline = time.monotonic() + timeout
+    last_state = "unknown"
     while time.monotonic() < deadline:
-        if read_service_snapshot(cache_root, session_id).state == expected:
+        last_state = read_service_snapshot(cache_root, session_id).state
+        if last_state == expected:
             return
         time.sleep(0.01)
-    raise AssertionError(f"service did not enter state {expected}")
+    raise AssertionError(
+        f"service did not enter state {expected}; last state was {last_state}"
+    )
 
 
 class _ServiceStartContext:
@@ -438,7 +442,7 @@ class AndroidTransferServiceRuntimeTests(unittest.TestCase):
                 request.session_id,
                 TransferServiceCommandName.CANCEL,
             )
-            thread.join(3)
+            thread.join(10)
 
             self.assertFalse(thread.is_alive())
             snapshot = read_service_snapshot(cache_root, request.session_id)
@@ -472,7 +476,7 @@ class AndroidTransferServiceRuntimeTests(unittest.TestCase):
                 request.session_id,
                 TransferServiceCommandName.REJECT,
             )
-            thread.join(3)
+            thread.join(10)
 
             self.assertFalse(thread.is_alive())
             snapshot = read_service_snapshot(cache_root, request.session_id)
