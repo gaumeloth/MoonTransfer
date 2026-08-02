@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import os
 import stat
 import sys
 import tempfile
@@ -214,12 +215,13 @@ class AndroidServiceProtocolTests(unittest.TestCase):
             self.assertEqual(restored_document.filename, document.filename)
             self.assertEqual(restored_document.size, document.size)
             self.assertEqual(snapshot.state, "preparing")
-            session_dir = service_session_dir(cache_root, created.session_id)
-            self.assertEqual(stat.S_IMODE(session_dir.stat().st_mode), 0o700)
-            self.assertEqual(
-                stat.S_IMODE((session_dir / "request.json").stat().st_mode),
-                0o600,
-            )
+            if os.name != "nt":
+                session_dir = service_session_dir(cache_root, created.session_id)
+                self.assertEqual(stat.S_IMODE(session_dir.stat().st_mode), 0o700)
+                self.assertEqual(
+                    stat.S_IMODE((session_dir / "request.json").stat().st_mode),
+                    0o600,
+                )
 
     def test_send_request_rejects_files_outside_private_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
