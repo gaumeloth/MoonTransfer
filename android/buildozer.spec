@@ -25,6 +25,8 @@ android.permissions = android.permission.INTERNET,
     android.permission.FOREGROUND_SERVICE_DATA_SYNC,
     android.permission.POST_NOTIFICATIONS
 services = Transfer:moontransfer_android/service.py:foreground:sticky:foregroundServiceType=dataSync
+android.add_src = java
+android.service_class_name = io.github.gaumeloth.moontransfer.MoonTransferPythonService
 android.api = 36
 android.minapi = 24
 android.ndk = 28c

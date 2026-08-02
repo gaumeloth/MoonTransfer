@@ -21,7 +21,9 @@ from moontransfer.files import CONTROL_METADATA_NAME  # noqa: E402
 from moontransfer.progress import TransferProgressSample  # noqa: E402
 from moontransfer.protocol import create_proposal, write_control_file  # noqa: E402
 from moontransfer_android.android_runtime import (  # noqa: E402
+    AndroidRuntimeError,
     TransferNotification,
+    _start_service_intent,
 )
 from moontransfer_android.service_client import (  # noqa: E402
     TransferServiceClient,
@@ -76,6 +78,22 @@ def _wait_for_state(
             return
         time.sleep(0.01)
     raise AssertionError(f"service did not enter state {expected}")
+
+
+class _ServiceStartContext:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.calls: list[tuple[str, object]] = []
+
+    def startForegroundService(self, intent: object) -> None:
+        self.calls.append(("foreground", intent))
+        if self.fail:
+            raise RuntimeError("start denied")
+
+    def startService(self, intent: object) -> None:
+        self.calls.append(("service", intent))
+        if self.fail:
+            raise RuntimeError("start denied")
 
 
 class _SuccessfulSendRunner:
@@ -153,6 +171,26 @@ class _RejectableReceiveRunner:
 
 
 class AndroidServiceProtocolTests(unittest.TestCase):
+    def test_service_start_uses_api_appropriate_android_method(self) -> None:
+        modern = _ServiceStartContext()
+        legacy = _ServiceStartContext()
+        intent = object()
+
+        _start_service_intent(modern, intent, 35)
+        _start_service_intent(legacy, intent, 24)
+
+        self.assertEqual(modern.calls, [("foreground", intent)])
+        self.assertEqual(legacy.calls, [("service", intent)])
+
+    def test_service_start_denial_has_a_stable_user_message(self) -> None:
+        context = _ServiceStartContext(fail=True)
+
+        with self.assertRaisesRegex(
+            AndroidRuntimeError,
+            "Android non ha consentito.*Mantieni MoonTransfer visibile",
+        ):
+            _start_service_intent(context, object(), 35)
+
     def test_send_request_uses_private_relative_paths_and_secure_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             cache_root = Path(tmp) / "cache"

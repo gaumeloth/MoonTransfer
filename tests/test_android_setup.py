@@ -136,6 +136,36 @@ class AndroidBuildConfigurationTests(unittest.TestCase):
             "Transfer:moontransfer_android/service.py:foreground:sticky:"
             "foregroundServiceType=dataSync",
         )
+        self.assertEqual(self.app["android.add_src"], "java")
+        self.assertEqual(
+            self.app["android.service_class_name"],
+            "io.github.gaumeloth.moontransfer.MoonTransferPythonService",
+        )
+
+    def test_service_handles_android_timeout_and_invalid_sticky_restart(self) -> None:
+        java_root = (
+            ROOT
+            / "android"
+            / "java"
+            / "io"
+            / "github"
+            / "gaumeloth"
+            / "moontransfer"
+        )
+        service = (java_root / "MoonTransferPythonService.java").read_text(
+            encoding="utf-8"
+        )
+        control = (java_root / "TransferControl.java").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("void onTimeout(int startId, int fgsType)", service)
+        self.assertIn("TransferControl.requestCancel", service)
+        self.assertIn("stopSelf(startId)", service)
+        self.assertIn("if (intent == null)", service)
+        self.assertIn("return START_NOT_STICKY", service)
+        self.assertIn('command.put("command", "cancel")', control)
+        self.assertIn("getCanonicalFile()", control)
 
     def test_android_application_id_matches_desktop_bundle_identifier(self) -> None:
         self.assertEqual(

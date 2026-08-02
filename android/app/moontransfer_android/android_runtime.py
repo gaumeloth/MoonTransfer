@@ -97,10 +97,22 @@ def start_transfer_service(session_id: str, description: str) -> None:
         session_id,
     )
     build_version = autoclass("android.os.Build$VERSION")
-    if int(build_version.SDK_INT) >= 26:
-        context.startForegroundService(intent)
-    else:
-        context.startService(intent)
+    _start_service_intent(context, intent, int(build_version.SDK_INT))
+
+
+def _start_service_intent(context: Any, intent: Any, sdk_int: int) -> None:
+    try:
+        if sdk_int >= 26:
+            context.startForegroundService(intent)
+        else:
+            context.startService(intent)
+    except Exception as error:
+        raise AndroidRuntimeError(
+            "Android non ha consentito l'avvio del trasferimento in background. "
+            "Mantieni MoonTransfer visibile in primo piano e riprova. Se il "
+            "problema persiste, il limite temporale di sistema per i "
+            "trasferimenti potrebbe essere esaurito."
+        ) from error
 
 
 def stop_transfer_service() -> None:
