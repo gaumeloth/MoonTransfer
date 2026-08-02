@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,11 @@ TRANSFER_SERVICE_CLASS = f"{ANDROID_PACKAGE_NAME}.ServiceTransfer"
 TRANSFER_SERVICE_ID = 1
 TRANSFER_RESULT_NOTIFICATION_ID = 2
 TRANSFER_NOTIFICATION_CHANNEL = "org.kivy.p4a1"
+TRANSFER_CANCEL_ACTION = (
+    "io.github.gaumeloth.moontransfer.action.CANCEL_TRANSFER"
+)
+TRANSFER_SESSION_EXTRA = "io.github.gaumeloth.moontransfer.extra.SESSION_ID"
+TRANSFER_SESSION_RE = re.compile(r"^[0-9a-f]{32}$")
 
 
 class AndroidRuntimeError(RuntimeError):
@@ -24,6 +30,7 @@ class TransferNotification:
     progress: int | None = None
     indeterminate: bool = False
     public_text: str = "Trasferimento MoonTransfer in corso"
+    cancel_session_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.progress is not None and not 0 <= self.progress <= 100:
@@ -33,6 +40,11 @@ class TransferNotification:
                 "Una notifica non può avere avanzamento determinato e "
                 "indeterminato insieme."
             )
+        if (
+            self.cancel_session_id is not None
+            and not TRANSFER_SESSION_RE.fullmatch(self.cancel_session_id)
+        ):
+            raise ValueError("Sessione di annullamento non valida.")
 
 
 def android_context() -> Any:
@@ -170,6 +182,14 @@ def _post_notification(
     notification_class = autoclass("android.app.Notification")
     builder_class = autoclass("android.app.Notification$Builder")
     pending_intent = _application_pending_intent(context)
+    cancel_pending_intent = (
+        _cancel_transfer_pending_intent(
+            context,
+            notification.cancel_session_id,
+        )
+        if ongoing and notification.cancel_session_id is not None
+        else None
+    )
     builder = _notification_builder(
         context,
         notification_class,
@@ -180,6 +200,7 @@ def _post_notification(
         notification_class,
         notification,
         pending_intent,
+        cancel_pending_intent,
         context,
         ongoing=ongoing,
         auto_cancel=auto_cancel,
@@ -227,6 +248,32 @@ def _application_pending_intent(context: Any) -> Any:
     )
 
 
+def _cancel_transfer_pending_intent(context: Any, session_id: str) -> Any:
+    if not TRANSFER_SESSION_RE.fullmatch(session_id):
+        raise AndroidRuntimeError("Sessione di annullamento non valida.")
+    try:
+        from jnius import autoclass
+    except ImportError as error:
+        raise AndroidRuntimeError("Runtime Android non disponibile.") from error
+
+    pending_intent_class = autoclass("android.app.PendingIntent")
+    intent_class = autoclass("android.content.Intent")
+    uri_class = autoclass("android.net.Uri")
+    service_class = autoclass(TRANSFER_SERVICE_CLASS)
+    intent = intent_class(context, service_class)
+    intent.setAction(TRANSFER_CANCEL_ACTION)
+    intent.setData(uri_class.parse(f"moontransfer://cancel/{session_id}"))
+    intent.putExtra(TRANSFER_SESSION_EXTRA, session_id)
+    request_code = int(session_id[:8], 16) & 0x7FFFFFFF
+    return pending_intent_class.getService(
+        context,
+        request_code,
+        intent,
+        pending_intent_class.FLAG_IMMUTABLE
+        | pending_intent_class.FLAG_CANCEL_CURRENT,
+    )
+
+
 def _notification_builder(
     context: Any,
     notification_class: Any,
@@ -252,6 +299,7 @@ def _configure_notification_builder(
     notification_class: Any,
     notification: TransferNotification,
     pending_intent: Any,
+    cancel_pending_intent: Any | None,
     context: Any,
     *,
     ongoing: bool,
@@ -267,6 +315,12 @@ def _configure_notification_builder(
     builder.setVisibility(notification_class.VISIBILITY_PRIVATE)
     if ongoing:
         builder.setCategory(notification_class.CATEGORY_PROGRESS)
+    if cancel_pending_intent is not None:
+        builder.addAction(
+            context.getApplicationInfo().icon,
+            "Interrompi",
+            cancel_pending_intent,
+        )
     if notification.indeterminate:
         builder.setProgress(0, 0, True)
     elif notification.progress is not None:

@@ -92,7 +92,10 @@ def build_transfer_notification(
     progress: TransferProgressSample | None = None,
     save_copied: int | None = None,
     save_total: int | None = None,
+    cancel_session_id: str | None = None,
 ) -> TransferNotification:
+    if state in _TERMINAL_STATES:
+        cancel_session_id = None
     display_name = _notification_filename(filename)
     direction = (
         "Invio"
@@ -125,6 +128,7 @@ def build_transfer_notification(
             text=progress_text or _phase_text(operation, state, status),
             progress=progress_value,
             indeterminate=progress_value is None,
+            cancel_session_id=cancel_session_id,
         )
 
     if state == "saving":
@@ -137,12 +141,14 @@ def build_transfer_notification(
             text=progress_text or _phase_text(operation, state, status),
             progress=progress_value,
             indeterminate=progress_value is None,
+            cancel_session_id=cancel_session_id,
         )
 
     return TransferNotification(
         title=title,
         text=_phase_text(operation, state, status),
         indeterminate=state in _INDETERMINATE_STATES,
+        cancel_session_id=cancel_session_id,
     )
 
 
@@ -531,6 +537,11 @@ class TransferServiceRuntime:
                 progress=self._notification_progress,
                 save_copied=self._notification_save_copied,
                 save_total=self._notification_save_total,
+                cancel_session_id=(
+                    self.request.session_id
+                    if self.request is not None
+                    else None
+                ),
             )
             if notification == self._last_notification:
                 return

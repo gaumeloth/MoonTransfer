@@ -164,6 +164,8 @@ class AndroidBuildConfigurationTests(unittest.TestCase):
         self.assertIn("stopSelf(startId)", service)
         self.assertIn("if (intent == null)", service)
         self.assertIn("return START_NOT_STICKY", service)
+        self.assertIn("ACTION_CANCEL_TRANSFER.equals(intent.getAction())", service)
+        self.assertIn("requestedSession.equals(activeSessionId)", service)
         self.assertIn('command.put("command", "cancel")', control)
         self.assertIn("getCanonicalFile()", control)
 
@@ -411,6 +413,22 @@ class AndroidNotificationSourceTests(unittest.TestCase):
             source,
         )
         self.assertNotIn("notification_class.Builder", source)
+
+    def test_cancel_action_is_explicit_immutable_and_session_bound(self) -> None:
+        source = (
+            ROOT
+            / "android"
+            / "app"
+            / "moontransfer_android"
+            / "android_runtime.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("_cancel_transfer_pending_intent", source)
+        self.assertIn("intent_class(context, service_class)", source)
+        self.assertIn("pending_intent_class.FLAG_IMMUTABLE", source)
+        self.assertIn("pending_intent_class.FLAG_CANCEL_CURRENT", source)
+        self.assertIn("intent.putExtra(TRANSFER_SESSION_EXTRA, session_id)", source)
+        self.assertIn('"Interrompi"', source)
 
 
 class AndroidDoctorTests(unittest.TestCase):

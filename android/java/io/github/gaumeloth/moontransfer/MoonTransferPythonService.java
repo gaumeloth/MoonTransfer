@@ -10,6 +10,10 @@ import org.kivy.android.PythonService;
 public class MoonTransferPythonService extends PythonService {
     private static final String TAG = "MoonTransferService";
     private static final long TIMEOUT_STOP_DELAY_MS = 2000L;
+    private static final String ACTION_CANCEL_TRANSFER =
+            "io.github.gaumeloth.moontransfer.action.CANCEL_TRANSFER";
+    private static final String EXTRA_SESSION_ID =
+            "io.github.gaumeloth.moontransfer.extra.SESSION_ID";
 
     private volatile String activeSessionId;
 
@@ -19,6 +23,23 @@ public class MoonTransferPythonService extends PythonService {
             Log.w(TAG, "Ignoring a sticky restart without a transfer session");
             stopSelf(startId);
             return START_NOT_STICKY;
+        }
+
+        if (ACTION_CANCEL_TRANSFER.equals(intent.getAction())) {
+            String requestedSession = intent.getStringExtra(EXTRA_SESSION_ID);
+            if (
+                    requestedSession != null
+                    && requestedSession.equals(activeSessionId)
+                    && TransferControl.requestCancel(
+                            getApplicationContext(),
+                            requestedSession
+                    )
+            ) {
+                Log.i(TAG, "Transfer cancellation requested from notification");
+            } else {
+                Log.w(TAG, "Ignoring cancellation for an inactive session");
+            }
+            return startType();
         }
 
         String sessionId = intent.getStringExtra("pythonServiceArgument");

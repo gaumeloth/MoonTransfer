@@ -388,9 +388,16 @@ class AndroidTransferServiceRuntimeTests(unittest.TestCase):
             self.assertTrue(
                 any(item.title == "Invio completato" for item in notifications)
             )
+            self.assertTrue(
+                any(
+                    item.cancel_session_id == request.session_id
+                    for item in notifications
+                )
+            )
             self.assertEqual(len(results), 1)
             self.assertEqual(results[0].title, "Invio completato")
             self.assertIn("example.bin", results[0].text)
+            self.assertIsNone(results[0].cancel_session_id)
 
     def test_service_consumes_cancel_command_for_blocked_sender(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -466,6 +473,30 @@ class AndroidTransferServiceRuntimeTests(unittest.TestCase):
 
 
 class AndroidTransferNotificationTests(unittest.TestCase):
+    def test_only_active_notification_accepts_a_valid_cancel_session(self) -> None:
+        session_id = "a" * 32
+        active = build_transfer_notification(
+            TransferServiceOperation.SEND,
+            "sending_file",
+            filename="example.bin",
+            cancel_session_id=session_id,
+        )
+        terminal = build_transfer_notification(
+            TransferServiceOperation.SEND,
+            "completed",
+            filename="example.bin",
+            cancel_session_id=session_id,
+        )
+
+        self.assertEqual(active.cancel_session_id, session_id)
+        self.assertIsNone(terminal.cancel_session_id)
+        with self.assertRaisesRegex(ValueError, "Sessione di annullamento"):
+            TransferNotification(
+                title="Invio",
+                text="In corso",
+                cancel_session_id="not-a-session",
+            )
+
     def test_active_progress_contains_useful_transfer_metrics(self) -> None:
         notification = build_transfer_notification(
             TransferServiceOperation.SEND,
