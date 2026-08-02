@@ -31,21 +31,12 @@ from moontransfer_android.transport import (
     CrocProcessResult,
     CrocProcessRunner,
     CrocProcessTimeout,
+    croc_failure_detail,
 )
 
 
 CONTROL_IDLE_TIMEOUT_SECONDS = 15 * 60.0
 REJECTION_TOKENS = ("declin", "reject", "refus", "cancel")
-NON_ERROR_OUTPUT_PREFIXES = (
-    "Code is:",
-    "On the other computer run:",
-    "(For Windows)",
-    "(For Linux/macOS)",
-    "Or receive in a browser:",
-    "https://getcroc.com/?code=",
-    "croc ",
-    "CROC_SECRET=",
-)
 
 
 class AndroidSendState(Enum):
@@ -270,23 +261,10 @@ class AndroidSendController:
     def _ensure_success(result: CrocProcessResult, action: str) -> None:
         if result.returncode == 0:
             return
-        detail = AndroidSendController._failure_detail(result)
+        detail = croc_failure_detail(result)
         raise RuntimeError(
             f"{action} non riuscito (exit code {result.returncode}): {detail}"
         )
-
-    @staticmethod
-    def _failure_detail(result: CrocProcessResult) -> str:
-        for lines in (
-            result.stdout_tail,
-            result.stderr_tail,
-            result.output_tail,
-        ):
-            for line in reversed(lines):
-                detail = line.strip()
-                if detail and not detail.startswith(NON_ERROR_OUTPUT_PREFIXES):
-                    return detail
-        return "croc non ha restituito dettagli sull'errore"
 
     def _set_state(self, state: AndroidSendState) -> None:
         self.state = state

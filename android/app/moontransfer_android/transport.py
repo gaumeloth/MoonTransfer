@@ -21,6 +21,16 @@ PROBE_TIMEOUT_SECONDS = 10.0
 TERMINATE_TIMEOUT_SECONDS = 2.0
 MAX_PROCESS_RECORD_BYTES = 64 * 1024
 PROCESS_READ_BYTES = 16 * 1024
+NON_ERROR_OUTPUT_PREFIXES = (
+    "Code is:",
+    "On the other computer run:",
+    "(For Windows)",
+    "(For Linux/macOS)",
+    "Or receive in a browser:",
+    "https://getcroc.com/?code=",
+    "croc ",
+    "CROC_SECRET=",
+)
 
 
 class CrocProbeError(RuntimeError):
@@ -55,16 +65,33 @@ class _ProcessRecord:
     text: str
 
 
+def croc_failure_detail(result: CrocProcessResult) -> str:
+    for lines in (
+        result.stdout_tail,
+        result.stderr_tail,
+        result.output_tail,
+    ):
+        for line in reversed(lines):
+            detail = line.strip()
+            if detail and not detail.startswith(NON_ERROR_OUTPUT_PREFIXES):
+                return detail
+    return "croc non ha restituito dettagli sull'errore"
+
+
 def android_native_library_dir() -> Path:
     try:
-        from jnius import autoclass
+        from moontransfer_android.android_runtime import (
+            AndroidRuntimeError,
+            android_context,
+        )
     except ImportError as error:
         raise CrocProbeError("Runtime Android non disponibile.") from error
 
-    activity = autoclass("org.kivy.android.PythonActivity").mActivity
-    if activity is None:
-        raise CrocProbeError("Activity Android non disponibile.")
-    return Path(str(activity.getApplicationInfo().nativeLibraryDir))
+    try:
+        context = android_context()
+    except AndroidRuntimeError as error:
+        raise CrocProbeError(str(error)) from error
+    return Path(str(context.getApplicationInfo().nativeLibraryDir))
 
 
 def resolve_croc_executable(native_library_dir: Path | None = None) -> Path:
@@ -143,6 +170,8 @@ class CrocProcessRunner:
         idle_timeout: float,
         cancel_requested: Callable[[], bool],
         on_line: Callable[[str], None] | None = None,
+        stdin_data: bytes | None = None,
+        process_guard: Callable[[], None] | None = None,
     ) -> CrocProcessResult:
         if idle_timeout <= 0:
             raise ValueError("Il timeout di inattività deve essere positivo.")
@@ -159,7 +188,11 @@ class CrocProcessRunner:
             try:
                 process = self.process_factory(
                     [str(self.executable), *args],
-                    stdin=subprocess.DEVNULL,
+                    stdin=(
+                        subprocess.PIPE
+                        if stdin_data is not None
+                        else subprocess.DEVNULL
+                    ),
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     cwd=str(workdir) if workdir else None,
@@ -232,8 +265,25 @@ class CrocProcessRunner:
         finished_streams = 0
         cancelled = False
         timed_out = False
+        guard_error: Exception | None = None
 
         try:
+            if stdin_data is not None:
+                if process.stdin is None:
+                    raise CrocProcessError(
+                        "Impossibile comunicare la decisione a croc."
+                    )
+                try:
+                    process.stdin.write(stdin_data)
+                    process.stdin.flush()
+                except (BrokenPipeError, OSError) as error:
+                    if process.poll() is None:
+                        raise CrocProcessError(
+                            "Impossibile comunicare la decisione a croc."
+                        ) from error
+                finally:
+                    process.stdin.close()
+
             while process.poll() is None or finished_streams < len(readers):
                 try:
                     item = output_queue.get(timeout=0.05)
@@ -251,6 +301,13 @@ class CrocProcessRunner:
                         stderr_tail.append(line)
                     if on_line:
                         on_line(line)
+
+                if process.poll() is None and process_guard is not None:
+                    try:
+                        process_guard()
+                    except Exception as error:
+                        guard_error = error
+                        _terminate_process(process)
 
                 if process.poll() is None and cancel_requested():
                     cancelled = True
@@ -273,6 +330,8 @@ class CrocProcessRunner:
 
         if cancelled or cancel_requested():
             raise OperationCancelled
+        if guard_error is not None:
+            raise guard_error
         if timed_out:
             raise CrocProcessTimeout(
                 "croc non ha prodotto attività entro il tempo previsto."

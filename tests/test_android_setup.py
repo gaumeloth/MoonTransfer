@@ -114,9 +114,27 @@ class AndroidBuildConfigurationTests(unittest.TestCase):
             for permission in self.app["android.permissions"].split(",")
         }
 
-        self.assertEqual(permissions, {"android.permission.INTERNET"})
+        self.assertEqual(
+            permissions,
+            {
+                "android.permission.INTERNET",
+                "android.permission.FOREGROUND_SERVICE",
+                "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
+                "android.permission.POST_NOTIFICATIONS",
+            },
+        )
         self.assertFalse(
-            any("STORAGE" in permission or "MANAGE_EXTERNAL" in permission for permission in permissions)
+            any(
+                "STORAGE" in permission or "MANAGE_EXTERNAL" in permission
+                for permission in permissions
+            )
+        )
+
+    def test_transfer_runs_in_a_data_sync_foreground_service(self) -> None:
+        self.assertEqual(
+            self.app["services"],
+            "Transfer:moontransfer_android/service.py:foreground:sticky:"
+            "foregroundServiceType=dataSync",
         )
 
     def test_android_application_id_matches_desktop_bundle_identifier(self) -> None:
@@ -150,6 +168,20 @@ class AndroidSourcePreparationTests(unittest.TestCase):
                 (prepared / "moontransfer_android" / "sender.py").is_file()
             )
             self.assertTrue(
+                (prepared / "moontransfer_android" / "receiver.py").is_file()
+            )
+            for filename in (
+                "android_runtime.py",
+                "service.py",
+                "service_client.py",
+                "service_protocol.py",
+                "transfer_service.py",
+            ):
+                self.assertTrue(
+                    (prepared / "moontransfer_android" / filename).is_file(),
+                    filename,
+                )
+            self.assertTrue(
                 (
                     prepared
                     / "moontransfer_android"
@@ -172,7 +204,9 @@ class AndroidSourcePreparationTests(unittest.TestCase):
             for source in prepared.rglob("*.py"):
                 self.assertNotIn("PySide6", source.read_text(encoding="utf-8"))
 
-    def test_preparation_uses_project_version_and_excludes_source_artifacts(self) -> None:
+    def test_preparation_uses_project_version_and_excludes_artifacts(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             destination = Path(tmp) / "source"
             prepared = prepare_android.prepare_android_source(
@@ -237,6 +271,116 @@ class AndroidSourcePreparationTests(unittest.TestCase):
                     root=ROOT,
                     destination=destination,
                 )
+
+
+class AndroidApplicationLifecycleTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        source = (
+            ROOT
+            / "android"
+            / "app"
+            / "moontransfer_android"
+            / "application.py"
+        ).read_text(encoding="utf-8")
+        cls.application = next(
+            node
+            for node in ast.parse(source).body
+            if isinstance(node, ast.ClassDef)
+            and node.name == "MoonTransferAndroidApp"
+        )
+
+    @classmethod
+    def method(cls, name: str) -> ast.FunctionDef:
+        return next(
+            node
+            for node in cls.application.body
+            if isinstance(node, ast.FunctionDef) and node.name == name
+        )
+
+    def test_service_release_has_an_explicit_control_refresh(self) -> None:
+        release = self.method("_release_service")
+        finish = self.method("_finish_service_release")
+        resume = self.method("on_resume")
+
+        scheduled_callbacks = {
+            ast.unparse(call.args[0])
+            for call in ast.walk(release)
+            if isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute)
+            and call.func.attr == "schedule_once"
+            and call.args
+        }
+        finish_calls = {
+            ast.unparse(call.func)
+            for call in ast.walk(finish)
+            if isinstance(call, ast.Call)
+        }
+        resume_calls = {
+            ast.unparse(call.func)
+            for call in ast.walk(resume)
+            if isinstance(call, ast.Call)
+        }
+
+        self.assertIn("self._finish_service_release", scheduled_callbacks)
+        self.assertIn("self._update_controls", finish_calls)
+        self.assertIn("self._update_controls", resume_calls)
+
+    def test_release_guard_only_blocks_starting_the_next_service(self) -> None:
+        controls_source = ast.unparse(self.method("_update_controls"))
+
+        self.assertIn(
+            "transfer_active = send_active or receive_active",
+            controls_source,
+        )
+        self.assertIn(
+            "service_start_blocked = transfer_active or service_releasing",
+            controls_source,
+        )
+
+    def test_unresponsive_service_is_stopped_cleaned_and_released(self) -> None:
+        poll_source = ast.unparse(self.method("_poll_transfer_service"))
+        recovery_source = ast.unparse(
+            self.method("_handle_unresponsive_service")
+        )
+
+        self.assertIn("self._service_heartbeat.timed_out(snapshot)", poll_source)
+        self.assertIn("client.stop()", recovery_source)
+        self.assertIn("self._release_service(client)", recovery_source)
+        self.assertIn("cleanup_staging_parent", recovery_source)
+
+
+class AndroidNotificationSourceTests(unittest.TestCase):
+    def test_notifications_have_distinct_ids_and_private_content(self) -> None:
+        source = (
+            ROOT
+            / "android"
+            / "app"
+            / "moontransfer_android"
+            / "android_runtime.py"
+        ).read_text(encoding="utf-8")
+        assignments = {
+            target.id: ast.literal_eval(statement.value)
+            for statement in ast.parse(source).body
+            if isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and isinstance((target := statement.targets[0]), ast.Name)
+            and target.id
+            in {"TRANSFER_SERVICE_ID", "TRANSFER_RESULT_NOTIFICATION_ID"}
+        }
+
+        self.assertNotEqual(
+            assignments["TRANSFER_SERVICE_ID"],
+            assignments["TRANSFER_RESULT_NOTIFICATION_ID"],
+        )
+        self.assertIn("setProgress", source)
+        self.assertIn("setPublicVersion", source)
+        self.assertIn("VISIBILITY_PRIVATE", source)
+        self.assertIn(
+            'autoclass("android.app.Notification$Builder")',
+            source,
+        )
+        self.assertNotIn("notification_class.Builder", source)
 
 
 class AndroidDoctorTests(unittest.TestCase):

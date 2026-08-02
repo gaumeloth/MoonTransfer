@@ -63,6 +63,27 @@ class _ParcelDescriptor:
         self.closed = True
 
 
+class _WritableParcelDescriptor:
+    def __init__(self, destination: Path) -> None:
+        self.fd = os.open(
+            destination,
+            os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+            0o600,
+        )
+        self.closed = False
+
+    def detachFd(self) -> int:
+        fd = self.fd
+        self.fd = -1
+        return fd
+
+    def close(self) -> None:
+        if self.fd >= 0:
+            os.close(self.fd)
+            self.fd = -1
+        self.closed = True
+
+
 class _Resolver:
     def __init__(
         self,
@@ -87,6 +108,20 @@ class _Resolver:
 
     def openFileDescriptor(self, *_args: object) -> _ParcelDescriptor:
         return _ParcelDescriptor(self.source)
+
+
+class _WritableResolver:
+    def __init__(self, destination: Path) -> None:
+        self.destination = destination
+        self.mode: str | None = None
+
+    def openFileDescriptor(
+        self,
+        _uri: object,
+        mode: str,
+    ) -> _WritableParcelDescriptor:
+        self.mode = mode
+        return _WritableParcelDescriptor(self.destination)
 
 
 class AndroidStorageTests(unittest.TestCase):
@@ -164,6 +199,46 @@ class AndroidStorageTests(unittest.TestCase):
                 )
 
             self.assertEqual(tuple(staging.iterdir()), ())
+
+    def test_save_file_writes_verified_content_to_saf_destination(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "verified.bin"
+            destination = root / "destination.bin"
+            source.write_bytes(b"payload" * 1000)
+            progress: list[tuple[int, int]] = []
+            resolver = _WritableResolver(destination)
+
+            copied = storage.save_file_to_uri(
+                source,
+                object(),
+                resolver=resolver,
+                on_progress=lambda current, total: progress.append(
+                    (current, total)
+                ),
+            )
+
+            self.assertEqual(copied, source.stat().st_size)
+            self.assertEqual(destination.read_bytes(), source.read_bytes())
+            self.assertEqual(progress[-1], (copied, copied))
+            self.assertEqual(resolver.mode, "rwt")
+
+    def test_save_file_can_be_cancelled_before_opening_destination(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "verified.bin"
+            destination = root / "destination.bin"
+            source.write_bytes(b"payload")
+
+            with self.assertRaises(OperationCancelled):
+                storage.save_file_to_uri(
+                    source,
+                    object(),
+                    resolver=_WritableResolver(destination),
+                    cancel_requested=lambda: True,
+                )
+
+            self.assertFalse(destination.exists())
 
 
 if __name__ == "__main__":

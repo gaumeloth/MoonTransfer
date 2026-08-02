@@ -20,7 +20,11 @@ fullscreen = 0
 
 # SAF will be used for user-selected files; broad storage permissions are
 # deliberately omitted.
-android.permissions = android.permission.INTERNET
+android.permissions = android.permission.INTERNET,
+    android.permission.FOREGROUND_SERVICE,
+    android.permission.FOREGROUND_SERVICE_DATA_SYNC,
+    android.permission.POST_NOTIFICATIONS
+services = Transfer:moontransfer_android/service.py:foreground:sticky:foregroundServiceType=dataSync
 android.api = 36
 android.minapi = 24
 android.ndk = 28c

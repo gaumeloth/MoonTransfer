@@ -222,6 +222,43 @@ class AndroidCrocProcessRunnerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertIn("5", result.output_tail)
 
+    def test_runner_writes_prompt_response_and_closes_stdin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runner = transport.CrocProcessRunner(Path(sys.executable))
+            result = runner.run(
+                [
+                    "-c",
+                    "import sys; print('answer=' + sys.stdin.readline().strip())",
+                ],
+                config_dir=root / "config",
+                secret="f" * 32,
+                idle_timeout=2,
+                cancel_requested=lambda: False,
+                stdin_data=b"y\n",
+            )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("answer=y", result.stdout_tail)
+
+    def test_runner_terminates_when_process_guard_rejects_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runner = transport.CrocProcessRunner(Path(sys.executable))
+            with self.assertRaisesRegex(ValueError, "size limit"):
+                runner.run(
+                    ["-c", "import time; time.sleep(30)"],
+                    config_dir=root / "config",
+                    secret="0" * 32,
+                    idle_timeout=2,
+                    cancel_requested=lambda: False,
+                    process_guard=lambda: (_ for _ in ()).throw(
+                        ValueError("size limit exceeded")
+                    ),
+                )
+
+        self.assertFalse(runner.running)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import errno
+import mimetypes
 import os
 import shutil
 import tempfile
@@ -10,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from moontransfer.cancellation import OperationCancelled
+from moontransfer.files import is_link_or_reparse
 from moontransfer.protocol import validate_filename
 
 
@@ -17,6 +20,7 @@ DISPLAY_NAME_COLUMN = "_display_name"
 SIZE_COLUMN = "_size"
 COPY_CHUNK_BYTES = 1024 * 1024
 PICK_FILE_REQUEST_CODE = 0x4D54
+SAVE_FILE_REQUEST_CODE = 0x4D55
 
 
 class AndroidStorageError(RuntimeError):
@@ -39,14 +43,17 @@ class StagedDocument:
 
 def android_content_resolver() -> Any:
     try:
-        from jnius import autoclass
+        from moontransfer_android.android_runtime import (
+            AndroidRuntimeError,
+            android_context,
+        )
     except ImportError as error:
         raise AndroidStorageError("Runtime Android non disponibile.") from error
 
-    activity = autoclass("org.kivy.android.PythonActivity").mActivity
-    if activity is None:
-        raise AndroidStorageError("Activity Android non disponibile.")
-    return activity.getContentResolver()
+    try:
+        return android_context().getContentResolver()
+    except AndroidRuntimeError as error:
+        raise AndroidStorageError(str(error)) from error
 
 
 def query_document_metadata(resolver: Any, uri: Any) -> DocumentMetadata:
@@ -181,6 +188,113 @@ def cleanup_staging_parent(staging_parent: Path) -> None:
             continue
 
 
+def save_file_to_uri(
+    source: Path,
+    uri: Any,
+    *,
+    resolver: Any | None = None,
+    cancel_requested: Callable[[], bool] | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
+) -> int:
+    content_resolver = resolver or android_content_resolver()
+    parcel_descriptor = None
+    detached_fd: int | None = None
+
+    try:
+        source_stat = source.lstat()
+        if is_link_or_reparse(source_stat) or not source.is_file():
+            raise AndroidStorageError(
+                "Il contenuto verificato non è un file regolare."
+            )
+        if cancel_requested and cancel_requested():
+            raise OperationCancelled
+
+        try:
+            parcel_descriptor = content_resolver.openFileDescriptor(uri, "rwt")
+        except Exception:
+            parcel_descriptor = None
+        if parcel_descriptor is None:
+            parcel_descriptor = content_resolver.openFileDescriptor(uri, "wt")
+        if parcel_descriptor is None:
+            raise AndroidStorageError(
+                "La destinazione selezionata non può essere aperta."
+            )
+        detached_fd = int(parcel_descriptor.detachFd())
+        parcel_descriptor.close()
+        parcel_descriptor = None
+
+        copied = 0
+        with ExitStack() as stack:
+            input_file = stack.enter_context(source.open("rb"))
+            initial = os.fstat(input_file.fileno())
+            output_file = stack.enter_context(
+                os.fdopen(detached_fd, "wb", closefd=True)
+            )
+            detached_fd = None
+            while True:
+                if cancel_requested and cancel_requested():
+                    raise OperationCancelled
+                chunk = input_file.read(COPY_CHUNK_BYTES)
+                if not chunk:
+                    break
+                output_file.write(chunk)
+                copied += len(chunk)
+                if on_progress:
+                    on_progress(copied, initial.st_size)
+
+            output_file.flush()
+            try:
+                os.fsync(output_file.fileno())
+            except OSError as error:
+                if error.errno not in {errno.EINVAL, errno.ENOTSUP, errno.EROFS}:
+                    raise
+            final = os.fstat(input_file.fileno())
+
+        current = source.lstat()
+        expected_identity = (
+            initial.st_dev,
+            initial.st_ino,
+            initial.st_size,
+            initial.st_mtime_ns,
+        )
+        if (
+            expected_identity
+            != (
+                final.st_dev,
+                final.st_ino,
+                final.st_size,
+                final.st_mtime_ns,
+            )
+            or expected_identity
+            != (
+                current.st_dev,
+                current.st_ino,
+                current.st_size,
+                current.st_mtime_ns,
+            )
+            or is_link_or_reparse(current)
+        ):
+            raise AndroidStorageError(
+                "Il file verificato è cambiato durante il salvataggio."
+            )
+        if copied != initial.st_size:
+            raise AndroidStorageError("Il salvataggio del file non è completo.")
+        if cancel_requested and cancel_requested():
+            raise OperationCancelled
+        return copied
+    except (AndroidStorageError, OperationCancelled):
+        raise
+    except Exception as error:
+        raise AndroidStorageError(
+            f"Impossibile salvare il file nella destinazione scelta: {error}"
+        ) from error
+    finally:
+        if detached_fd is not None:
+            os.close(detached_fd)
+        if parcel_descriptor is not None:
+            parcel_descriptor.close()
+
+
 class AndroidFilePicker:
     def __init__(self) -> None:
         try:
@@ -257,6 +371,102 @@ class AndroidFilePicker:
             if uri is None:
                 raise AndroidStorageError(
                     "Android non ha restituito il file selezionato."
+                )
+            if on_selected:
+                on_selected(uri)
+        except Exception as error:
+            if on_error:
+                on_error(error)
+
+    def _clear_callbacks(self) -> None:
+        self._on_selected = None
+        self._on_cancelled = None
+        self._on_error = None
+
+
+class AndroidSavePicker:
+    def __init__(self) -> None:
+        try:
+            from android import activity as activity_api
+            from jnius import autoclass
+        except ImportError as error:
+            raise AndroidStorageError("Runtime Android non disponibile.") from error
+
+        self._activity_api = activity_api
+        self._activity = autoclass(
+            "org.kivy.android.PythonActivity"
+        ).mActivity
+        self._intent_class = autoclass("android.content.Intent")
+        self._activity_class = autoclass("android.app.Activity")
+        self._on_selected: Callable[[Any], None] | None = None
+        self._on_cancelled: Callable[[], None] | None = None
+        self._on_error: Callable[[Exception], None] | None = None
+        self._activity_api.bind(on_activity_result=self._on_activity_result)
+
+    @property
+    def pending(self) -> bool:
+        return self._on_selected is not None
+
+    def open(
+        self,
+        filename: str,
+        *,
+        on_selected: Callable[[Any], None],
+        on_cancelled: Callable[[], None],
+        on_error: Callable[[Exception], None],
+    ) -> None:
+        if self.pending:
+            raise AndroidStorageError("La scelta della destinazione è già in corso.")
+        if self._activity is None:
+            raise AndroidStorageError("Activity Android non disponibile.")
+
+        portable_filename = validate_filename(filename)
+        mime_type = mimetypes.guess_type(portable_filename)[0]
+        self._on_selected = on_selected
+        self._on_cancelled = on_cancelled
+        self._on_error = on_error
+        try:
+            intent = self._intent_class(self._intent_class.ACTION_CREATE_DOCUMENT)
+            intent.addCategory(self._intent_class.CATEGORY_OPENABLE)
+            intent.setType(mime_type or "application/octet-stream")
+            intent.putExtra(self._intent_class.EXTRA_TITLE, portable_filename)
+            intent.addFlags(
+                self._intent_class.FLAG_GRANT_READ_URI_PERMISSION
+                | self._intent_class.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+            self._activity.startActivityForResult(intent, SAVE_FILE_REQUEST_CODE)
+        except Exception:
+            self._clear_callbacks()
+            raise
+
+    def close(self) -> None:
+        self._clear_callbacks()
+        self._activity_api.unbind(on_activity_result=self._on_activity_result)
+
+    def _on_activity_result(
+        self,
+        request_code: int,
+        result_code: int,
+        intent: Any,
+    ) -> None:
+        if request_code != SAVE_FILE_REQUEST_CODE or not self.pending:
+            return
+
+        on_selected = self._on_selected
+        on_cancelled = self._on_cancelled
+        on_error = self._on_error
+        self._clear_callbacks()
+
+        if result_code != self._activity_class.RESULT_OK or intent is None:
+            if on_cancelled:
+                on_cancelled()
+            return
+
+        try:
+            uri = intent.getData()
+            if uri is None:
+                raise AndroidStorageError(
+                    "Android non ha restituito la destinazione scelta."
                 )
             if on_selected:
                 on_selected(uri)
