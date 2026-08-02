@@ -1326,11 +1326,15 @@ explicit allowlist of Qt-independent MoonTransfer modules, so the protocol is
 shared without adding Kivy to desktop runtime dependencies.
 
 The current prototype packages a verified ARM64 `croc` executable and can send
-one SAF-selected file from Android to the desktop application using the shared
-protocol-v2 manifest. Receiving on Android, multiple files, folders, background
-services, and release packaging are not implemented. Setup, diagnostics, build
-commands, design details, and the manual compatibility test are documented in
-[android/README.md](android/README.md).
+or receive one file between Android and the desktop application using the
+shared protocol-v2 manifest and Android's Storage Access Framework. A `dataSync`
+foreground service owns active transfers, so switching applications does not
+abort `croc`; a private state-aware notification reports phase and available
+progress metrics, then leaves a dismissible result. Interrupted sessions still
+cannot be resumed. Multiple files, folders, and release packaging are not
+implemented.
+Setup, diagnostics, build commands, design details, and manual compatibility
+tests are documented in [android/README.md](android/README.md).
 
 ### Structure
 
@@ -1344,9 +1348,15 @@ MoonTransfer/
 │  ├─ app/
 │  │  └─ moontransfer_android/
 │  │     ├─ __init__.py
+│  │     ├─ android_runtime.py
 │  │     ├─ application.py
+│  │     ├─ receiver.py
 │  │     ├─ sender.py
+│  │     ├─ service.py
+│  │     ├─ service_client.py
+│  │     ├─ service_protocol.py
 │  │     ├─ storage.py
+│  │     ├─ transfer_service.py
 │  │     └─ transport.py
 │  ├─ recipes/
 │  │  ├─ croc/
@@ -1392,7 +1402,9 @@ MoonTransfer/
 │  └─ build.sh
 ├─ tests/
 │  ├─ test_android_setup.py
+│  ├─ test_android_receiver.py
 │  ├─ test_android_sender.py
+│  ├─ test_android_service.py
 │  ├─ test_android_storage.py
 │  ├─ test_android_transport.py
 │  ├─ test_app.py
