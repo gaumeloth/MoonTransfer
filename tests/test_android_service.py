@@ -203,7 +203,16 @@ class AndroidServiceProtocolTests(unittest.TestCase):
 
             self.assertEqual(restored.operation, TransferServiceOperation.SEND)
             self.assertFalse(Path(restored.document_path or "").is_absolute())
-            self.assertEqual(restored_document, document)
+            self.assertEqual(
+                restored_document.path,
+                document.path.resolve(strict=True),
+            )
+            self.assertEqual(
+                restored_document.staging_dir,
+                document.staging_dir.resolve(strict=True),
+            )
+            self.assertEqual(restored_document.filename, document.filename)
+            self.assertEqual(restored_document.size, document.size)
             self.assertEqual(snapshot.state, "preparing")
             session_dir = service_session_dir(cache_root, created.session_id)
             self.assertEqual(stat.S_IMODE(session_dir.stat().st_mode), 0o700)

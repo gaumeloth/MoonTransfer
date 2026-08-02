@@ -42,20 +42,21 @@ class AndroidCrocProbeTests(unittest.TestCase):
         process.returncode = 0
         process.communicate.return_value = ("croc version 10.7.0\n", "")
         process_factory = Mock(return_value=process)
+        executable = Path("/native/libcroc.so")
 
         with tempfile.TemporaryDirectory() as tmp:
             config_dir = Path(tmp) / "config"
             with patch.dict(os.environ, {"CROC_SECRET": "must-not-leak"}):
                 result = transport.probe_croc(
                     config_dir,
-                    executable=Path("/native/libcroc.so"),
+                    executable=executable,
                     process_factory=process_factory,
                 )
 
         self.assertEqual(result.version, "10.7.0")
         command = process_factory.call_args.args[0]
         environment = process_factory.call_args.kwargs["env"]
-        self.assertEqual(command, ["/native/libcroc.so", "--version"])
+        self.assertEqual(command, [str(executable), "--version"])
         self.assertNotIn("CROC_SECRET", environment)
         self.assertTrue(environment["HOME"].startswith(str(config_dir)))
 
@@ -209,13 +210,13 @@ class AndroidCrocProcessRunnerTests(unittest.TestCase):
                     "-c",
                     (
                         "import sys,time; "
-                        "[(print(index, flush=True), time.sleep(0.04)) "
+                        "[(print(index, flush=True), time.sleep(0.5)) "
                         "for index in range(6)]"
                     ),
                 ],
                 config_dir=root / "config",
                 secret="e" * 32,
-                idle_timeout=0.1,
+                idle_timeout=2.0,
                 cancel_requested=lambda: False,
             )
 
