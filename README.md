@@ -1330,9 +1330,10 @@ or receive one file between Android and the desktop application using the
 shared protocol-v2 manifest and Android's Storage Access Framework. A `dataSync`
 foreground service owns active transfers, so switching applications does not
 abort `croc`; a private state-aware notification reports phase and available
-progress metrics, then leaves a dismissible result. Interrupted sessions still
-cannot be resumed. Multiple files, folders, and release packaging are not
-implemented.
+progress metrics and provides a session-bound stop action, then leaves a
+dismissible result. The service handles Android 15 `dataSync` timeouts and
+invalid sticky restarts, but interrupted sessions still cannot be resumed.
+Multiple files, folders, and release packaging are not implemented.
 Setup, diagnostics, build commands, design details, and manual compatibility
 tests are documented in [android/README.md](android/README.md).
 

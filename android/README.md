@@ -29,7 +29,8 @@ The prototype currently provides:
   transfers running while the user switches to another application;
 - a private, state-aware foreground notification with transfer phase, filename,
   byte progress, current speed and estimated remaining time when available,
-  followed by a dismissible completion, rejection or failure notification;
+  a session-bound **Interrompi** (Stop) action, and a dismissible completion,
+  rejection or failure notification;
 - transfer progress, cancellation, inactivity and decision timeouts, integrity
   verification and cleanup of private temporary files.
 
@@ -179,9 +180,13 @@ preparing metadata, connecting or verifying, no bar while it is waiting for a
 decision, and a determinate bar during payload transfer and final SAF saving.
 When `croc` supplies enough data, its compact status also shows transferred and
 total bytes, current speed and estimated remaining time. Tapping the notification
-opens MoonTransfer. The foreground notification is removed with the service;
-completion, rejection and failure leave a separate dismissible result
-notification. User-requested cancellation does not leave a result notification.
+opens MoonTransfer; **Interrompi** requests cancellation without reopening the
+activity. The action is available only on the private notification for the
+active session. The generic lock-screen version and terminal result
+notifications do not expose it. The foreground notification is removed with
+the service; completion, rejection and failure leave a separate dismissible
+result notification. User-requested cancellation does not leave a result
+notification.
 
 ## Android transfer design
 
@@ -208,13 +213,28 @@ an active staging directory. A periodically refreshed heartbeat lets the
 activity distinguish a live background operation from state left behind by a
 terminated service process.
 
+The repository-owned service class rejects an Android sticky restart that does
+not identify a valid session. On Android 15 and later it also handles the
+platform `dataSync` timeout by requesting cancellation, leaving foreground mode
+and stopping the service within the required grace period. Android limits this
+service type to six hours of background execution in each rolling 24-hour
+period, shared by the application's `dataSync` services; bringing the app to the
+foreground resets that allowance. If Android refuses a new foreground-service
+start, MoonTransfer reports that the app must remain visible and the user must
+retry. See the official [foreground-service timeout
+documentation](https://developer.android.com/develop/background-work/services/fgs/timeout).
+
 The service derives notification content from the same in-memory state that it
 writes to the private session snapshot. Progress-driven notification updates
 are limited to approximately one per second to avoid unnecessary system work;
 state changes and terminal results are delivered immediately. The detailed
 notification is marked private and has a generic public lock-screen version.
 Neither notification includes transfer secrets, SHA-256 values, filesystem
-paths, content URIs, relay addresses or raw process errors.
+paths, content URIs, relay addresses or raw process errors. The **Interrompi**
+action uses an explicit immutable `PendingIntent` containing only the random
+session identifier. The service accepts it only when that identifier matches
+the active session, then writes the same restricted, app-private cancellation
+command used by the GUI.
 
 The sender then reuses the desktop protocol instead of sending a raw `croc`
 payload:
@@ -301,6 +321,9 @@ the application package.
   applications, or its task is removed from the recent-apps screen, but
   force-stopping the app, restarting the device, or a service/process failure
   still ends the transfer;
+- Android 15 and later impose a shared six-hour `dataSync` foreground-service
+  allowance while the app is in the background; reaching it cancels the active
+  transfer, and starting another one may be refused until the allowance resets;
 - interrupted transfers cannot yet be resumed from a partial payload;
 - only a debug `arm64-v8a` APK is produced;
 - transfer status still depends partly on human-readable `croc` output because

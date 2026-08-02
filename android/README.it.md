@@ -30,7 +30,8 @@ Il prototipo attualmente fornisce:
   mantiene il trasferimento mentre l'utente passa a un'altra applicazione;
 - una notifica foreground privata e legata allo stato, con fase, nome del file,
   byte trasferiti, velocità attuale e tempo stimato rimanente quando disponibili,
-  seguita da una notifica dismissibile di completamento, rifiuto o errore;
+  un'azione **Interrompi** legata alla sessione e una notifica dismissibile di
+  completamento, rifiuto o errore;
 - avanzamento, annullamento, timeout di inattività e decisione, verifica
   dell'integrità e pulizia dei file temporanei privati.
 
@@ -184,10 +185,13 @@ i metadati, si connette o verifica, nessuna barra durante l'attesa di una
 decisione e una barra determinata durante il trasferimento del payload e il
 salvataggio SAF finale. Quando `croc` fornisce dati sufficienti, lo stato
 compatto mostra anche byte trasferiti e totali, velocità attuale e tempo stimato
-rimanente. Toccando la notifica si apre MoonTransfer. La notifica foreground
-viene rimossa insieme al servizio; completamento, rifiuto ed errore lasciano una
-notifica di risultato separata e dismissibile. L'annullamento richiesto
-dall'utente non lascia una notifica di risultato.
+rimanente. Toccando la notifica si apre MoonTransfer; **Interrompi** richiede
+l'annullamento senza riaprire l'Activity. L'azione è disponibile solamente nella
+notifica privata della sessione attiva. La versione generica per la schermata
+bloccata e le notifiche di risultato terminali non la espongono. La notifica
+foreground viene rimossa insieme al servizio; completamento, rifiuto ed errore
+lasciano una notifica di risultato separata e dismissibile. L'annullamento
+richiesto dall'utente non lascia una notifica di risultato.
 
 ## Progettazione del trasferimento Android
 
@@ -216,6 +220,18 @@ staging attiva. Un heartbeat aggiornato periodicamente permette all'Activity di
 distinguere un'operazione in background ancora viva dallo stato lasciato da un
 processo del servizio terminato.
 
+La classe del servizio mantenuta nel repository rifiuta un riavvio sticky di
+Android privo di un identificatore di sessione valido. Su Android 15 e versioni
+successive gestisce inoltre il timeout di piattaforma per `dataSync` richiedendo
+l'annullamento, uscendo dalla modalità foreground e arrestando il servizio entro
+il breve periodo concesso. Android limita questo tipo di servizio a sei ore
+complessive in background ogni 24 ore, condivise tra i servizi `dataSync`
+dell'applicazione; riportare l'app in primo piano azzera il tempo conteggiato. Se
+Android rifiuta un nuovo avvio del foreground service, MoonTransfer indica di
+mantenere visibile l'app e riprovare. Consulta la [documentazione ufficiale sui
+timeout dei foreground
+service](https://developer.android.com/develop/background-work/services/fgs/timeout).
+
 Il servizio deriva il contenuto della notifica dallo stesso stato in memoria che
 scrive nello snapshot privato della sessione. Gli aggiornamenti della notifica
 guidati dall'avanzamento sono limitati a circa uno al secondo per evitare lavoro
@@ -223,7 +239,11 @@ di sistema inutile; i cambi di stato e i risultati terminali vengono comunicati
 subito. La notifica dettagliata è marcata come privata e dispone di una versione
 pubblica generica per la schermata bloccata. Nessuna delle due notifiche include
 segreti di trasferimento, valori SHA-256, percorsi del filesystem, content URI,
-indirizzi relay o errori grezzi dei processi.
+indirizzi relay o errori grezzi dei processi. L'azione **Interrompi** usa un
+`PendingIntent` esplicito e immutabile che contiene solamente l'identificatore
+casuale della sessione. Il servizio lo accetta solo se corrisponde alla sessione
+attiva, quindi scrive lo stesso comando di annullamento privato dell'app e con
+permessi restrittivi usato dalla GUI.
 
 Il mittente riutilizza quindi il protocollo desktop invece di inviare un payload
 `croc` grezzo:
@@ -320,6 +340,10 @@ viene inclusa anche la licenza MIT upstream.
   passa a un'altra applicazione o il task viene rimosso dalla schermata delle
   app recenti, ma la terminazione forzata, il riavvio del dispositivo o un
   errore del servizio/processo terminano comunque il trasferimento;
+- Android 15 e versioni successive impongono un limite condiviso di sei ore per
+  i foreground service `dataSync` mentre l'app è in background; raggiungerlo
+  annulla il trasferimento attivo e un nuovo avvio può essere rifiutato finché
+  il tempo disponibile non viene ripristinato;
 - i trasferimenti interrotti non possono ancora riprendere da un payload
   parziale;
 - viene prodotto solamente un APK di debug `arm64-v8a`;

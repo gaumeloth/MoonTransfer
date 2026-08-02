@@ -1385,9 +1385,11 @@ o ricevere un file tra Android e l'applicazione desktop usando il manifest
 condiviso del protocollo v2 e lo Storage Access Framework di Android. Un
 foreground service `dataSync` possiede i trasferimenti attivi, quindi passare a
 un'altra applicazione non interrompe `croc`; una notifica privata legata allo
-stato mostra fase e metriche di avanzamento disponibili, quindi lascia un
-risultato dismissibile. Le sessioni interrotte non possono ancora essere
-riprese. File multipli, cartelle e packaging release non sono implementati.
+stato mostra fase e metriche di avanzamento disponibili e fornisce un'azione di
+arresto legata alla sessione, quindi lascia un risultato dismissibile. Il
+servizio gestisce i timeout `dataSync` di Android 15 e i riavvii sticky non
+validi, ma le sessioni interrotte non possono ancora essere riprese. File
+multipli, cartelle e packaging release non sono implementati.
 Configurazione, diagnostica, comandi di build, dettagli
 progettuali e test manuali di compatibilità sono documentati in
 [android/README.it.md](android/README.it.md).
