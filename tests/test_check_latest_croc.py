@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import io
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 from tools import check_latest_croc
 
@@ -92,6 +95,88 @@ class LatestCrocCheckTests(unittest.TestCase):
         self.assertEqual(environment["HTTPS_PROXY"], "http://proxy.example")
         self.assertEqual(environment["LANG"], "it_IT.UTF-8")
         self.assertEqual(environment["HOME"], str(config_dir / "home"))
+
+    def test_transfer_pairs_include_same_and_mixed_versions(self) -> None:
+        latest = check_latest_croc.CrocBinary(
+            version="11.0.1",
+            path=Path("/tmp/croc-11"),
+        )
+        compatible = check_latest_croc.CrocBinary(
+            version="10.7.0",
+            path=Path("/tmp/croc-10"),
+        )
+
+        pairs = check_latest_croc.transfer_pairs(latest, compatible)
+
+        self.assertEqual(
+            [(sender.version, receiver.version) for sender, receiver in pairs],
+            [
+                ("11.0.1", "11.0.1"),
+                ("10.7.0", "11.0.1"),
+                ("11.0.1", "10.7.0"),
+            ],
+        )
+
+    def test_transfer_pairs_skip_duplicate_compatibility_version(self) -> None:
+        latest = check_latest_croc.CrocBinary(
+            version="11.0.1",
+            path=Path("/tmp/croc-11"),
+        )
+        same_version = check_latest_croc.CrocBinary(
+            version="11.0.1",
+            path=Path("/tmp/other-croc-11"),
+        )
+
+        self.assertEqual(
+            check_latest_croc.transfer_pairs(latest, same_version),
+            ((latest, latest),),
+        )
+
+    def test_compat_version_requires_transfer(self) -> None:
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            check_latest_croc.parse_args(["--compat-version", "10.7.0"])
+
+    @mock.patch("tools.check_latest_croc.run_transfer_test")
+    def test_transfer_matrix_skips_prompts_after_handshake_failure(
+        self,
+        run_transfer_test: mock.Mock,
+    ) -> None:
+        latest = check_latest_croc.CrocBinary("11.0.1", Path("/tmp/croc-11"))
+        compatible = check_latest_croc.CrocBinary("10.7.0", Path("/tmp/croc-10"))
+
+        def fail_mixed_sender(sender, **kwargs):
+            receiver = kwargs["receiver_binary"]
+            if sender.version == "10.7.0" and receiver.version == "11.0.1":
+                raise RuntimeError("incompatible protocol")
+
+        run_transfer_test.side_effect = fail_mixed_sender
+
+        with redirect_stdout(io.StringIO()), self.assertRaisesRegex(
+            RuntimeError,
+            "failed in 1 case",
+        ):
+            check_latest_croc.run_transfer_matrix(latest, compatible=compatible)
+
+        calls_by_pair = [
+            (
+                call.args[0].version,
+                call.kwargs["receiver_binary"].version,
+                call.kwargs.get("prompt_response"),
+            )
+            for call in run_transfer_test.call_args_list
+        ]
+        self.assertEqual(
+            calls_by_pair,
+            [
+                ("11.0.1", "11.0.1", None),
+                ("11.0.1", "11.0.1", True),
+                ("11.0.1", "11.0.1", False),
+                ("10.7.0", "11.0.1", None),
+                ("11.0.1", "10.7.0", None),
+                ("11.0.1", "10.7.0", True),
+                ("11.0.1", "10.7.0", False),
+            ],
+        )
 
 
 if __name__ == "__main__":
