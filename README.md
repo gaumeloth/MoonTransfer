@@ -54,6 +54,45 @@ On Linux and Windows, the archive contains a portable `MoonTransfer` folder:
 keep the entire folder, not just its executable. On macOS, it contains a
 `MoonTransfer.app` application bundle, which must likewise be kept intact.
 
+## Transport compatibility
+
+> [!IMPORTANT]
+> Builds produced from the current source bundle `croc 11.0.1`. They cannot
+> transfer data to or from MoonTransfer builds based on `croc 10.x`. Update
+> MoonTransfer on both devices before starting a transfer; using the same
+> MoonTransfer release on both sides is the safest choice.
+
+The compatibility boundary is:
+
+| MoonTransfer build | Bundled `croc` | Compatible with the current source |
+| --- | --- | --- |
+| `v0.1.0-alpha.1` | `10.4.13` | No |
+| `v0.1.0-alpha.2` | `10.7.0` | No |
+| Current source and the next release | `11.0.1` | Yes |
+
+The existing alpha archives remain useful only with other pre-`croc 11`
+builds. Until a new MoonTransfer release is published, a build made from the
+current source must not be mixed with the currently published alpha archives.
+This is a transport-protocol incompatibility, not an operating-system
+incompatibility: current desktop and Android builds remain compatible when
+they are built from the same revision.
+
+`croc 11` introduced version 2 of its PAKE wire protocol and deliberately
+rejects peers using the earlier handshake. The new handshake explicitly binds
+the key exchange to the two peers, their roles, the session, room and
+transcript; it also strengthens key derivation and salt handling and adds
+mutual key confirmation. Falling back silently would remove those protections,
+so MoonTransfer does not attempt it. See the official [`croc 11.0.0` release
+notes](https://github.com/schollz/croc/releases/tag/v11.0.0) and the upstream
+[security upgrade](https://github.com/schollz/croc/pull/1212).
+
+With a mixed old/new pair, the connection fails while securing the channel,
+before MoonTransfer can exchange its metadata manifest or start the main
+payload. No selected payload is downloaded or published. Depending on which
+side reports the error, the technical details can mention an unsupported PAKE
+protocol version and ask to upgrade both clients, or show the more general
+`could not secure channel` message.
+
 ## Quick guide
 
 To use the pre-built alpha, follow these steps in order:
@@ -1232,6 +1271,21 @@ and a Unicode filename, then verify the received content. The rejected session
 checks that no destination content is created. These checks require Internet
 access and a reachable `croc` relay, so they are intentionally not part of the
 default check.
+
+To compare the latest release with an older `croc` version in both transfer
+directions, add `--compat-version`:
+
+```sh
+uv run --frozen python tools/check_latest_croc.py --force --transfer \
+  --compat-version 10.7.0
+```
+
+This runs the normal latest-to-latest checks first, then tests the older sender
+against the latest receiver and the latest sender against the older receiver.
+The command exits with a non-zero status if any pair fails. For `croc 11.x`
+against `10.x`, that failure is the expected result of the intentional PAKE
+protocol break described in [Transport compatibility](#transport-compatibility),
+not evidence of a MoonTransfer regression.
 
 If the check passes for a new release, update `[tool.moontransfer.croc]` in
 `pyproject.toml` with the new version and official hashes, then run the normal
