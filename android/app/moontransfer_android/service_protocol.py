@@ -34,6 +34,8 @@ RUNTIME_DIRECTORY_NAME = "runtime"
 MAX_SERVICE_JSON_BYTES = 128 * 1024
 MAX_DESTINATION_URI_CHARS = 8192
 MIN_PROGRESS_WRITE_INTERVAL_SECONDS = 0.2
+ATOMIC_REPLACE_RETRY_SECONDS = 0.01
+ATOMIC_REPLACE_TIMEOUT_SECONDS = 1.0
 SESSION_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
 
@@ -659,8 +661,29 @@ def _write_json_atomic(path: Path, data: dict[str, Any]) -> None:
             stream.write(serialized)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        _replace_file_atomic(temporary, path)
     finally:
         if descriptor >= 0:
             os.close(descriptor)
         temporary.unlink(missing_ok=True)
+
+
+def _replace_file_atomic(
+    source: Path,
+    destination: Path,
+    *,
+    windows: bool | None = None,
+) -> None:
+    if windows is None:
+        windows = os.name == "nt"
+    deadline = time.monotonic() + ATOMIC_REPLACE_TIMEOUT_SECONDS
+    while True:
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError:
+            # Windows readers do not necessarily share delete access, so a
+            # concurrent JSON read can briefly block replacement of the file.
+            if not windows or time.monotonic() >= deadline:
+                raise
+            time.sleep(ATOMIC_REPLACE_RETRY_SECONDS)
