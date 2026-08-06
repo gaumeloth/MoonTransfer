@@ -42,10 +42,13 @@ MoonTransfer è in fase iniziale. Il flusso principale è già funzionante:
 - download automatico del binario `croc` durante la build;
 - versione `croc` fissata e verifica SHA-256 per le piattaforme supportate;
 - bundle finale con `croc` incluso;
+- identità della build incorporata con versione completa di MoonTransfer,
+  commit sorgente, versione di `croc` inclusa e versione del protocollo di
+  MoonTransfer;
 - artefatti `onedir` automatizzati e testabili per Linux x86_64, Windows
   x86_64, macOS Intel e macOS Apple Silicon.
 
-La prima alpha pubblica viene distribuita dalla
+L'alpha pubblica attuale, `v0.1.0-alpha.3`, viene distribuita dalla
 [pagina GitHub Releases](https://github.com/gaumeloth/MoonTransfer/releases)
 come archivi `onedir` pre-buildati. Le build non sono firmate né notarizzate e
 sono destinate ai primi test, non all'uso in produzione. Non sono ancora
@@ -55,6 +58,13 @@ Su Linux e Windows l'archivio contiene una cartella portabile `MoonTransfer`: va
 mantenuta interamente, non soltanto il suo eseguibile. Su macOS contiene invece
 il bundle applicazione `MoonTransfer.app`, che deve essere mantenuto integro
 allo stesso modo.
+
+Il titolo della finestra mostra la versione completa della build. Il pulsante
+informativo nell'angolo in basso a destra apre un riepilogo diagnostico
+copiabile con versione, commit, `croc` incluso, protocollo, runtime Python e
+piattaforma. Non contiene intenzionalmente codici di trasferimento o percorsi
+locali. Includi questo riepilogo quando segnali un problema specifico di una
+build.
 
 ## Compatibilità del trasporto
 
@@ -71,15 +81,13 @@ Il confine di compatibilità è il seguente:
 | --- | --- | --- |
 | `v0.1.0-alpha.1` | `10.4.13` | No |
 | `v0.1.0-alpha.2` | `10.7.0` | No |
-| Sorgente attuale e prossima release | `11.0.1` | Sì |
+| `v0.1.0-alpha.3` e sorgente attuale | `11.0.1` | Sì |
 
-Gli archivi alpha già pubblicati restano utilizzabili soltanto con altre build
-precedenti a `croc 11`. Finché non verrà pubblicata una nuova release di
-MoonTransfer, una build ottenuta dal sorgente attuale non deve essere usata
-assieme agli archivi alpha attualmente pubblicati. Si tratta di
-un'incompatibilità del protocollo di trasporto, non del sistema operativo: le
-build desktop e Android attuali restano compatibili quando vengono create
-dalla stessa revisione.
+Gli archivi `alpha.1` e `alpha.2` restano utilizzabili soltanto con altre build
+precedenti a `croc 11`. Usa `alpha.3` o una build successiva su entrambi i
+dispositivi. Si tratta di un'incompatibilità del protocollo di trasporto, non
+del sistema operativo: le build desktop e Android attuali restano compatibili
+quando usano `croc 11` e la stessa versione del protocollo MoonTransfer.
 
 `croc 11` ha introdotto la versione 2 del proprio protocollo PAKE sul canale e
 rifiuta deliberatamente peer che usano l'handshake precedente. Il nuovo
@@ -117,10 +125,10 @@ Quando usi un archivio pre-buildato non devi installare Python, `uv` o `croc`.
 I file delle release hanno nomi come:
 
 ```text
-MoonTransfer-0.1.0-alpha.1-linux-x86_64.tar.gz
-MoonTransfer-0.1.0-alpha.1-windows-x86_64.zip
-MoonTransfer-0.1.0-alpha.1-macos-x86_64.tar.gz
-MoonTransfer-0.1.0-alpha.1-macos-arm64.tar.gz
+MoonTransfer-0.1.0-alpha.3-linux-x86_64.tar.gz
+MoonTransfer-0.1.0-alpha.3-windows-x86_64.zip
+MoonTransfer-0.1.0-alpha.3-macos-x86_64.tar.gz
+MoonTransfer-0.1.0-alpha.3-macos-arm64.tar.gz
 ```
 
 Il numero di versione potrebbe essere più recente rispetto all'esempio. Scarica
@@ -558,7 +566,12 @@ uv run --frozen --dev python tools/build.py
 ```
 
 `tools/build.py` è l'orchestratore della build: esegue `tools/fetch_croc.py` e
-poi PyInstaller usando `MoonTransfer.spec`.
+poi PyInstaller usando `MoonTransfer.spec`. Prima del packaging scrive il file
+ignorato `build/generated/build-info.json`. Una build locale riceve l'identità
+`0.1.0-dev.<commit>`; una build eseguita su un checkout pulito corrispondente a
+un tag di pre-release esatto riceve la versione del tag. L'automazione di
+release passa versione e commit in modo esplicito, così il nome dell'archivio e
+la versione mostrata dall'applicazione non possono divergere.
 
 L'icona dell'applicazione ha un unico sorgente PNG versionato. Qt carica
 direttamente quel PNG durante l'esecuzione. Su Windows e macOS, PyInstaller usa
@@ -774,15 +787,18 @@ usate da `croc`.
 MoonTransfer è in una fase di sviluppo iniziale attiva. Offre già un flusso
 grafico di invio/ricezione, include nella build un binario `croc` fissato e
 verificato tramite checksum, contiene test unitari per la logica non-GUI e
-pubblica archivi alpha nativi pre-buildati per le piattaforme principali.
+pubblica archivi alpha nativi pre-buildati per le piattaforme principali. La
+linea pubblica attuale è `v0.1.0-alpha.3`. Android è un target di debug a file
+singolo funzionante ma sperimentale, non una release supportata per l'utente
+finale.
 
 Possibili miglioramenti futuri, in ordine indicativo:
 
-- raccogliere feedback sulla prima alpha e continuare a validare gli artefatti
+- raccogliere feedback su `alpha.3` e continuare a validare gli artefatti
   `onedir` automatizzati sui rispettivi sistemi;
-- validare il target Android sperimentale basato su Kivy, inclusi
-  l'integrazione con lo Storage Access Framework, l'esecuzione in background e
-  il packaging di `croc`, prima di considerare Android una piattaforma
+- continuare a consolidare il target Android basato su Kivy, in particolare
+  casi limite del ciclo di vita, copertura di dispositivi, payload multipli e
+  packaging di release, prima di considerare Android una piattaforma
   supportata;
 - aggiungere firma e notarizzazione dove opportuno, quindi valutare formati di
   distribuzione più nativi come AppImage, un installer Windows e un'immagine
@@ -791,10 +807,11 @@ Possibili miglioramenti futuri, in ordine indicativo:
   più elementi principali;
 - ricordare l'ultima cartella di destinazione usata;
 - aggiungere impostazioni avanzate per relay custom di `croc`;
-- separare ulteriormente logica di trasferimento, parsing del progresso e
-  interfaccia grafica;
-- aggiungere altri test automatici per parsing output, argomenti di `croc` e
-  gestione errori;
+- ridurre i moduli di orchestrazione desktop e Android ancora grandi quando un
+  confine concreto di responsabilità giustifica la separazione;
+- estendere la copertura automatica di metadati di packaging, comportamento
+  specifico delle piattaforme, errori di trasferimento e ripristino del ciclo
+  di vita Android;
 - eseguire automaticamente sui sistemi principali il controllo di compatibilità
   con l'ultima release di `croc`.
 
@@ -977,6 +994,8 @@ modifica:
   icona dell'applicazione.
 - `src/moontransfer/resources.py`: percorsi stabili verso le risorse visive
   pacchettizzate, validi sia dai sorgenti sia nei bundle PyInstaller.
+- `src/moontransfer/build_info.py`: identità runtime della build validata e
+  diagnostica sicura e copiabile condivisa da desktop e Android.
 - `src/moontransfer/transfer.py`: stati espliciti del trasferimento, controller
   di invio e ricezione, ciclo di vita della sessione, coordinamento di processi
   e timeout, flusso dei metadati, operazioni sui payload in background, limiti
@@ -1013,6 +1032,9 @@ modifica:
 - `src/moontransfer/desktop.py`: apertura cartelle tramite il file manager della
   piattaforma e pulizia dell'ambiente usato per i comandi desktop esterni.
 - `tools/build.py`: orchestrazione comune della build PyInstaller.
+- `tools/build_metadata.py`: risoluzione di versione e commit della build e
+  generazione deterministica dei metadati incorporati nelle applicazioni
+  pacchettizzate.
 - `tools/fetch_croc.py`: selezione della release `croc` fissata, download,
   verifica checksum, estrazione archivio e installazione del binario incluso nel
   bundle.
@@ -1116,7 +1138,8 @@ strumenti di manutenzione: inventario dei payload e verifica esatta degli
 alberi, validazione del protocollo, costruzione dei comandi, parsing dell'output
 di trasferimento, messaggi di stato, helper di integrazione desktop, separazione
 dell'output dei processi, selezione degli archivi `croc` fissati e helper per il
-packaging degli archivi di release e per il controllo dell'ultima release.
+controllo e la generazione dell'identità di build, il packaging degli archivi di
+release e il controllo dell'ultima release.
 
 Non esercitano l'interazione reale con la GUI e non eseguono un trasferimento
 reale per impostazione predefinita. Usa il test manuale di trasferimento per
@@ -1142,6 +1165,10 @@ allargalo quando il comportamento attraversa più moduli o più piattaforme.
 - Modifiche solo alla documentazione: esegui `git diff --check`. Se la
   documentazione descrive comandi o percorsi, confrontali anche con la
   repository.
+- Modifiche all'identità di build, alla propagazione della versione, ai file
+  dati PyInstaller o alla gestione versione nel workflow di release: esegui
+  `tests/test_build_info.py`, `tests/test_build_metadata.py`,
+  `tests/test_package_release.py` e una build locale del bundle.
 - Modifiche agli argomenti di `croc`, a `CROC_SECRET`, alle anteprime dei
   comandi o alla configurazione isolata: esegui `tests/test_croc.py`,
   `tests/test_check_latest_croc.py` e l'intera suite di test unitari.
@@ -1231,7 +1258,8 @@ artefatti di prova senza pubblicare una release. Le build senza tag usano una
 versione `dev` contenente il numero dell'esecuzione e il prefisso del commit.
 Gli artefatti sono disponibili nel riepilogo dell'esecuzione del workflow per
 14 giorni e possono essere scaricati per i test manuali sui sistemi
-destinazione.
+destinazione. La stessa versione completa e lo stesso commit sono incorporati
+nel riepilogo diagnostico dell'applicazione.
 
 La pubblicazione è intenzionalmente più restrittiva:
 
@@ -1495,6 +1523,7 @@ MoonTransfer/
 │     │  └─ icons/
 │     │     └─ moontransfer-icon.png
 │     ├─ app.py
+│     ├─ build_info.py
 │     ├─ cancellation.py
 │     ├─ croc.py
 │     ├─ desktop.py
@@ -1511,6 +1540,7 @@ MoonTransfer/
 ├─ tools/
 │  ├─ android.py
 │  ├─ build.py
+│  ├─ build_metadata.py
 │  ├─ check_latest_croc.py
 │  ├─ fetch_croc.py
 │  ├─ package_release.py
@@ -1527,6 +1557,8 @@ MoonTransfer/
 │  ├─ test_android_storage.py
 │  ├─ test_android_transport.py
 │  ├─ test_app.py
+│  ├─ test_build_info.py
+│  ├─ test_build_metadata.py
 │  ├─ test_check_latest_croc.py
 │  ├─ test_croc.py
 │  ├─ test_desktop.py

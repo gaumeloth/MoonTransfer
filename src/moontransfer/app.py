@@ -20,11 +20,13 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QStyle,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from moontransfer import croc
+from moontransfer.build_info import CURRENT_BUILD
 from moontransfer.desktop import open_folder
 from moontransfer.files import (
     DestinationCheck,
@@ -60,6 +62,7 @@ from moontransfer.widgets import (
 
 def configure_application(app: QApplication) -> None:
     app.setApplicationName("MoonTransfer")
+    app.setApplicationVersion(CURRENT_BUILD.version)
     app.setWindowIcon(QIcon(str(APP_ICON_PATH)))
 
 
@@ -854,7 +857,7 @@ class ReceiveTab(QWidget):
 class MainWindow(QWidget):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("MoonTransfer")
+        self.setWindowTitle(f"MoonTransfer {CURRENT_BUILD.version}")
         self.setWindowIcon(QIcon(str(APP_ICON_PATH)))
         self._close_pending = False
 
@@ -879,9 +882,42 @@ class MainWindow(QWidget):
         tabs.addTab(self.send_tab, "Invia")
         tabs.addTab(self.receive_tab, "Ricevi")
 
+        self.build_info_button = QToolButton()
+        self.build_info_button.setIcon(
+            self.style().standardIcon(
+                QStyle.StandardPixmap.SP_MessageBoxInformation
+            )
+        )
+        self.build_info_button.setToolTip("Informazioni sulla build")
+        self.build_info_button.setAccessibleName("Informazioni sulla build")
+        self.build_info_button.clicked.connect(self._show_build_info)
+
+        footer = QHBoxLayout()
+        footer.addStretch(1)
+        footer.addWidget(self.build_info_button)
+
         layout = QVBoxLayout(self)
         layout.addWidget(tabs)
+        layout.addLayout(footer)
         self.resize(900, self.sizeHint().height())
+
+    def _show_build_info(self) -> None:
+        diagnostics = CURRENT_BUILD.diagnostics()
+        box = plain_message_box(
+            self,
+            icon=QMessageBox.Icon.Information,
+            title="Informazioni su MoonTransfer",
+            text=diagnostics,
+            standard_buttons=QMessageBox.StandardButton.Close,
+            default_button=QMessageBox.StandardButton.Close,
+        )
+        copy_button = box.addButton(
+            "Copia diagnostica",
+            QMessageBox.ButtonRole.ActionRole,
+        )
+        box.exec()
+        if box.clickedButton() is copy_button:
+            QApplication.clipboard().setText(diagnostics)
 
     def _controllers_busy(self) -> bool:
         return (

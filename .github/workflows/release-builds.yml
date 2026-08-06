@@ -69,9 +69,6 @@ jobs:
       - name: Run the test suite
         run: uv run --frozen --dev python -m unittest discover -s tests -v
 
-      - name: Build the onedir bundle
-        run: uv run --frozen --dev python tools/build.py
-
       - name: Determine the package version
         id: package-version
         shell: bash
@@ -85,6 +82,12 @@ jobs:
             version="${project_version}-dev.${GITHUB_RUN_NUMBER}-${short_sha}"
           fi
           printf 'version=%s\n' "${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build the onedir bundle
+        run: >-
+          uv run --frozen --dev python tools/build.py
+          --version "${{ steps.package-version.outputs.version }}"
+          --commit "${{ github.sha }}"
 
       - name: Validate and package the bundle
         run: >-
