@@ -20,6 +20,10 @@ Il prototipo attualmente fornisce:
   fissato;
 - un probe runtime Android che individua l'eseguibile incluso e ne controlla la
   versione senza esporre un segreto di trasferimento;
+- identità della build incorporata e mostrata nell'intestazione e in un dialogo
+  informativo copiabile, con commit sorgente, `croc` incluso, protocollo,
+  runtime Python e piattaforma ma senza codici di trasferimento o percorsi
+  locali;
 - selezione della sorgente e salvataggio verificato della destinazione tramite
   lo Storage Access Framework (SAF) di Android;
 - invio da Android a desktop e ricezione da desktop ad Android compatibili con
@@ -60,13 +64,13 @@ Le versioni rilevanti sono:
 | --- | --- | --- |
 | Desktop `v0.1.0-alpha.1` | `10.4.13` | No |
 | Desktop `v0.1.0-alpha.2` e APK precedenti del prototipo | `10.7.0` | No |
-| Sorgente desktop e recipe Android attuali | `11.0.1` | Sì |
+| Desktop `v0.1.0-alpha.3`, sorgente e recipe Android attuali | `11.0.1` | Sì |
 
-Dopo questo aggiornamento, ricrea l'applicazione desktop e l'APK, installa il
-nuovo APK e controlla che il probe verde del trasporto riporti `croc 11.0.1`.
-Non usare un vecchio APK di debug con una build desktop attuale, né un APK
-attuale con un'alpha desktop pubblicata precedente a `croc 11`. Questo confine
-non dipende dal sistema operativo o dall'architettura della CPU.
+Per i test di compatibilità ricrea l'APK dalla revisione desiderata e controlla
+che il probe verde del trasporto riporti `croc 11.0.1`. Non usare un vecchio APK
+di debug con una build desktop attuale, né un APK attuale con le alpha desktop
+precedenti a `croc 11`. Questo confine non dipende dal sistema operativo o
+dall'architettura della CPU.
 
 `croc 11` ha introdotto la versione 2 del proprio protocollo PAKE sul canale e
 rifiuta intenzionalmente l'handshake precedente. Lega la creazione della chiave
@@ -140,6 +144,12 @@ Esegui questi comandi dalla radice della repository:
 e Go. `prepare` ricrea l'albero dei sorgenti generati sotto
 `build/android/source`. `run` avvia lo scaffold Kivy sul desktop per un rapido
 smoke test della GUI. `build` produce un APK di debug sotto `dist/android`.
+
+La preparazione incorpora anche `build-info.json`. Se il checkout è pulito e la
+revisione coincide con un tag di pre-release esatto, viene mostrata la versione
+del tag; altrimenti l'APK mostra una versione di sviluppo con il prefisso del
+commit corrente. Il pulsante informativo nell'intestazione apre il riepilogo
+diagnostico completo e copiabile.
 
 Quando l'APK viene avviato su Android, individua `libcroc.so` nella directory
 delle librerie native dell'applicazione ed esegue `croc --version` in un thread
