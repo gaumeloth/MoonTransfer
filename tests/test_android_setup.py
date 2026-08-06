@@ -173,6 +173,50 @@ class AndroidBuildConfigurationTests(unittest.TestCase):
         self.assertIn("getCanonicalFile()", control)
         self.assertIn("public static void addCancelAction", action)
 
+    def test_service_uses_visible_moontransfer_notification_channel(self) -> None:
+        java_root = (
+            ROOT
+            / "android"
+            / "java"
+            / "io"
+            / "github"
+            / "gaumeloth"
+            / "moontransfer"
+        )
+        service = (java_root / "MoonTransferPythonService.java").read_text(
+            encoding="utf-8"
+        )
+        runtime_path = (
+            ROOT
+            / "android"
+            / "app"
+            / "moontransfer_android"
+            / "android_runtime.py"
+        )
+        runtime_source = runtime_path.read_text(encoding="utf-8")
+        runtime_tree = ast.parse(runtime_source)
+        runtime_channel = next(
+            ast.literal_eval(statement.value)
+            for statement in runtime_tree.body
+            if isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Name)
+            and statement.targets[0].id == "TRANSFER_NOTIFICATION_CHANNEL"
+        )
+        java_channel = re.search(
+            r'NOTIFICATION_CHANNEL_ID\s*=\s*"([^"]+)"',
+            service,
+        )
+
+        self.assertIsNotNone(java_channel)
+        assert java_channel is not None
+        self.assertEqual(java_channel.group(1), runtime_channel)
+        self.assertNotEqual(runtime_channel, "org.kivy.p4a1")
+        self.assertIn("protected void doStartForeground(Bundle extras)", service)
+        self.assertIn("NotificationManager.IMPORTANCE_LOW", service)
+        self.assertNotIn("NotificationManager.IMPORTANCE_NONE", service)
+        self.assertIn("startForeground(getServiceId(), notification)", service)
+
     def test_android_application_id_matches_desktop_bundle_identifier(self) -> None:
         self.assertEqual(
             f'{self.app["package.domain"]}.{self.app["package.name"]}',
