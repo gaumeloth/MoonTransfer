@@ -20,6 +20,7 @@ from moontransfer.app import (
     SendTab,
     configure_application,
 )
+from moontransfer.build_info import CURRENT_BUILD
 from moontransfer.cancellation import OperationCancelled
 from moontransfer.files import cleanup_session_paths, create_session_paths
 from moontransfer.payload import scan_source_payload
@@ -113,6 +114,7 @@ class ApplicationConfigurationTests(unittest.TestCase):
 
         self.assertTrue(APP_ICON_PATH.is_file())
         self.assertEqual(self.app.applicationName(), "MoonTransfer")
+        self.assertEqual(self.app.applicationVersion(), CURRENT_BUILD.version)
         self.assertFalse(self.app.windowIcon().isNull())
 
     def test_main_window_uses_the_application_icon_explicitly(self) -> None:
@@ -130,6 +132,48 @@ class ApplicationConfigurationTests(unittest.TestCase):
         try:
             self.assertFalse(window.windowIcon().isNull())
             self.assertTrue(window.windowIcon().availableSizes())
+            self.assertIn(CURRENT_BUILD.version, window.windowTitle())
+            self.assertEqual(
+                window.build_info_button.toolTip(),
+                "Informazioni sulla build",
+            )
+        finally:
+            window.close()
+
+    def test_build_diagnostics_can_be_copied(self) -> None:
+        class FakeMessageBox:
+            def __init__(self) -> None:
+                self.copy_button = object()
+
+            def addButton(self, *_args: object) -> object:
+                return self.copy_button
+
+            def exec(self) -> None:
+                return None
+
+            def clickedButton(self) -> object:
+                return self.copy_button
+
+        fake_box = FakeMessageBox()
+        with (
+            mock.patch(
+                "moontransfer.app.croc.find_executable",
+                return_value="/fake/croc",
+            ),
+            mock.patch(
+                "moontransfer.app.plain_message_box",
+                return_value=fake_box,
+            ),
+            mock.patch("moontransfer.widgets.QTimer.singleShot"),
+        ):
+            window = MainWindow()
+            window._show_build_info()
+
+        try:
+            self.assertEqual(
+                QApplication.clipboard().text(),
+                CURRENT_BUILD.diagnostics(),
+            )
         finally:
             window.close()
 

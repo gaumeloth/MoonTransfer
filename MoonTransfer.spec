@@ -11,6 +11,7 @@ import tomllib
 ROOT = Path(SPECPATH).resolve()
 SRC = ROOT / "src"
 APP_ICON = SRC / "moontransfer" / "assets" / "icons" / "moontransfer-icon.png"
+BUILD_INFO = ROOT / "build" / "generated" / "build-info.json"
 
 with (ROOT / "pyproject.toml").open("rb") as stream:
     APP_VERSION = tomllib.load(stream)["project"]["version"]
@@ -29,6 +30,12 @@ if not CROC_BIN.exists():
 if not APP_ICON.exists():
     raise FileNotFoundError(f"Icona dell'applicazione non trovata: {APP_ICON}")
 
+if not BUILD_INFO.exists():
+    raise FileNotFoundError(
+        f"Metadati di build non trovati: {BUILD_INFO}\n"
+        "Avvia la build tramite: uv run --frozen --dev python tools/build.py"
+    )
+
 
 a = Analysis(
     [str(SRC / "moontransfer" / "app.py")],
@@ -38,6 +45,7 @@ a = Analysis(
     ],
     datas=[
         (str(APP_ICON), "moontransfer/assets/icons"),
+        (str(BUILD_INFO), "moontransfer"),
     ],
     hiddenimports=[],
     hookspath=[],

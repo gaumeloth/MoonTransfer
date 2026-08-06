@@ -2,15 +2,21 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import sys
 import tempfile
 import tomllib
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(ROOT))
+
+from tools.build_metadata import create_build_metadata, write_build_metadata
 
 SHARED_MODULES = (
     "__init__.py",
+    "build_info.py",
     "cancellation.py",
     "croc.py",
     "files.py",
@@ -101,6 +107,10 @@ def prepare_android_source(
         )
         version = read_project_version(root / "pyproject.toml")
         _write_entrypoint(temporary, version)
+        write_build_metadata(
+            temporary / "moontransfer" / "build-info.json",
+            create_build_metadata(root),
+        )
 
         if destination.exists():
             shutil.rmtree(destination)

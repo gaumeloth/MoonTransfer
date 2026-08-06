@@ -21,6 +21,7 @@ from kivy.uix.textinput import TextInput
 from kivy.utils import platform
 
 from moontransfer.cancellation import OperationCancelled
+from moontransfer.build_info import CURRENT_BUILD
 from moontransfer.progress import (
     TransferProgressSample,
     format_duration,
@@ -165,6 +166,7 @@ class MoonTransferAndroidApp(App):
         self.receive_status: Label | None = None
         self.send_mode_button: Button | None = None
         self.receive_mode_button: Button | None = None
+        self.build_info_button: Button | None = None
 
         self._picker: AndroidFilePicker | None = None
         self._save_picker: AndroidSavePicker | None = None
@@ -217,7 +219,7 @@ class MoonTransferAndroidApp(App):
             orientation="horizontal",
             spacing=dp(12),
             size_hint_y=None,
-            height=dp(72),
+            height=dp(82),
         )
         header.add_widget(
             Image(
@@ -238,11 +240,20 @@ class MoonTransferAndroidApp(App):
         )
         title_box.add_widget(
             _wrapped_label(
-                f"Android | Protocollo {PROTOCOL_VERSION}",
-                minimum_height=28,
+                (
+                    f"Android {CURRENT_BUILD.version}\n"
+                    f"Protocollo {PROTOCOL_VERSION}"
+                ),
+                minimum_height=40,
             )
         )
         header.add_widget(title_box)
+        self.build_info_button = _button("i", color=SECONDARY_COLOR)
+        self.build_info_button.size_hint = (None, None)
+        self.build_info_button.size = (dp(42), dp(42))
+        self.build_info_button.font_size = sp(20)
+        self.build_info_button.bind(on_release=self._show_build_info)
+        header.add_widget(self.build_info_button)
         root.add_widget(header)
 
         mode_row = BoxLayout(
@@ -1276,6 +1287,46 @@ class MoonTransferAndroidApp(App):
         Clipboard.copy(self._code)
         if self.send_status is not None:
             self.send_status.text = "Codice copiato negli appunti."
+
+    def _show_build_info(self, *_args: object) -> None:
+        content = BoxLayout(
+            orientation="vertical",
+            spacing=dp(10),
+            padding=dp(10),
+        )
+        diagnostics = CURRENT_BUILD.diagnostics()
+        details = TextInput(
+            text=diagnostics,
+            readonly=True,
+            multiline=True,
+            font_size=sp(13),
+        )
+        content.add_widget(details)
+
+        actions = BoxLayout(
+            orientation="horizontal",
+            spacing=dp(8),
+            size_hint_y=None,
+            height=dp(48),
+        )
+        copy_button = _button("Copia diagnostica", color=SECONDARY_COLOR)
+        close_button = _button("Chiudi")
+        actions.add_widget(copy_button)
+        actions.add_widget(close_button)
+        content.add_widget(actions)
+
+        popup = Popup(
+            title="Informazioni su MoonTransfer",
+            content=content,
+            size_hint=(0.92, None),
+            height=dp(390),
+            auto_dismiss=True,
+        )
+        copy_button.bind(
+            on_release=lambda _button: Clipboard.copy(diagnostics)
+        )
+        close_button.bind(on_release=lambda _button: popup.dismiss())
+        popup.open()
 
     def _update_controls(self) -> None:
         send_active = self._send_state in ACTIVE_SEND_STATES
