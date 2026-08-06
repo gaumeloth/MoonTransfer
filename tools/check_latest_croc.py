@@ -63,6 +63,12 @@ class LatestCrocCheck:
         return fetch_croc.compare_versions(self.latest_version, self.pinned_version) > 0
 
 
+@dataclass(frozen=True)
+class CrocBinary:
+    version: str
+    path: Path
+
+
 def checksum_asset_name(version: str) -> str:
     version = fetch_croc.normalize_version(version)
     return f"croc_v{version}_checksums.txt"
@@ -123,8 +129,14 @@ def expected_release_hash(asset: str, checksums: dict[str, str]) -> str:
     return fetch_croc.normalize_hash(expected)
 
 
-def extracted_binary_path(root: Path, asset: str, archive: Path) -> Path:
-    extract_dir = root / ".cache" / "croc-latest-check" / "extract"
+def extracted_binary_path(
+    root: Path,
+    version: str,
+    asset: str,
+    archive: Path,
+) -> Path:
+    version = fetch_croc.normalize_version(version)
+    extract_dir = root / ".cache" / "croc-latest-check" / "extract" / version
     fetch_croc.extract_archive(asset, archive, extract_dir)
 
     exe = "croc.exe" if os.name == "nt" else "croc"
@@ -136,6 +148,23 @@ def extracted_binary_path(root: Path, asset: str, archive: Path) -> Path:
         found.chmod(found.stat().st_mode | 0o111)
 
     return found
+
+
+def fetch_verified_binary(*, root: Path, version: str) -> CrocBinary:
+    version = fetch_croc.normalize_version(version)
+    asset = fetch_croc.pick_asset(version)
+    checksums = read_release_checksums(version)
+    expected_hash = expected_release_hash(asset, checksums)
+    archive = fetch_release_binary(
+        root=root,
+        version=version,
+        asset=asset,
+        expected_hash=expected_hash,
+    )
+    return CrocBinary(
+        version=version,
+        path=extracted_binary_path(root, version, asset, archive),
+    )
 
 
 def compatibility_process_environment(
@@ -255,18 +284,23 @@ def _enqueue_output(
 
 
 def run_transfer_test(
-    binary: Path,
+    sender_binary: CrocBinary,
     *,
+    receiver_binary: CrocBinary | None = None,
     prompt_response: bool | None = None,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> None:
+    receiver_binary = receiver_binary or sender_binary
     if prompt_response is None:
         mode = "automatic receive"
     elif prompt_response:
         mode = "prompt acceptance"
     else:
         mode = "prompt rejection"
-    print(f"[transfer] running {mode} test with latest croc")
+    print(
+        f"[transfer] {mode}: "
+        f"sender=v{sender_binary.version}, receiver=v{receiver_binary.version}"
+    )
 
     with tempfile.TemporaryDirectory(prefix="moontransfer-croc-latest-") as tmp:
         base = Path(tmp)
@@ -295,7 +329,7 @@ def run_transfer_test(
         expected_code = secrets.token_hex(16)
         sender = subprocess.Popen(
             [
-                str(binary),
+                str(sender_binary.path),
                 *croc.build_send_args((source_file, source_folder)),
             ],
             stdout=subprocess.PIPE,
@@ -355,7 +389,7 @@ def run_transfer_test(
                 else croc.build_prompted_receive_args()
             )
             receiver = subprocess.Popen(
-                [str(binary), *receive_args],
+                [str(receiver_binary.path), *receive_args],
                 stdin=(
                     subprocess.PIPE
                     if prompt_response is not None
@@ -449,6 +483,58 @@ def run_transfer_test(
     print(f"[ok] {mode} test passed")
 
 
+def transfer_pairs(
+    latest: CrocBinary,
+    compatible: CrocBinary | None = None,
+) -> tuple[tuple[CrocBinary, CrocBinary], ...]:
+    pairs = [(latest, latest)]
+    if compatible is not None and compatible.version != latest.version:
+        pairs.extend(((compatible, latest), (latest, compatible)))
+    return tuple(pairs)
+
+
+def run_transfer_matrix(
+    latest: CrocBinary,
+    *,
+    compatible: CrocBinary | None = None,
+    timeout: int = DEFAULT_TIMEOUT,
+) -> None:
+    failures: list[str] = []
+    for sender, receiver in transfer_pairs(latest, compatible):
+        try:
+            run_transfer_test(
+                sender,
+                receiver_binary=receiver,
+                timeout=timeout,
+            )
+        except RuntimeError as exc:
+            failures.append(
+                f"sender v{sender.version} -> receiver v{receiver.version}: {exc}"
+            )
+            print(f"[fail] {failures[-1]}")
+            continue
+
+        for prompt_response in (True, False):
+            try:
+                run_transfer_test(
+                    sender,
+                    receiver_binary=receiver,
+                    prompt_response=prompt_response,
+                    timeout=timeout,
+                )
+            except RuntimeError as exc:
+                failures.append(
+                    f"sender v{sender.version} -> receiver v{receiver.version}: {exc}"
+                )
+                print(f"[fail] {failures[-1]}")
+
+    if failures:
+        raise RuntimeError(
+            f"croc transfer matrix failed in {len(failures)} case(s)\n\n"
+            + "\n\n".join(failures)
+        )
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Check and test the latest upstream croc release."
@@ -472,7 +558,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_TIMEOUT,
         help="timeout in seconds for the optional transfer test",
     )
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--compat-version",
+        help=(
+            "with --transfer, also test both transfer directions between the "
+            "latest release and this croc version"
+        ),
+    )
+    args = parser.parse_args(argv)
+    if args.compat_version and not args.transfer:
+        parser.error("--compat-version requires --transfer")
+    return args
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -492,29 +588,27 @@ def main(argv: list[str] | None = None) -> None:
     else:
         print("[force] testing latest even though it is not newer than pinned")
 
-    asset = fetch_croc.pick_asset(check.latest_version)
-    checksums = read_release_checksums(check.latest_version)
-    expected_hash = expected_release_hash(asset, checksums)
-    archive = fetch_release_binary(
+    latest_binary = fetch_verified_binary(
         root=root,
         version=check.latest_version,
-        asset=asset,
-        expected_hash=expected_hash,
     )
-    binary = extracted_binary_path(root, asset, archive)
 
-    run_smoke_tests(binary, check.latest_version)
+    run_smoke_tests(latest_binary.path, latest_binary.version)
 
     if args.transfer:
-        run_transfer_test(binary, timeout=args.timeout)
-        run_transfer_test(
-            binary,
-            prompt_response=True,
-            timeout=args.timeout,
-        )
-        run_transfer_test(
-            binary,
-            prompt_response=False,
+        compatible_binary = None
+        if args.compat_version:
+            compatible_binary = fetch_verified_binary(
+                root=root,
+                version=args.compat_version,
+            )
+            run_smoke_tests(
+                compatible_binary.path,
+                compatible_binary.version,
+            )
+        run_transfer_matrix(
+            latest_binary,
+            compatible=compatible_binary,
             timeout=args.timeout,
         )
 

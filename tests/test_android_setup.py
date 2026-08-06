@@ -99,8 +99,8 @@ class AndroidBuildConfigurationTests(unittest.TestCase):
         )
         self.assertEqual(
             assignments["sha512sum"],
-            "57dd2b4b0f9adf80e07bc1112c19c6b5376add4b1f08fd91b5ff2b720c88274a"
-            "a75d8a75cea0b3dfb61fc3f5285e6fbdc94f232085f29b29e814bcbd17ad72d8",
+            "fc316adff9c977d38031d49a87f9e6df2da1596e2279d8890cfc81d5c63f2f57"
+            "ed082117b5e26eba8b9f6b7c80355746563be11b8a460ef4ae089666f3030b26",
         )
         self.assertEqual(assignments["built_libraries"], {"libcroc.so": "."})
         self.assertIn('"GOOS": "android"', recipe_source)
@@ -173,11 +173,113 @@ class AndroidBuildConfigurationTests(unittest.TestCase):
         self.assertIn("getCanonicalFile()", control)
         self.assertIn("public static void addCancelAction", action)
 
+    def test_service_uses_visible_moontransfer_notification_channel(self) -> None:
+        java_root = (
+            ROOT
+            / "android"
+            / "java"
+            / "io"
+            / "github"
+            / "gaumeloth"
+            / "moontransfer"
+        )
+        service = (java_root / "MoonTransferPythonService.java").read_text(
+            encoding="utf-8"
+        )
+        runtime_path = (
+            ROOT
+            / "android"
+            / "app"
+            / "moontransfer_android"
+            / "android_runtime.py"
+        )
+        runtime_source = runtime_path.read_text(encoding="utf-8")
+        runtime_tree = ast.parse(runtime_source)
+        runtime_channel = next(
+            ast.literal_eval(statement.value)
+            for statement in runtime_tree.body
+            if isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Name)
+            and statement.targets[0].id == "TRANSFER_NOTIFICATION_CHANNEL"
+        )
+        java_channel = re.search(
+            r'NOTIFICATION_CHANNEL_ID\s*=\s*"([^"]+)"',
+            service,
+        )
+
+        self.assertIsNotNone(java_channel)
+        assert java_channel is not None
+        self.assertEqual(java_channel.group(1), runtime_channel)
+        self.assertNotEqual(runtime_channel, "org.kivy.p4a1")
+        self.assertIn("protected void doStartForeground(Bundle extras)", service)
+        self.assertIn("NotificationManager.IMPORTANCE_LOW", service)
+        self.assertNotIn("NotificationManager.IMPORTANCE_NONE", service)
+        self.assertIn("startForeground(getServiceId(), notification)", service)
+
     def test_android_application_id_matches_desktop_bundle_identifier(self) -> None:
         self.assertEqual(
             f'{self.app["package.domain"]}.{self.app["package.name"]}',
             "io.github.gaumeloth.moontransfer",
         )
+
+
+class AndroidCrocBuildCacheTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        self.build_root = self.root / "platform" / "build-arm64-v8a"
+        self.recipe_path = self.root / "recipe.py"
+        self.marker_path = self.root / "recipe.sha256"
+        self.recipe_path.write_text('version = "11.0.1"\n', encoding="ascii")
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def _create_cached_directories(self) -> tuple[Path, ...]:
+        paths = tuple(
+            self.build_root / relative
+            for relative in android_tool.CROC_BUILD_CACHE_PATHS
+        )
+        for path in paths:
+            path.mkdir(parents=True)
+            (path / "stale").write_text("old", encoding="ascii")
+        return paths
+
+    def test_stale_recipe_fingerprint_removes_native_cache(self) -> None:
+        cached_paths = self._create_cached_directories()
+        self.marker_path.write_text("old-fingerprint\n", encoding="ascii")
+
+        fingerprint, removed = android_tool.invalidate_stale_croc_build_cache(
+            build_root=self.build_root,
+            recipe_path=self.recipe_path,
+            marker_path=self.marker_path,
+        )
+
+        self.assertTrue(removed)
+        self.assertTrue(all(not path.exists() for path in cached_paths))
+        self.assertEqual(
+            fingerprint,
+            android_tool.croc_recipe_fingerprint(self.recipe_path),
+        )
+
+    def test_matching_recipe_fingerprint_preserves_native_cache(self) -> None:
+        cached_paths = self._create_cached_directories()
+        fingerprint = android_tool.croc_recipe_fingerprint(self.recipe_path)
+        android_tool.record_croc_recipe_fingerprint(
+            fingerprint,
+            self.marker_path,
+        )
+
+        current, removed = android_tool.invalidate_stale_croc_build_cache(
+            build_root=self.build_root,
+            recipe_path=self.recipe_path,
+            marker_path=self.marker_path,
+        )
+
+        self.assertFalse(removed)
+        self.assertEqual(current, fingerprint)
+        self.assertTrue(all((path / "stale").is_file() for path in cached_paths))
 
 
 class AndroidSourcePreparationTests(unittest.TestCase):

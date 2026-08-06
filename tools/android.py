@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.metadata
 import importlib.util
 import platform
@@ -16,6 +17,25 @@ from tools.prepare_android import ROOT, prepare_android_source
 
 ANDROID_DIR = ROOT / "android"
 BUILD_SPEC = ANDROID_DIR / "buildozer.spec"
+ANDROID_P4A_BUILD_ROOT = (
+    ROOT
+    / "build"
+    / "android"
+    / "buildozer"
+    / "android"
+    / "platform"
+    / "build-arm64-v8a"
+)
+CROC_RECIPE_PATH = ANDROID_DIR / "recipes" / "croc" / "__init__.py"
+CROC_RECIPE_MARKER = (
+    ROOT / "build" / "android" / "buildozer" / ".moontransfer-croc-recipe.sha256"
+)
+CROC_BUILD_CACHE_PATHS = (
+    Path("packages/croc"),
+    Path("build/other_builds/croc"),
+    Path("build/libs_collections/moontransfer"),
+    Path("dists/moontransfer"),
+)
 EXPECTED_PYTHON = (3, 13)
 COMMON_BUILD_COMMANDS = (
     "git",
@@ -170,6 +190,53 @@ def print_environment_report() -> tuple[str, ...]:
     return issues
 
 
+def croc_recipe_fingerprint(recipe_path: Path = CROC_RECIPE_PATH) -> str:
+    return hashlib.sha256(recipe_path.read_bytes()).hexdigest()
+
+
+def invalidate_stale_croc_build_cache(
+    *,
+    build_root: Path = ANDROID_P4A_BUILD_ROOT,
+    recipe_path: Path = CROC_RECIPE_PATH,
+    marker_path: Path = CROC_RECIPE_MARKER,
+) -> tuple[str, bool]:
+    fingerprint = croc_recipe_fingerprint(recipe_path)
+    try:
+        cached_fingerprint = marker_path.read_text(encoding="ascii").strip()
+    except FileNotFoundError:
+        cached_fingerprint = ""
+
+    if cached_fingerprint == fingerprint:
+        return fingerprint, False
+
+    removed = False
+    for relative_path in CROC_BUILD_CACHE_PATHS:
+        path = build_root / relative_path
+        if path.is_symlink():
+            raise RuntimeError(f"Refusing to remove symbolic build path: {path}")
+        if path.exists():
+            if not path.is_dir():
+                raise RuntimeError(f"Expected Android build directory: {path}")
+            shutil.rmtree(path)
+            removed = True
+
+    if removed:
+        print("Android croc recipe changed; removed its stale native build cache.")
+    return fingerprint, removed
+
+
+def record_croc_recipe_fingerprint(
+    fingerprint: str,
+    marker_path: Path = CROC_RECIPE_MARKER,
+) -> None:
+    if marker_path.is_symlink():
+        raise RuntimeError(f"Refusing to replace symbolic build marker: {marker_path}")
+    marker_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = marker_path.with_name(f"{marker_path.name}.tmp")
+    temporary.write_text(f"{fingerprint}\n", encoding="ascii")
+    temporary.replace(marker_path)
+
+
 def run_local_prototype() -> int:
     source = prepare_android_source()
     return subprocess.run(
@@ -185,13 +252,17 @@ def build_debug_apk() -> int:
         return 1
 
     prepare_android_source()
+    croc_fingerprint, _ = invalidate_stale_croc_build_cache()
     buildozer = shutil.which("buildozer")
     assert buildozer is not None
-    return subprocess.run(
+    result = subprocess.run(
         [buildozer, "--verbose", "android", "debug"],
         cwd=ANDROID_DIR,
         check=False,
-    ).returncode
+    )
+    if result.returncode == 0:
+        record_croc_recipe_fingerprint(croc_fingerprint)
+    return result.returncode
 
 
 def main() -> int:

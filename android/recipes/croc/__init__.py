@@ -9,11 +9,11 @@ from pythonforandroid.util import ensure_dir
 
 
 class CrocRecipe(Recipe):
-    version = "10.7.0"
+    version = "11.0.1"
     url = "https://github.com/schollz/croc/archive/refs/tags/v{version}.tar.gz"
     sha512sum = (
-        "57dd2b4b0f9adf80e07bc1112c19c6b5376add4b1f08fd91b5ff2b720c88274a"
-        "a75d8a75cea0b3dfb61fc3f5285e6fbdc94f232085f29b29e814bcbd17ad72d8"
+        "fc316adff9c977d38031d49a87f9e6df2da1596e2279d8890cfc81d5c63f2f57"
+        "ed082117b5e26eba8b9f6b7c80355746563be11b8a460ef4ae089666f3030b26"
     )
     built_libraries = {"libcroc.so": "."}
 

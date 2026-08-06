@@ -45,6 +45,47 @@ hash, percorsi, content URI ed errori tecnici non vengono mai mostrati lì. SAF
 fornisce accesso solo ai documenti scelti esplicitamente dall'utente; non viene
 richiesto alcun permesso di archiviazione esteso.
 
+## Compatibilità del trasporto
+
+> [!IMPORTANT]
+> La recipe Android attuale compila `croc 11.0.1`. Un APK prodotto da questo
+> sorgente non può trasferire dati da o verso build desktop o vecchi APK
+> sperimentali basati su `croc 10.x`. Crea o aggiorna assieme entrambi gli
+> endpoint e, per i test, usa la stessa revisione della repository sui due
+> dispositivi.
+
+Le versioni rilevanti sono:
+
+| Build di MoonTransfer | `croc` incluso | Compatibile con l'APK Android attuale |
+| --- | --- | --- |
+| Desktop `v0.1.0-alpha.1` | `10.4.13` | No |
+| Desktop `v0.1.0-alpha.2` e APK precedenti del prototipo | `10.7.0` | No |
+| Sorgente desktop e recipe Android attuali | `11.0.1` | Sì |
+
+Dopo questo aggiornamento, ricrea l'applicazione desktop e l'APK, installa il
+nuovo APK e controlla che il probe verde del trasporto riporti `croc 11.0.1`.
+Non usare un vecchio APK di debug con una build desktop attuale, né un APK
+attuale con un'alpha desktop pubblicata precedente a `croc 11`. Questo confine
+non dipende dal sistema operativo o dall'architettura della CPU.
+
+`croc 11` ha introdotto la versione 2 del proprio protocollo PAKE sul canale e
+rifiuta intenzionalmente l'handshake precedente. Lega la creazione della chiave
+ai peer, ai ruoli, alla sessione, alla room e al transcript, rafforza la
+derivazione delle chiavi e la gestione del salt e aggiunge la conferma reciproca
+della chiave. Non esiste un fallback di compatibilità, perché usarlo
+eliminerebbe queste proprietà di sicurezza. Consulta le [note ufficiali della
+release `croc
+11.0.0`](https://github.com/schollz/croc/releases/tag/v11.0.0) e
+l'[aggiornamento di sicurezza
+upstream](https://github.com/schollz/croc/pull/1212).
+
+Una coppia mista `croc 10`/`croc 11` fallisce durante la messa in sicurezza del
+canale, prima del trasferimento del manifest dei metadati o del payload
+principale di MoonTransfer. I dettagli tecnici possono indicare una versione
+del protocollo PAKE non supportata oppure l'errore generico `could not secure
+channel`. Questo è il fallimento di compatibilità atteso; non indica un problema
+dello storage Android o del foreground service.
+
 ## Prerequisiti del sistema host
 
 Le build Android richiedono Linux o macOS. La configurazione attuale prevede
@@ -326,7 +367,10 @@ abilitato. In questo modo Go delega la risoluzione dei nomi dei relay al resolve
 DNS nativo di Android, rispettando la rete, la VPN e il Private DNS attivi.
 L'eseguibile viene incluso come `lib/arm64-v8a/libcroc.so`, mantenendolo
 nell'area delle librerie native firmata dell'APK. Nel pacchetto dell'applicazione
-viene inclusa anche la licenza MIT upstream.
+viene inclusa anche la licenza MIT upstream. Il comando di build Android
+calcola l'impronta di questa recipe; quando ne cambiano versione, checksum o
+logica di compilazione, rimuove la cache nativa obsoleta di `croc` e ricrea la
+distribuzione invece di riutilizzare silenziosamente un vecchio eseguibile.
 
 ## Limitazioni note
 

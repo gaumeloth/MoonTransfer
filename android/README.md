@@ -44,6 +44,43 @@ URIs and technical errors are never displayed there. SAF grants access only to
 documents explicitly chosen by the user; no broad storage permission is
 requested.
 
+## Transport compatibility
+
+> [!IMPORTANT]
+> The current Android recipe builds `croc 11.0.1`. An APK produced from this
+> source cannot transfer data to or from desktop builds or older experimental
+> APKs based on `croc 10.x`. Build or update both endpoints together and, for
+> testing, use the same repository revision on both devices.
+
+The relevant versions are:
+
+| MoonTransfer build | Bundled `croc` | Compatible with the current Android APK |
+| --- | --- | --- |
+| Desktop `v0.1.0-alpha.1` | `10.4.13` | No |
+| Desktop `v0.1.0-alpha.2` and older prototype APKs | `10.7.0` | No |
+| Current desktop source and Android recipe | `11.0.1` | Yes |
+
+After this upgrade, rebuild the desktop application and APK, install the new
+APK, and check that its green transport probe reports `croc 11.0.1`. Do not use
+an old debug APK with a current desktop build, or a current APK with a
+published pre-`croc 11` desktop alpha. This boundary is independent of the
+operating system and CPU architecture.
+
+`croc 11` introduced version 2 of its PAKE wire protocol and intentionally
+rejects the earlier handshake. It binds key establishment to the peers, roles,
+session, room and transcript, strengthens key derivation and salt handling,
+and adds mutual key confirmation. There is no compatibility fallback because
+using one would discard those security properties. See the official [`croc
+11.0.0` release notes](https://github.com/schollz/croc/releases/tag/v11.0.0)
+and the upstream [security
+upgrade](https://github.com/schollz/croc/pull/1212).
+
+A mixed `croc 10`/`croc 11` pair fails while securing the channel, before the
+MoonTransfer metadata manifest or main payload is transferred. The technical
+details may report an unsupported PAKE protocol version or the generic `could
+not secure channel` error. This is the expected compatibility failure; it does
+not indicate an Android storage or foreground-service problem.
+
 ## Host prerequisites
 
 Android builds require Linux or macOS. The current configuration expects Java
@@ -308,7 +345,10 @@ lets Go delegate relay hostname resolution to Android's native DNS resolver, so
 the app respects the active network, VPN, and Private DNS configuration. The
 executable is packaged as `lib/arm64-v8a/libcroc.so`, which keeps it inside the
 APK's signed native-library area. The upstream MIT license is also included in
-the application package.
+the application package. The Android build command fingerprints this recipe;
+when its version, checksum, or build logic changes, it removes the stale native
+`croc` cache and rebuilds the distribution instead of silently reusing an old
+executable.
 
 ## Known limitations
 
