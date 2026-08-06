@@ -11,6 +11,7 @@ import unittest
 from contextlib import redirect_stdout
 from dataclasses import replace
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,6 +36,7 @@ from moontransfer_android.service_protocol import (  # noqa: E402
     TransferServiceCommandName,
     TransferServiceError,
     TransferServiceOperation,
+    _replace_file_atomic,
     consume_service_commands,
     create_receive_service_request,
     create_send_service_request,
@@ -75,13 +77,17 @@ def _wait_for_state(
 ) -> None:
     deadline = time.monotonic() + timeout
     last_state = "unknown"
+    last_status = "unknown"
     while time.monotonic() < deadline:
-        last_state = read_service_snapshot(cache_root, session_id).state
+        snapshot = read_service_snapshot(cache_root, session_id)
+        last_state = snapshot.state
+        last_status = snapshot.status
         if last_state == expected:
             return
         time.sleep(0.01)
     raise AssertionError(
-        f"service did not enter state {expected}; last state was {last_state}"
+        f"service did not enter state {expected}; last state was {last_state}; "
+        f"last status was {last_status}"
     )
 
 
@@ -176,6 +182,83 @@ class _RejectableReceiveRunner:
 
 
 class AndroidServiceProtocolTests(unittest.TestCase):
+    def test_atomic_replace_retries_windows_reader_contention(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.json"
+            destination = root / "destination.json"
+            source.write_text("new", encoding="ascii")
+            destination.write_text("old", encoding="ascii")
+            real_replace = os.replace
+            attempts = 0
+
+            def replace_after_contention(
+                source_path: Path,
+                destination_path: Path,
+            ) -> None:
+                nonlocal attempts
+                attempts += 1
+                if attempts == 1:
+                    raise PermissionError("destination is being read")
+                real_replace(source_path, destination_path)
+
+            with (
+                mock.patch(
+                    "moontransfer_android.service_protocol.os.replace",
+                    side_effect=replace_after_contention,
+                ),
+                mock.patch(
+                    "moontransfer_android.service_protocol.time.sleep"
+                ) as sleep,
+            ):
+                _replace_file_atomic(source, destination, windows=True)
+
+            self.assertEqual(attempts, 2)
+            sleep.assert_called_once_with(0.01)
+            self.assertEqual(destination.read_text(encoding="ascii"), "new")
+
+    def test_atomic_replace_does_not_retry_other_platforms(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.json"
+            destination = root / "destination.json"
+            source.write_text("new", encoding="ascii")
+
+            with mock.patch(
+                "moontransfer_android.service_protocol.os.replace",
+                side_effect=PermissionError("access denied"),
+            ) as replace_file:
+                with self.assertRaises(PermissionError):
+                    _replace_file_atomic(source, destination, windows=False)
+
+            replace_file.assert_called_once_with(source, destination)
+
+    def test_atomic_replace_stops_at_windows_retry_deadline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.json"
+            destination = root / "destination.json"
+            source.write_text("new", encoding="ascii")
+
+            with (
+                mock.patch(
+                    "moontransfer_android.service_protocol.os.replace",
+                    side_effect=PermissionError("access denied"),
+                ) as replace_file,
+                mock.patch(
+                    "moontransfer_android.service_protocol.time.monotonic",
+                    side_effect=(10.0, 11.0),
+                ),
+                mock.patch(
+                    "moontransfer_android.service_protocol.time.sleep"
+                ) as sleep,
+            ):
+                with self.assertRaises(PermissionError):
+                    _replace_file_atomic(source, destination, windows=True)
+
+            replace_file.assert_called_once_with(source, destination)
+            sleep.assert_not_called()
+
     def test_service_start_uses_api_appropriate_android_method(self) -> None:
         modern = _ServiceStartContext()
         legacy = _ServiceStartContext()
