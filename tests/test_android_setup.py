@@ -61,6 +61,13 @@ class AndroidBuildConfigurationTests(unittest.TestCase):
 
     def test_build_uses_generated_sources_and_pinned_toolchain(self) -> None:
         self.assertEqual(self.app["source.dir"], "../build/android/source")
+        self.assertIn(
+            "kv",
+            {
+                suffix.strip()
+                for suffix in self.app["source.include_exts"].split(",")
+            },
+        )
         self.assertEqual(
             self.app["requirements"],
             "python3==3.13.14,hostpython3==3.13.14,kivy==2.3.1,"
@@ -296,6 +303,9 @@ class AndroidSourcePreparationTests(unittest.TestCase):
             self.assertTrue((prepared / "main.py").is_file())
             self.assertTrue(
                 (prepared / "moontransfer_android" / "application.py").is_file()
+            )
+            self.assertTrue(
+                (prepared / "moontransfer_android" / "moontransfer.kv").is_file()
             )
             self.assertTrue(
                 (prepared / "moontransfer_android" / "transport.py").is_file()

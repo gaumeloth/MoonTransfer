@@ -9,14 +9,15 @@ from kivy.app import App
 from kivy.clock import Clock
 from kivy.core.clipboard import Clipboard
 from kivy.core.window import Window
+from kivy.lang import Builder
 from kivy.metrics import dp, sp
+from kivy.properties import ListProperty, NumericProperty
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
-from kivy.uix.image import Image
 from kivy.uix.label import Label
 from kivy.uix.popup import Popup
 from kivy.uix.progressbar import ProgressBar
-from kivy.uix.scrollview import ScrollView
+from kivy.uix.screenmanager import ScreenManager
 from kivy.uix.textinput import TextInput
 from kivy.utils import platform
 
@@ -74,6 +75,49 @@ SUCCESS_COLOR = (0.40, 0.82, 0.57, 1)
 ERROR_COLOR = (0.95, 0.45, 0.45, 1)
 ACCENT_COLOR = (0.20, 0.52, 0.88, 1)
 SECONDARY_COLOR = (0.20, 0.22, 0.27, 1)
+DESTRUCTIVE_COLOR = (0.67, 0.20, 0.24, 1)
+CONFIRM_COLOR = (0.18, 0.50, 0.31, 1)
+KV_PATH = Path(__file__).with_name("moontransfer.kv")
+VIEW_IDS = (
+    "build_info_button",
+    "send_mode_button",
+    "receive_mode_button",
+    "view_manager",
+    "transport_status",
+    "probe_button",
+    "select_button",
+    "send_button",
+    "cancel_button",
+    "copy_button",
+    "file_status",
+    "send_status",
+    "code_input",
+    "progress_bar",
+    "progress_details",
+    "receive_code_input",
+    "receive_start_button",
+    "receive_proposal",
+    "receive_accept_button",
+    "receive_reject_button",
+    "receive_save_button",
+    "receive_cancel_button",
+    "receive_progress_bar",
+    "receive_progress_details",
+    "receive_status",
+)
+
+
+class MoonWrappedLabel(Label):
+    minimum_height = NumericProperty(dp(34))
+    label_color = ListProperty(MUTED_COLOR)
+
+
+class MoonActionButton(Button):
+    button_color = ListProperty(ACCENT_COLOR)
+
+
+class MoonTransferRoot(BoxLayout):
+    pass
 
 
 def _wrapped_label(
@@ -83,26 +127,12 @@ def _wrapped_label(
     color: tuple[float, float, float, float] = MUTED_COLOR,
     minimum_height: float = 34,
 ) -> Label:
-    label = Label(
+    return MoonWrappedLabel(
         text=text,
-        color=color,
+        label_color=color,
         font_size=sp(font_size),
-        halign="left",
-        valign="middle",
-        size_hint_y=None,
-        height=dp(minimum_height),
+        minimum_height=dp(minimum_height),
     )
-    label.bind(
-        width=lambda widget, value: setattr(widget, "text_size", (value, None))
-    )
-    label.bind(
-        texture_size=lambda widget, value: setattr(
-            widget,
-            "height",
-            max(dp(minimum_height), value[1] + dp(8)),
-        )
-    )
-    return label
 
 
 def _button(
@@ -110,21 +140,29 @@ def _button(
     *,
     color: tuple[float, float, float, float] = ACCENT_COLOR,
 ) -> Button:
-    return Button(
+    return MoonActionButton(
         text=text,
-        size_hint_y=None,
-        height=dp(48),
-        background_normal="",
-        background_down="",
-        background_color=color,
-        color=TEXT_COLOR,
-        font_size=sp(15),
+        button_color=color,
     )
 
 
 class MoonTransferAndroidApp(App):
     title = "MoonTransfer"
     icon = str(APP_ICON_PATH)
+    text_color = TEXT_COLOR
+    muted_color = MUTED_COLOR
+    accent_color = ACCENT_COLOR
+    secondary_color = SECONDARY_COLOR
+    destructive_color = DESTRUCTIVE_COLOR
+    confirm_color = CONFIRM_COLOR
+    build_subtitle = (
+        f"Android {CURRENT_BUILD.version}\nProtocollo {PROTOCOL_VERSION}"
+    )
+    initial_transport_status = (
+        "Trasporto croc: pronto per la verifica"
+        if platform == "android"
+        else "Trasporto croc: verifica disponibile nell'APK Android"
+    )
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
@@ -177,9 +215,7 @@ class MoonTransferAndroidApp(App):
         self._code: str | None = None
         self._transfer_started_at: float | None = None
         self._receive_started_at: float | None = None
-        self._view_container: BoxLayout | None = None
-        self._send_view: ScrollView | None = None
-        self._receive_view: ScrollView | None = None
+        self._view_manager: ScreenManager | None = None
         self._service_poll_event: Any = None
 
     @property
@@ -194,301 +230,87 @@ class MoonTransferAndroidApp(App):
     def _sessions_parent(self) -> Path:
         return self._cache_root / "sessions"
 
-    def build(self) -> BoxLayout:
+    def build(self) -> MoonTransferRoot:
         Window.clearcolor = (0.055, 0.059, 0.071, 1)
-
-        root = BoxLayout(
-            orientation="vertical",
-            spacing=dp(12),
-            padding=(dp(20), dp(18), dp(20), dp(12)),
-        )
-        header = BoxLayout(
-            orientation="horizontal",
-            spacing=dp(12),
-            size_hint_y=None,
-            height=dp(82),
-        )
-        header.add_widget(
-            Image(
-                source=str(APP_ICON_PATH),
-                size_hint=(None, None),
-                size=(dp(72), dp(72)),
-                fit_mode="contain",
+        root = Builder.load_file(str(KV_PATH))
+        if not isinstance(root, MoonTransferRoot):
+            raise RuntimeError(
+                "Il layout Android non definisce una radice MoonTransferRoot."
             )
-        )
-        title_box = BoxLayout(orientation="vertical")
-        title_box.add_widget(
-            _wrapped_label(
-                "MoonTransfer",
-                font_size=25,
-                color=TEXT_COLOR,
-                minimum_height=38,
-            )
-        )
-        title_box.add_widget(
-            _wrapped_label(
-                (
-                    f"Android {CURRENT_BUILD.version}\n"
-                    f"Protocollo {PROTOCOL_VERSION}"
-                ),
-                minimum_height=40,
-            )
-        )
-        header.add_widget(title_box)
-        self.build_info_button = _button("i", color=SECONDARY_COLOR)
-        self.build_info_button.size_hint = (None, None)
-        self.build_info_button.size = (dp(42), dp(42))
-        self.build_info_button.font_size = sp(20)
-        self.build_info_button.bind(on_release=self._show_build_info)
-        header.add_widget(self.build_info_button)
-        root.add_widget(header)
-
-        mode_row = BoxLayout(
-            orientation="horizontal",
-            spacing=dp(2),
-            size_hint_y=None,
-            height=dp(46),
-        )
-        self.send_mode_button = _button("Invia")
-        self.send_mode_button.height = dp(46)
-        self.send_mode_button.bind(
-            on_release=lambda _button: self._switch_mode("send")
-        )
-        mode_row.add_widget(self.send_mode_button)
-        self.receive_mode_button = _button("Ricevi", color=SECONDARY_COLOR)
-        self.receive_mode_button.height = dp(46)
-        self.receive_mode_button.bind(
-            on_release=lambda _button: self._switch_mode("receive")
-        )
-        mode_row.add_widget(self.receive_mode_button)
-        root.add_widget(mode_row)
-
-        self._send_view = self._build_send_view()
-        self._receive_view = self._build_receive_view()
-        self._view_container = BoxLayout()
-        root.add_widget(self._view_container)
+        self._bind_view(root)
         self._switch_mode("send")
-
         self._update_controls()
         return root
 
-    def _switch_mode(self, mode: str) -> None:
-        container = self._view_container
-        if container is None:
-            return
-        target = self._send_view if mode == "send" else self._receive_view
-        if target is None:
-            return
-        container.clear_widgets()
-        container.add_widget(target)
-        if self.send_mode_button is not None:
-            self.send_mode_button.background_color = (
-                ACCENT_COLOR if mode == "send" else SECONDARY_COLOR
-            )
-        if self.receive_mode_button is not None:
-            self.receive_mode_button.background_color = (
-                ACCENT_COLOR if mode == "receive" else SECONDARY_COLOR
+    def _bind_view(self, root: MoonTransferRoot) -> None:
+        missing = sorted(set(VIEW_IDS).difference(root.ids))
+        if missing:
+            raise RuntimeError(
+                "Il layout Android non contiene gli id richiesti: "
+                + ", ".join(missing)
             )
 
-    def _build_send_view(self) -> ScrollView:
-        scroll = ScrollView(do_scroll_x=False)
-        content = BoxLayout(
-            orientation="vertical",
-            spacing=dp(12),
-            padding=(0, dp(12), 0, dp(24)),
-            size_hint_y=None,
+        ids = root.ids
+        self.build_info_button = ids["build_info_button"]
+        self.send_mode_button = ids["send_mode_button"]
+        self.receive_mode_button = ids["receive_mode_button"]
+        self._view_manager = ids["view_manager"]
+        self.transport_status = ids["transport_status"]
+        self.probe_button = ids["probe_button"]
+        self.select_button = ids["select_button"]
+        self.send_button = ids["send_button"]
+        self.cancel_button = ids["cancel_button"]
+        self.copy_button = ids["copy_button"]
+        self.file_status = ids["file_status"]
+        self.send_status = ids["send_status"]
+        self.code_input = ids["code_input"]
+        self.progress_bar = ids["progress_bar"]
+        self.progress_details = ids["progress_details"]
+        self.receive_code_input = ids["receive_code_input"]
+        self.receive_start_button = ids["receive_start_button"]
+        self.receive_proposal = ids["receive_proposal"]
+        self.receive_accept_button = ids["receive_accept_button"]
+        self.receive_reject_button = ids["receive_reject_button"]
+        self.receive_save_button = ids["receive_save_button"]
+        self.receive_cancel_button = ids["receive_cancel_button"]
+        self.receive_progress_bar = ids["receive_progress_bar"]
+        self.receive_progress_details = ids["receive_progress_details"]
+        self.receive_status = ids["receive_status"]
+
+        self.build_info_button.bind(on_release=self._show_build_info)
+        self.send_mode_button.bind(
+            on_release=lambda _button: self._switch_mode("send")
         )
-        content.bind(minimum_height=content.setter("height"))
-
-        content.add_widget(
-            _wrapped_label(
-                "Invia un file a MoonTransfer su un altro dispositivo.",
-                font_size=16,
-                color=TEXT_COLOR,
-                minimum_height=40,
-            )
+        self.receive_mode_button.bind(
+            on_release=lambda _button: self._switch_mode("receive")
         )
-
-        self.select_button = _button("Seleziona file")
         self.select_button.bind(on_release=self._open_file_picker)
-        content.add_widget(self.select_button)
-
-        self.file_status = _wrapped_label("Nessun file selezionato.")
-        content.add_widget(self.file_status)
-
-        self.send_button = _button("Prepara e invia")
         self.send_button.bind(on_release=self._start_send)
-        content.add_widget(self.send_button)
-
-        content.add_widget(
-            _wrapped_label(
-                "Codice da comunicare al destinatario",
-                color=TEXT_COLOR,
-                minimum_height=30,
-            )
-        )
-        code_row = BoxLayout(
-            orientation="horizontal",
-            spacing=dp(8),
-            size_hint_y=None,
-            height=dp(48),
-        )
-        self.code_input = TextInput(
-            readonly=True,
-            multiline=False,
-            hint_text="Il codice apparirà durante la preparazione",
-            size_hint=(1, None),
-            height=dp(48),
-            font_size=sp(14),
-        )
-        code_row.add_widget(self.code_input)
-        self.copy_button = _button("Copia", color=SECONDARY_COLOR)
-        self.copy_button.size_hint_x = None
-        self.copy_button.width = dp(88)
         self.copy_button.bind(on_release=self._copy_code)
-        code_row.add_widget(self.copy_button)
-        content.add_widget(code_row)
-
-        self.progress_bar = ProgressBar(
-            max=100,
-            value=0,
-            size_hint_y=None,
-            height=dp(18),
-        )
-        content.add_widget(self.progress_bar)
-        self.progress_details = _wrapped_label(
-            "0 B / - | Velocità - | Trascorso - | Rimanente -",
-            minimum_height=38,
-        )
-        content.add_widget(self.progress_details)
-
-        self.send_status = _wrapped_label(
-            "Seleziona un file per iniziare.",
-            color=TEXT_COLOR,
-            minimum_height=44,
-        )
-        content.add_widget(self.send_status)
-
-        self.cancel_button = _button("Interrompi", color=(0.67, 0.20, 0.24, 1))
         self.cancel_button.bind(on_release=self._cancel_send)
-        content.add_widget(self.cancel_button)
-
-        self.transport_status = _wrapped_label(
-            (
-                "Trasporto croc: pronto per la verifica"
-                if platform == "android"
-                else "Trasporto croc: verifica disponibile nell'APK Android"
-            ),
-            minimum_height=38,
-        )
-        content.add_widget(self.transport_status)
-        self.probe_button = _button("Verifica trasporto", color=SECONDARY_COLOR)
         self.probe_button.bind(on_release=self._start_transport_probe)
-        content.add_widget(self.probe_button)
-
-        scroll.add_widget(content)
-        return scroll
-
-    def _build_receive_view(self) -> ScrollView:
-        scroll = ScrollView(do_scroll_x=False)
-        content = BoxLayout(
-            orientation="vertical",
-            spacing=dp(12),
-            padding=(0, dp(12), 0, dp(24)),
-            size_hint_y=None,
-        )
-        content.bind(minimum_height=content.setter("height"))
-
-        content.add_widget(
-            _wrapped_label(
-                "Ricevi un file inviato da MoonTransfer.",
-                font_size=16,
-                color=TEXT_COLOR,
-                minimum_height=40,
-            )
-        )
-        content.add_widget(
-            _wrapped_label(
-                "Codice comunicato dal mittente",
-                color=TEXT_COLOR,
-                minimum_height=30,
-            )
-        )
-        self.receive_code_input = TextInput(
-            multiline=False,
-            hint_text="Codice di trasferimento",
-            size_hint_y=None,
-            height=dp(48),
-            font_size=sp(14),
-        )
         self.receive_code_input.bind(
             text=lambda _widget, _value: self._update_controls()
         )
-        content.add_widget(self.receive_code_input)
-
-        self.receive_start_button = _button("Ricevi informazioni")
         self.receive_start_button.bind(on_release=self._start_receive)
-        content.add_widget(self.receive_start_button)
-
-        self.receive_proposal = _wrapped_label(
-            "Nessuna proposta ricevuta.",
-            minimum_height=72,
-        )
-        content.add_widget(self.receive_proposal)
-
-        decision_row = BoxLayout(
-            orientation="horizontal",
-            spacing=dp(8),
-            size_hint_y=None,
-            height=dp(48),
-        )
-        self.receive_reject_button = _button(
-            "Rifiuta",
-            color=(0.67, 0.20, 0.24, 1),
-        )
         self.receive_reject_button.bind(on_release=self._reject_receive)
-        decision_row.add_widget(self.receive_reject_button)
-        self.receive_accept_button = _button(
-            "Accetta",
-            color=(0.18, 0.50, 0.31, 1),
-        )
         self.receive_accept_button.bind(on_release=self._accept_receive)
-        decision_row.add_widget(self.receive_accept_button)
-        content.add_widget(decision_row)
-
-        self.receive_progress_bar = ProgressBar(
-            max=100,
-            value=0,
-            size_hint_y=None,
-            height=dp(18),
-        )
-        content.add_widget(self.receive_progress_bar)
-        self.receive_progress_details = _wrapped_label(
-            "0 B / - | Velocità - | Trascorso - | Rimanente -",
-            minimum_height=38,
-        )
-        content.add_widget(self.receive_progress_details)
-
-        self.receive_status = _wrapped_label(
-            "Inserisci il codice per ricevere le informazioni sul file.",
-            color=TEXT_COLOR,
-            minimum_height=52,
-        )
-        content.add_widget(self.receive_status)
-
-        self.receive_save_button = _button("Scegli dove salvare")
         self.receive_save_button.bind(on_release=self._open_save_picker)
-        content.add_widget(self.receive_save_button)
-
-        self.receive_cancel_button = _button(
-            "Interrompi",
-            color=(0.67, 0.20, 0.24, 1),
-        )
         self.receive_cancel_button.bind(on_release=self._cancel_receive)
-        content.add_widget(self.receive_cancel_button)
 
-        scroll.add_widget(content)
-        return scroll
+    def _switch_mode(self, mode: str) -> None:
+        manager = self._view_manager
+        if manager is None or mode not in {"send", "receive"}:
+            return
+        manager.current = mode
+        if self.send_mode_button is not None:
+            self.send_mode_button.button_color = (
+                ACCENT_COLOR if mode == "send" else SECONDARY_COLOR
+            )
+        if self.receive_mode_button is not None:
+            self.receive_mode_button.button_color = (
+                ACCENT_COLOR if mode == "receive" else SECONDARY_COLOR
+            )
 
     def on_start(self) -> None:
         if platform != "android":
