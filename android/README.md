@@ -373,6 +373,13 @@ Android dependencies live in this directory's own `pyproject.toml` and
 receives a generated source tree, while `MoonTransfer.spec` continues to package
 `src/moontransfer/app.py` for desktop systems.
 
+The Android main-screen widget hierarchy and static styling live in
+`app/moontransfer_android/moontransfer.kv`. `application.py` loads that file,
+validates every required widget identifier and binds events in Python. The KV
+file remains declarative: transfer state, lifecycle recovery, service commands
+and user actions stay in Python rather than being embedded in presentation
+expressions.
+
 The generated package intentionally excludes these Qt-specific modules:
 
 - `app.py`;

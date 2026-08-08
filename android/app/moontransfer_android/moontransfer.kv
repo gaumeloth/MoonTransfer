@@ -1,0 +1,256 @@
+#:kivy 2.3.1
+#:import dp kivy.metrics.dp
+#:import sp kivy.metrics.sp
+#:import NoTransition kivy.uix.screenmanager.NoTransition
+
+<MoonWrappedLabel>:
+    color: self.label_color
+    font_size: sp(14)
+    halign: "left"
+    valign: "middle"
+    size_hint_y: None
+    text_size: self.width, None
+    height: max(self.minimum_height, self.texture_size[1] + dp(8))
+
+<MoonActionButton>:
+    size_hint_y: None
+    height: dp(48)
+    background_normal: ""
+    background_down: ""
+    background_color: self.button_color
+    color: app.text_color
+    font_size: sp(15)
+
+MoonTransferRoot:
+    orientation: "vertical"
+    spacing: dp(12)
+    padding: dp(20), dp(18), dp(20), dp(12)
+
+    BoxLayout:
+        orientation: "horizontal"
+        spacing: dp(12)
+        size_hint_y: None
+        height: dp(82)
+
+        Image:
+            source: app.icon
+            size_hint: None, None
+            size: dp(72), dp(72)
+            fit_mode: "contain"
+
+        BoxLayout:
+            orientation: "vertical"
+
+            MoonWrappedLabel:
+                text: "MoonTransfer"
+                font_size: sp(25)
+                label_color: app.text_color
+                minimum_height: dp(38)
+
+            MoonWrappedLabel:
+                text: app.build_subtitle
+                minimum_height: dp(40)
+
+        MoonActionButton:
+            id: build_info_button
+            text: "i"
+            button_color: app.secondary_color
+            size_hint: None, None
+            size: dp(42), dp(42)
+            font_size: sp(20)
+
+    BoxLayout:
+        orientation: "horizontal"
+        spacing: dp(2)
+        size_hint_y: None
+        height: dp(46)
+
+        MoonActionButton:
+            id: send_mode_button
+            text: "Invia"
+            height: dp(46)
+
+        MoonActionButton:
+            id: receive_mode_button
+            text: "Ricevi"
+            button_color: app.secondary_color
+            height: dp(46)
+
+    ScreenManager:
+        id: view_manager
+        transition: NoTransition()
+
+        Screen:
+            name: "send"
+
+            ScrollView:
+                do_scroll_x: False
+
+                BoxLayout:
+                    orientation: "vertical"
+                    spacing: dp(12)
+                    padding: 0, dp(12), 0, dp(24)
+                    size_hint_y: None
+                    height: self.minimum_height
+
+                    MoonWrappedLabel:
+                        text: "Invia un file a MoonTransfer su un altro dispositivo."
+                        font_size: sp(16)
+                        label_color: app.text_color
+                        minimum_height: dp(40)
+
+                    MoonActionButton:
+                        id: select_button
+                        text: "Seleziona file"
+
+                    MoonWrappedLabel:
+                        id: file_status
+                        text: "Nessun file selezionato."
+
+                    MoonActionButton:
+                        id: send_button
+                        text: "Prepara e invia"
+
+                    MoonWrappedLabel:
+                        text: "Codice da comunicare al destinatario"
+                        label_color: app.text_color
+                        minimum_height: dp(30)
+
+                    BoxLayout:
+                        orientation: "horizontal"
+                        spacing: dp(8)
+                        size_hint_y: None
+                        height: dp(48)
+
+                        TextInput:
+                            id: code_input
+                            readonly: True
+                            multiline: False
+                            hint_text: "Il codice apparirà durante la preparazione"
+                            size_hint: 1, None
+                            height: dp(48)
+                            font_size: sp(14)
+
+                        MoonActionButton:
+                            id: copy_button
+                            text: "Copia"
+                            button_color: app.secondary_color
+                            size_hint_x: None
+                            width: dp(88)
+
+                    ProgressBar:
+                        id: progress_bar
+                        max: 100
+                        value: 0
+                        size_hint_y: None
+                        height: dp(18)
+
+                    MoonWrappedLabel:
+                        id: progress_details
+                        text: "0 B / - | Velocità - | Trascorso - | Rimanente -"
+                        minimum_height: dp(38)
+
+                    MoonWrappedLabel:
+                        id: send_status
+                        text: "Seleziona un file per iniziare."
+                        label_color: app.text_color
+                        minimum_height: dp(44)
+
+                    MoonActionButton:
+                        id: cancel_button
+                        text: "Interrompi"
+                        button_color: app.destructive_color
+
+                    MoonWrappedLabel:
+                        id: transport_status
+                        text: app.initial_transport_status
+                        minimum_height: dp(38)
+
+                    MoonActionButton:
+                        id: probe_button
+                        text: "Verifica trasporto"
+                        button_color: app.secondary_color
+
+        Screen:
+            name: "receive"
+
+            ScrollView:
+                do_scroll_x: False
+
+                BoxLayout:
+                    orientation: "vertical"
+                    spacing: dp(12)
+                    padding: 0, dp(12), 0, dp(24)
+                    size_hint_y: None
+                    height: self.minimum_height
+
+                    MoonWrappedLabel:
+                        text: "Ricevi un file inviato da MoonTransfer."
+                        font_size: sp(16)
+                        label_color: app.text_color
+                        minimum_height: dp(40)
+
+                    MoonWrappedLabel:
+                        text: "Codice comunicato dal mittente"
+                        label_color: app.text_color
+                        minimum_height: dp(30)
+
+                    TextInput:
+                        id: receive_code_input
+                        multiline: False
+                        hint_text: "Codice di trasferimento"
+                        size_hint_y: None
+                        height: dp(48)
+                        font_size: sp(14)
+
+                    MoonActionButton:
+                        id: receive_start_button
+                        text: "Ricevi informazioni"
+
+                    MoonWrappedLabel:
+                        id: receive_proposal
+                        text: "Nessuna proposta ricevuta."
+                        minimum_height: dp(72)
+
+                    BoxLayout:
+                        orientation: "horizontal"
+                        spacing: dp(8)
+                        size_hint_y: None
+                        height: dp(48)
+
+                        MoonActionButton:
+                            id: receive_reject_button
+                            text: "Rifiuta"
+                            button_color: app.destructive_color
+
+                        MoonActionButton:
+                            id: receive_accept_button
+                            text: "Accetta"
+                            button_color: app.confirm_color
+
+                    ProgressBar:
+                        id: receive_progress_bar
+                        max: 100
+                        value: 0
+                        size_hint_y: None
+                        height: dp(18)
+
+                    MoonWrappedLabel:
+                        id: receive_progress_details
+                        text: "0 B / - | Velocità - | Trascorso - | Rimanente -"
+                        minimum_height: dp(38)
+
+                    MoonWrappedLabel:
+                        id: receive_status
+                        text: "Inserisci il codice per ricevere le informazioni sul file."
+                        label_color: app.text_color
+                        minimum_height: dp(52)
+
+                    MoonActionButton:
+                        id: receive_save_button
+                        text: "Scegli dove salvare"
+
+                    MoonActionButton:
+                        id: receive_cancel_button
+                        text: "Interrompi"
+                        button_color: app.destructive_color

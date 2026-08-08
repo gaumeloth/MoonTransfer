@@ -399,6 +399,13 @@ runtime. Buildozer riceve un albero sorgente generato, mentre
 `MoonTransfer.spec` continua a creare i pacchetti di
 `src/moontransfer/app.py` per i sistemi desktop.
 
+La gerarchia dei widget della schermata principale Android e lo stile statico si trovano in
+`app/moontransfer_android/moontransfer.kv`. `application.py` carica questo file,
+valida ogni identificatore di widget richiesto e collega gli eventi in Python.
+Il file KV rimane dichiarativo: stato del trasferimento, recupero del ciclo di
+vita, comandi del servizio e azioni dell'utente restano in Python invece di
+essere incorporati in espressioni di presentazione.
+
 Il pacchetto generato esclude intenzionalmente questi moduli specifici di Qt:
 
 - `app.py`;
