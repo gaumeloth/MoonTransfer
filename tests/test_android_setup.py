@@ -310,6 +310,7 @@ class AndroidSourcePreparationTests(unittest.TestCase):
                 (prepared / "moontransfer_android" / "receiver.py").is_file()
             )
             for filename in (
+                "app_state.py",
                 "android_runtime.py",
                 "service.py",
                 "service_client.py",
@@ -480,15 +481,13 @@ class AndroidApplicationLifecycleTests(unittest.TestCase):
         self.assertIn("self._update_controls", finish_calls)
         self.assertIn("self._update_controls", resume_calls)
 
-    def test_release_guard_only_blocks_starting_the_next_service(self) -> None:
+    def test_controls_are_derived_from_the_connected_service(self) -> None:
         controls_source = ast.unparse(self.method("_update_controls"))
 
+        self.assertIn("derive_android_control_state", controls_source)
+        self.assertIn("service_operation=service_operation", controls_source)
         self.assertIn(
-            "transfer_active = send_active or receive_active",
-            controls_source,
-        )
-        self.assertIn(
-            "service_start_blocked = transfer_active or service_releasing",
+            "service_releasing=self._service_is_releasing()",
             controls_source,
         )
 
@@ -499,9 +498,21 @@ class AndroidApplicationLifecycleTests(unittest.TestCase):
         )
 
         self.assertIn("self._service_heartbeat.timed_out(snapshot)", poll_source)
+        self.assertIn(
+            "self._service_heartbeat.snapshot_unavailable_timed_out()",
+            poll_source,
+        )
         self.assertIn("client.stop()", recovery_source)
         self.assertIn("self._release_service(client)", recovery_source)
         self.assertIn("cleanup_staging_parent", recovery_source)
+
+    def test_snapshot_projection_must_match_the_service_request(self) -> None:
+        attach_source = ast.unparse(self.method("_attach_service"))
+        poll_source = ast.unparse(self.method("_poll_transfer_service"))
+
+        expected = "expected_operation=client.operation"
+        self.assertIn(expected, attach_source)
+        self.assertIn(expected, poll_source)
 
 
 class AndroidNotificationSourceTests(unittest.TestCase):

@@ -33,6 +33,12 @@ from moontransfer.protocol import (
     validate_croc_code,
 )
 from moontransfer.resources import APP_ICON_PATH
+from moontransfer_android.app_state import (
+    AndroidControlContext,
+    ServiceSnapshotProjection,
+    derive_android_control_state,
+    project_service_snapshot,
+)
 from moontransfer_android.receiver import AndroidReceiveState
 from moontransfer_android.sender import AndroidSendState
 from moontransfer_android.service_client import (
@@ -68,26 +74,6 @@ SUCCESS_COLOR = (0.40, 0.82, 0.57, 1)
 ERROR_COLOR = (0.95, 0.45, 0.45, 1)
 ACCENT_COLOR = (0.20, 0.52, 0.88, 1)
 SECONDARY_COLOR = (0.20, 0.22, 0.27, 1)
-ACTIVE_SEND_STATES = frozenset(
-    {
-        AndroidSendState.PREPARING,
-        AndroidSendState.SENDING_METADATA,
-        AndroidSendState.AWAITING_DECISION,
-        AndroidSendState.SENDING_FILE,
-    }
-)
-ACTIVE_RECEIVE_STATES = frozenset(
-    {
-        AndroidReceiveState.PREPARING,
-        AndroidReceiveState.RECEIVING_METADATA,
-        AndroidReceiveState.AWAITING_DECISION,
-        AndroidReceiveState.RESPONDING_TO_DECISION,
-        AndroidReceiveState.RECEIVING_FILE,
-        AndroidReceiveState.VERIFYING,
-        AndroidReceiveState.AWAITING_SAVE,
-        AndroidReceiveState.SAVING,
-    }
-)
 
 
 def _wrapped_label(
@@ -174,6 +160,7 @@ class MoonTransferAndroidApp(App):
         self._service_client: TransferServiceClient | None = None
         self._service_heartbeat = TransferServiceHeartbeatMonitor()
         self._service_revision = -1
+        self._service_snapshot_error: str | None = None
         self._service_command_error: str | None = None
         self._handled_terminal_session: str | None = None
         self._save_prompted_session: str | None = None
@@ -520,8 +507,11 @@ class MoonTransferAndroidApp(App):
             )
 
         service_active = bool(
-            recovered_snapshot is not None
-            and not recovered_snapshot.service_done
+            recovered_client is not None
+            and (
+                recovered_snapshot is None
+                or not recovered_snapshot.service_done
+            )
         )
         if not service_active:
             cleanup_staging_parent(self._staging_parent)
@@ -539,8 +529,11 @@ class MoonTransferAndroidApp(App):
             self._poll_transfer_service,
             0.2,
         )
-        if recovered_client is not None and recovered_snapshot is not None:
-            self._attach_service(recovered_client, recovered_snapshot)
+        if recovered_client is not None:
+            if recovered_snapshot is None:
+                self._attach_pending_service(recovered_client)
+            else:
+                self._attach_service(recovered_client, recovered_snapshot)
         if not service_active:
             self._start_transport_probe()
 
@@ -742,7 +735,6 @@ class MoonTransferAndroidApp(App):
         else:
             self._selected_document = None
             self._activate_service(client)
-            self._send_state = AndroidSendState.PREPARING
             self._poll_transfer_service()
         self._update_controls()
 
@@ -878,7 +870,6 @@ class MoonTransferAndroidApp(App):
             self._show_error("Ricezione non avviata", str(error))
         else:
             self._activate_service(client)
-            self._receive_state = AndroidReceiveState.PREPARING
             self._poll_transfer_service()
         self._update_controls()
 
@@ -1077,16 +1068,29 @@ class MoonTransferAndroidApp(App):
         self._service_heartbeat.reset()
         self._service_client = client
         self._service_revision = -1
+        self._service_snapshot_error = None
         self._service_command_error = None
         self._handled_terminal_session = None
         self._save_prompted_session = None
         self._service_available_after = 0.0
         if client.operation is TransferServiceOperation.SEND:
+            self._send_state = AndroidSendState.PREPARING
             self._receive_state = AndroidReceiveState.IDLE
             self._switch_mode("send")
         else:
             self._send_state = AndroidSendState.IDLE
+            self._receive_state = AndroidReceiveState.PREPARING
             self._switch_mode("receive")
+        self._update_controls()
+
+    def _attach_pending_service(self, client: TransferServiceClient) -> None:
+        self._activate_service(client)
+        message = "Riconnessione al servizio di trasferimento in corso..."
+        if client.operation is TransferServiceOperation.SEND:
+            self._on_send_status(message)
+        else:
+            self._on_receive_status(message)
+        self._poll_transfer_service()
 
     def _attach_service(
         self,
@@ -1095,9 +1099,22 @@ class MoonTransferAndroidApp(App):
     ) -> None:
         self._activate_service(client)
         try:
-            self._apply_service_snapshot(snapshot)
+            projection = project_service_snapshot(
+                snapshot,
+                expected_operation=client.operation,
+            )
         except TransferServiceError as error:
-            self._show_error("Servizio di trasferimento", str(error))
+            self._handle_unresponsive_service(
+                client,
+                message=(
+                    "Lo stato salvato del servizio non è valido. "
+                    "La sessione incompleta è stata rimossa; avvia un nuovo "
+                    f"trasferimento. Dettaglio: {error}"
+                ),
+            )
+            return
+        self._service_heartbeat.timed_out(snapshot)
+        self._apply_service_snapshot(snapshot, projection)
         if snapshot.service_done:
             self._release_service(client)
 
@@ -1108,27 +1125,46 @@ class MoonTransferAndroidApp(App):
             return
         try:
             snapshot = client.snapshot()
+            projection = project_service_snapshot(
+                snapshot,
+                expected_operation=client.operation,
+            )
         except TransferServiceError as error:
-            message = f"Stato del servizio non leggibile: {error}"
-            if self._service_command_error != message:
-                self._service_command_error = message
-                self._show_error("Servizio di trasferimento", message)
+            detail = str(error)
+            if self._service_snapshot_error != detail:
+                self._service_snapshot_error = detail
+                print(
+                    f"[service] stato temporaneamente non disponibile: {detail}",
+                    flush=True,
+                )
+            if self._service_heartbeat.snapshot_unavailable_timed_out():
+                self._handle_unresponsive_service(
+                    client,
+                    message=(
+                        "Lo stato del servizio è rimasto non leggibile. "
+                        "La sessione incompleta è stata rimossa; avvia un "
+                        f"nuovo trasferimento. Dettaglio: {detail}"
+                    ),
+                )
             return
 
+        self._service_snapshot_error = None
         if self._service_heartbeat.timed_out(snapshot):
-            self._handle_unresponsive_service(client, snapshot)
+            self._handle_unresponsive_service(
+                client,
+                snapshot=snapshot,
+                projection=projection,
+                message=(
+                    "Il servizio di trasferimento non risponde. "
+                    "La sessione incompleta è stata rimossa; avvia un nuovo "
+                    "trasferimento."
+                ),
+            )
             return
 
         if snapshot.revision != self._service_revision:
             self._service_revision = snapshot.revision
-            try:
-                self._apply_service_snapshot(snapshot)
-            except TransferServiceError as error:
-                message = str(error)
-                if self._service_command_error != message:
-                    self._service_command_error = message
-                    self._show_error("Servizio di trasferimento", message)
-                return
+            self._apply_service_snapshot(snapshot, projection)
 
         if snapshot.command_error != self._service_command_error:
             self._service_command_error = snapshot.command_error
@@ -1144,33 +1180,32 @@ class MoonTransferAndroidApp(App):
     def _handle_unresponsive_service(
         self,
         client: TransferServiceClient,
-        snapshot: TransferServiceSnapshot,
+        *,
+        message: str,
+        snapshot: TransferServiceSnapshot | None = None,
+        projection: ServiceSnapshotProjection | None = None,
     ) -> None:
         if self._service_client is not client:
             return
 
-        if snapshot.terminal:
+        if snapshot is not None and projection is not None and snapshot.terminal:
             if snapshot.revision != self._service_revision:
                 self._service_revision = snapshot.revision
-                try:
-                    self._apply_service_snapshot(snapshot)
-                except TransferServiceError:
-                    pass
+                self._apply_service_snapshot(snapshot, projection)
         else:
-            message = (
-                "Il servizio di trasferimento non è più attivo. "
-                "La sessione incompleta è stata rimossa; avvia un nuovo "
-                "trasferimento."
-            )
-            if snapshot.operation is TransferServiceOperation.SEND:
+            if client.operation is TransferServiceOperation.SEND:
                 self._on_send_finished(AndroidSendState.FAILED, message)
             else:
                 self._on_receive_finished(AndroidReceiveState.FAILED, message)
 
         try:
             client.stop()
-        except Exception:
-            pass
+        except Exception as error:
+            print(
+                "[service] arresto forzato non riuscito: "
+                f"{type(error).__name__}: {error}",
+                flush=True,
+            )
         self._release_service(client)
         cleanup_staging_parent(self._staging_parent)
         cleanup_staging_parent(self._sessions_parent)
@@ -1178,15 +1213,15 @@ class MoonTransferAndroidApp(App):
     def _apply_service_snapshot(
         self,
         snapshot: TransferServiceSnapshot,
+        projection: ServiceSnapshotProjection,
     ) -> None:
-        if snapshot.operation is TransferServiceOperation.SEND:
-            try:
-                state = AndroidSendState(snapshot.state)
-            except ValueError as error:
+        if projection.operation is TransferServiceOperation.SEND:
+            state = projection.state
+            if not isinstance(state, AndroidSendState):
                 raise TransferServiceError(
-                    f"Stato di invio non riconosciuto: {snapshot.state}"
-                ) from error
-            self._switch_mode("send")
+                    "Proiezione dello stato di invio non valida."
+                )
+            self._switch_mode(projection.mode)
             self._on_send_state(state)
             self._on_send_status(snapshot.status)
             if snapshot.proposal is not None and snapshot.code is not None:
@@ -1201,13 +1236,12 @@ class MoonTransferAndroidApp(App):
                 self._on_send_finished(state, snapshot.status)
             return
 
-        try:
-            state = AndroidReceiveState(snapshot.state)
-        except ValueError as error:
+        state = projection.state
+        if not isinstance(state, AndroidReceiveState):
             raise TransferServiceError(
-                f"Stato di ricezione non riconosciuto: {snapshot.state}"
-            ) from error
-        self._switch_mode("receive")
+                "Proiezione dello stato di ricezione non valida."
+            )
+        self._switch_mode(projection.mode)
         self._on_receive_state(state)
         self._on_receive_status(snapshot.status)
         if snapshot.proposal is not None:
@@ -1243,6 +1277,7 @@ class MoonTransferAndroidApp(App):
         self._service_client = None
         self._service_heartbeat.reset()
         self._service_revision = -1
+        self._service_snapshot_error = None
         self._cancel_service_release_event()
         self._service_available_after = time.monotonic() + 1.0
         self._service_release_event = Clock.schedule_once(
@@ -1329,66 +1364,55 @@ class MoonTransferAndroidApp(App):
         popup.open()
 
     def _update_controls(self) -> None:
-        send_active = self._send_state in ACTIVE_SEND_STATES
-        receive_state = self._receive_state
-        receive_active = receive_state in ACTIVE_RECEIVE_STATES
-        service_releasing = self._service_is_releasing()
-        transfer_active = send_active or receive_active
-        service_start_blocked = transfer_active or service_releasing
         picker_pending = bool(self._picker and self._picker.pending)
         save_picker_pending = bool(
             self._save_picker and self._save_picker.pending
         )
-        if self.select_button is not None:
-            self.select_button.disabled = (
-                platform != "android"
-                or self._staging
-                or transfer_active
-                or picker_pending
-                or save_picker_pending
-            )
-        if self.send_button is not None:
-            self.send_button.disabled = (
-                self._selected_document is None
-                or self._transport_executable is None
-                or self._staging
-                or service_start_blocked
-            )
-        if self.cancel_button is not None:
-            self.cancel_button.disabled = not send_active
-        if self.copy_button is not None:
-            self.copy_button.disabled = self._code is None
-        if self.receive_code_input is not None:
-            self.receive_code_input.disabled = transfer_active
-        if self.receive_start_button is not None:
-            self.receive_start_button.disabled = (
-                platform != "android"
-                or self._transport_executable is None
-                or service_start_blocked
-                or self._staging
-                or picker_pending
-                or save_picker_pending
-                or not self._receive_code_is_valid()
-            )
-        awaiting_decision = (
-            receive_state == AndroidReceiveState.AWAITING_DECISION
+        service_operation = (
+            self._service_client.operation
+            if self._service_client is not None
+            else None
         )
+        controls = derive_android_control_state(
+            AndroidControlContext(
+                is_android=platform == "android",
+                send_state=self._send_state,
+                receive_state=self._receive_state,
+                service_operation=service_operation,
+                service_releasing=self._service_is_releasing(),
+                has_selected_document=self._selected_document is not None,
+                transport_available=self._transport_executable is not None,
+                staging=self._staging,
+                file_picker_pending=picker_pending,
+                save_picker_available=self._save_picker is not None,
+                save_picker_pending=save_picker_pending,
+                probing=self._probing,
+                send_code_available=self._code is not None,
+                receive_code_valid=self._receive_code_is_valid(),
+            )
+        )
+        if self.select_button is not None:
+            self.select_button.disabled = not controls.select_file
+        if self.send_button is not None:
+            self.send_button.disabled = not controls.start_send
+        if self.cancel_button is not None:
+            self.cancel_button.disabled = not controls.cancel_send
+        if self.copy_button is not None:
+            self.copy_button.disabled = not controls.copy_code
+        if self.receive_code_input is not None:
+            self.receive_code_input.disabled = not controls.edit_receive_code
+        if self.receive_start_button is not None:
+            self.receive_start_button.disabled = not controls.start_receive
         if self.receive_accept_button is not None:
-            self.receive_accept_button.disabled = not awaiting_decision
+            self.receive_accept_button.disabled = not controls.accept_receive
         if self.receive_reject_button is not None:
-            self.receive_reject_button.disabled = not awaiting_decision
+            self.receive_reject_button.disabled = not controls.reject_receive
         if self.receive_save_button is not None:
-            self.receive_save_button.disabled = (
-                receive_state != AndroidReceiveState.AWAITING_SAVE
-                or self._save_picker is None
-                or save_picker_pending
-            )
+            self.receive_save_button.disabled = not controls.save_receive
         if self.receive_cancel_button is not None:
-            self.receive_cancel_button.disabled = not receive_active
+            self.receive_cancel_button.disabled = not controls.cancel_receive
         if self.probe_button is not None:
-            self.probe_button.disabled = (
-                platform != "android" or self._probing or transfer_active
-            )
+            self.probe_button.disabled = not controls.probe_transport
 
     def _receive_code_is_valid(self) -> bool:
         if self.receive_code_input is None:

@@ -10,21 +10,22 @@ from moontransfer_android.android_runtime import (
 )
 from moontransfer_android.service_protocol import (
     TransferServiceCommandName,
+    TransferServiceError,
     TransferServiceOperation,
     TransferServiceRequest,
     TransferServiceSnapshot,
     cleanup_service_session,
     create_receive_service_request,
     create_send_service_request,
-    discover_service_snapshots,
-    read_service_request,
+    discover_service_requests,
     read_service_snapshot,
     submit_service_command,
 )
 from moontransfer_android.storage import StagedDocument
 
 
-SERVICE_HEARTBEAT_TIMEOUT_SECONDS = 5.0
+SERVICE_HEARTBEAT_TIMEOUT_SECONDS = 15.0
+SERVICE_SNAPSHOT_UNAVAILABLE_TIMEOUT_SECONDS = 15.0
 
 
 class TransferServiceHeartbeatMonitor:
@@ -32,20 +33,43 @@ class TransferServiceHeartbeatMonitor:
         self,
         *,
         timeout_seconds: float = SERVICE_HEARTBEAT_TIMEOUT_SECONDS,
+        snapshot_unavailable_timeout_seconds: float = (
+            SERVICE_SNAPSHOT_UNAVAILABLE_TIMEOUT_SECONDS
+        ),
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if timeout_seconds <= 0:
             raise ValueError("Il timeout dell'heartbeat deve essere positivo.")
+        if snapshot_unavailable_timeout_seconds <= 0:
+            raise ValueError(
+                "Il timeout di lettura dello stato deve essere positivo."
+            )
         self.timeout_seconds = timeout_seconds
+        self.snapshot_unavailable_timeout_seconds = (
+            snapshot_unavailable_timeout_seconds
+        )
         self.clock = clock
         self._heartbeat_ns: int | None = None
         self._observed_at: float | None = None
+        self._snapshot_unavailable_at: float | None = None
 
     def reset(self) -> None:
         self._heartbeat_ns = None
         self._observed_at = None
+        self._snapshot_unavailable_at = None
+
+    def snapshot_unavailable_timed_out(self) -> bool:
+        now = self.clock()
+        if self._snapshot_unavailable_at is None:
+            self._snapshot_unavailable_at = now
+            return False
+        return (
+            now - self._snapshot_unavailable_at
+            >= self.snapshot_unavailable_timeout_seconds
+        )
 
     def timed_out(self, snapshot: TransferServiceSnapshot) -> bool:
+        self._snapshot_unavailable_at = None
         if snapshot.service_done:
             self.reset()
             return False
@@ -169,16 +193,30 @@ class TransferServiceClient:
 def recover_latest_service_client(
     cache_root: Path,
 ) -> tuple[TransferServiceClient | None, TransferServiceSnapshot | None]:
-    snapshots = discover_service_snapshots(cache_root)
-    if not snapshots:
+    requests = discover_service_requests(cache_root)
+    if not requests:
         return None, None
 
-    latest = snapshots[0]
-    for stale in snapshots[1:]:
-        if stale.service_done:
-            cleanup_service_session(cache_root, stale.session_id)
-    request = read_service_request(cache_root, latest.session_id)
-    return TransferServiceClient(cache_root, request), latest
+    latest_request = requests[0]
+    try:
+        latest_snapshot = read_service_snapshot(
+            cache_root,
+            latest_request.session_id,
+        )
+    except TransferServiceError:
+        latest_snapshot = None
+
+    for stale_request in requests[1:]:
+        try:
+            stale_snapshot = read_service_snapshot(
+                cache_root,
+                stale_request.session_id,
+            )
+        except TransferServiceError:
+            continue
+        if stale_snapshot.service_done:
+            cleanup_service_session(cache_root, stale_request.session_id)
+    return TransferServiceClient(cache_root, latest_request), latest_snapshot
 
 
 def request_notification_permission() -> None:

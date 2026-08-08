@@ -204,6 +204,37 @@ release procedure.
 8. Verify that the code field and transfer controls are usable again without
    closing or restarting MoonTransfer.
 
+### Lifecycle and recovery checks
+
+Before treating an Android change as manually validated, also exercise these
+cases with a small, non-sensitive file:
+
+1. Start a send, wait for the code, press Home or switch to the messaging app,
+   then reopen MoonTransfer. The notification must remain available and the GUI
+   must reconnect to the same phase without starting another transfer.
+2. While a transfer is active, remove MoonTransfer from the recent-apps screen
+   and reopen it. Controls that could start a second operation must remain
+   disabled until the existing service finishes or is cancelled.
+3. Rotate the device during metadata exchange, payload transfer and the
+   receiver decision. Activity recreation must not duplicate `croc`, lose the
+   proposal or unlock conflicting controls.
+4. Cancel the source picker before choosing a file. Separately, cancel the save
+   picker after a verified receive, then reopen it with **Scegli dove salvare**
+   (Choose where to save). Both paths must return to usable controls.
+5. Cancel one active transfer with the in-app **Interrompi** action and another
+   with the notification action. Both must stop the same current session and
+   leave no permanently blocked GUI state.
+6. After completion, rejection and cancellation, start another transfer in
+   both directions without restarting the application.
+7. As a destructive recovery test, use Android **Force stop** during a transfer
+   and reopen the app. After the bounded recovery grace period, MoonTransfer
+   must report the abandoned session, remove it and unlock the controls rather
+   than remaining attached indefinitely.
+8. On Android 13 or later, repeat a small transfer after denying notification
+   permission. The transfer must either start under the platform's foreground-
+   service rules or fail with a visible explanation; it must not silently leave
+   an active or blocked session.
+
 If the save picker is cancelled, the verified private copy remains available
 while the foreground transfer service remains active. Press **Scegli dove
 salvare** (Choose where to save) to retry, or **Interrompi** (Stop) to discard
@@ -216,9 +247,13 @@ service. The service is sticky, and removing MoonTransfer from the recent-apps
 screen does not intentionally stop it. Android **Force stop**, a device restart,
 or the operating system actually terminating the service process can still
 interrupt the operation; interrupted transfers are not resumed automatically.
-If the GUI finds persisted active state but receives no service heartbeat, it
-stops any stale service instance, removes the abandoned private session and
-unlocks the controls instead of restoring a transfer that no longer exists.
+When reopening, the GUI first reconnects to the persisted service request and
+briefly tolerates a state snapshot that is temporarily unavailable. While a
+service client is attached, controls cannot start a conflicting operation even
+before the first valid snapshot arrives. If the snapshot remains unreadable or
+the service heartbeat remains unchanged for about 15 seconds, MoonTransfer
+reports the failure, stops any stale service instance, removes the abandoned
+private session and unlocks the controls instead of waiting indefinitely.
 
 The ongoing notification uses an indeterminate bar while MoonTransfer is
 preparing metadata, connecting or verifying, no bar while it is waiting for a
@@ -254,9 +289,15 @@ with restrictive permissions. Only a random session identifier is placed in
 the Android service intent; transfer codes, document paths, state and
 destination content URIs stay in app-private storage. Recreating the activity
 therefore reconstructs the visible state without restarting `croc` or deleting
-an active staging directory. A periodically refreshed heartbeat lets the
-activity distinguish a live background operation from state left behind by a
-terminated service process.
+an active staging directory. Recovery discovers the newest valid request before
+reading its snapshot, so a temporarily missing or unreadable state file is not
+mistaken immediately for the absence of a transfer. Each snapshot is accepted
+only when its session, operation and terminal flag are consistent with the
+request and the Android state machine. The connected service client itself
+keeps conflicting controls disabled. Separate 15-second grace periods for an
+unreadable snapshot and an unchanged heartbeat tolerate short scheduling or
+filesystem stalls while still bounding recovery from a terminated service
+process.
 
 The repository-owned service class rejects an Android sticky restart that does
 not identify a valid session. On Android 15 and later it also handles the

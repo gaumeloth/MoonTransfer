@@ -40,6 +40,7 @@ from moontransfer_android.service_protocol import (  # noqa: E402
     consume_service_commands,
     create_receive_service_request,
     create_send_service_request,
+    discover_service_requests,
     read_service_request,
     read_service_snapshot,
     service_session_dir,
@@ -402,6 +403,31 @@ class AndroidServiceProtocolTests(unittest.TestCase):
             client.cleanup()
             self.assertEqual(recover_latest_service_client(cache_root), (None, None))
 
+    def test_recovery_keeps_the_latest_request_when_its_state_is_unreadable(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_root = Path(tmp) / "cache"
+            older = create_receive_service_request(cache_root, "b" * 32)
+            latest = create_receive_service_request(cache_root, "c" * 32)
+            older_dir = service_session_dir(cache_root, older.session_id)
+            latest_dir = service_session_dir(cache_root, latest.session_id)
+            os.utime(older_dir, ns=(100, 100))
+            os.utime(latest_dir, ns=(200, 200))
+            (latest_dir / "state.json").write_text("{", encoding="ascii")
+
+            requests = discover_service_requests(cache_root)
+            recovered, snapshot = recover_latest_service_client(cache_root)
+
+            self.assertEqual(
+                [request.session_id for request in requests],
+                [latest.session_id, older.session_id],
+            )
+            self.assertIsNotNone(recovered)
+            assert recovered is not None
+            self.assertEqual(recovered.session_id, latest.session_id)
+            self.assertIsNone(snapshot)
+
     def test_client_delegates_forced_service_stop(self) -> None:
         stopped: list[bool] = []
         with tempfile.TemporaryDirectory() as tmp:
@@ -455,6 +481,29 @@ class AndroidServiceProtocolTests(unittest.TestCase):
             self.assertFalse(
                 monitor.timed_out(replace(snapshot, service_done=True))
             )
+
+    def test_unavailable_snapshot_uses_a_separate_bounded_grace_period(self) -> None:
+        now = [10.0]
+        monitor = TransferServiceHeartbeatMonitor(
+            timeout_seconds=5.0,
+            snapshot_unavailable_timeout_seconds=3.0,
+            clock=lambda: now[0],
+        )
+
+        self.assertFalse(monitor.snapshot_unavailable_timed_out())
+        now[0] = 12.9
+        self.assertFalse(monitor.snapshot_unavailable_timed_out())
+        now[0] = 13.0
+        self.assertTrue(monitor.snapshot_unavailable_timed_out())
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_root = Path(tmp) / "cache"
+            request = create_receive_service_request(cache_root, "c" * 32)
+            snapshot = read_service_snapshot(cache_root, request.session_id)
+            self.assertFalse(monitor.timed_out(snapshot))
+
+        now[0] = 20.0
+        self.assertFalse(monitor.snapshot_unavailable_timed_out())
 
 
 class AndroidTransferServiceRuntimeTests(unittest.TestCase):

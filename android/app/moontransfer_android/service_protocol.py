@@ -442,21 +442,31 @@ def read_service_snapshot(
     )
 
 
-def discover_service_snapshots(cache_root: Path) -> tuple[TransferServiceSnapshot, ...]:
+def discover_service_requests(
+    cache_root: Path,
+) -> tuple[TransferServiceRequest, ...]:
     root = service_root(cache_root)
     if not root.is_dir():
         return ()
-    snapshots: list[TransferServiceSnapshot] = []
+    requests: list[tuple[int, TransferServiceRequest]] = []
     for candidate in root.iterdir():
         try:
             stat_result = candidate.lstat()
             if is_link_or_reparse(stat_result) or not candidate.is_dir():
                 continue
             session_id = validate_service_session_id(candidate.name)
-            snapshots.append(read_service_snapshot(cache_root, session_id))
+            request = read_service_request(cache_root, session_id)
+            requests.append((stat_result.st_mtime_ns, request))
         except (OSError, TransferServiceError):
             continue
-    return tuple(sorted(snapshots, key=lambda item: item.heartbeat_ns, reverse=True))
+    return tuple(
+        request
+        for _modified_ns, request in sorted(
+            requests,
+            key=lambda item: item[0],
+            reverse=True,
+        )
+    )
 
 
 def cleanup_service_session(cache_root: Path, session_id: str) -> None:
