@@ -214,6 +214,40 @@ procedura di release per l'utente finale.
 8. Verifica che il campo del codice e i controlli di trasferimento siano di nuovo
    utilizzabili senza chiudere o riavviare MoonTransfer.
 
+### Controlli del ciclo di vita e del recupero
+
+Prima di considerare validata manualmente una modifica Android, verifica anche
+questi casi con un file piccolo e non sensibile:
+
+1. Avvia un invio, attendi il codice, premi Home o passa all'app di
+   messaggistica, quindi riapri MoonTransfer. La notifica deve rimanere
+   disponibile e la GUI deve ricollegarsi alla stessa fase senza avviare un
+   altro trasferimento.
+2. Mentre un trasferimento è attivo, rimuovi MoonTransfer dalla schermata delle
+   applicazioni recenti e riaprilo. I controlli che potrebbero avviare una
+   seconda operazione devono restare disabilitati finché il servizio esistente
+   non termina o viene annullato.
+3. Ruota il dispositivo durante lo scambio dei metadati, il trasferimento del
+   payload e la decisione del destinatario. La ricreazione dell'Activity non
+   deve duplicare `croc`, perdere la proposta o sbloccare controlli in conflitto.
+4. Annulla il selettore della sorgente prima di scegliere un file. Separatamente,
+   annulla il selettore di salvataggio dopo una ricezione verificata, quindi
+   riaprilo con **Scegli dove salvare**. Entrambi i percorsi devono restituire
+   controlli utilizzabili.
+5. Annulla un trasferimento attivo con **Interrompi** nell'app e un altro con
+   l'azione della notifica. Entrambe devono arrestare la stessa sessione corrente
+   senza lasciare la GUI bloccata permanentemente.
+6. Dopo completamento, rifiuto e annullamento, avvia un altro trasferimento in
+   entrambe le direzioni senza riavviare l'applicazione.
+7. Come test distruttivo del recupero, usa **Forza interruzione** di Android
+   durante un trasferimento e riapri l'app. Trascorso il periodo di tolleranza
+   limitato, MoonTransfer deve segnalare la sessione abbandonata, eliminarla e
+   sbloccare i controlli invece di restarvi collegato indefinitamente.
+8. Su Android 13 o successivo, ripeti un piccolo trasferimento dopo aver negato
+   il permesso per le notifiche. Il trasferimento deve avviarsi secondo le regole
+   di piattaforma per i foreground service oppure fallire con una spiegazione
+   visibile; non deve lasciare silenziosamente una sessione attiva o bloccata.
+
 Se il selettore di salvataggio viene annullato, la copia privata verificata
 rimane disponibile finché il foreground service del trasferimento resta attivo.
 Premi **Scegli dove salvare** per riprovare oppure **Interrompi** per eliminarla.
@@ -226,10 +260,14 @@ applicazioni recenti non lo arresta intenzionalmente. Usare **Forza
 interruzione** dalle impostazioni Android, riavviare il dispositivo o una reale
 terminazione del processo del servizio da parte del sistema operativo possono
 ancora interrompere l'operazione; i trasferimenti interrotti non riprendono
-automaticamente. Se la GUI trova uno stato attivo persistito ma non riceve più
-l'heartbeat del servizio, arresta l'eventuale istanza residua, elimina la
-sessione privata abbandonata e sblocca i controlli invece di ripristinare un
-trasferimento che non esiste più.
+automaticamente. Alla riapertura la GUI si ricollega prima alla richiesta del
+servizio persistita e tollera brevemente uno snapshot di stato temporaneamente
+non disponibile. Finché è collegato un client del servizio, i controlli non
+possono avviare un'operazione in conflitto nemmeno prima dell'arrivo del primo
+snapshot valido. Se lo snapshot resta illeggibile o l'heartbeat del servizio
+rimane invariato per circa 15 secondi, MoonTransfer segnala l'errore, arresta
+l'eventuale istanza residua, elimina la sessione privata abbandonata e sblocca i
+controlli invece di attendere indefinitamente.
 
 La notifica persistente usa una barra indeterminata mentre MoonTransfer prepara
 i metadati, si connette o verifica, nessuna barra durante l'attesa di una
@@ -267,9 +305,15 @@ servizio Android viene inserito solamente un identificatore di sessione casuale;
 codici di trasferimento, percorsi dei documenti, stato e content URI di
 destinazione restano nell'area privata dell'app. Ricreare l'Activity ricostruisce
 quindi lo stato visibile senza riavviare `croc` o eliminare una directory di
-staging attiva. Un heartbeat aggiornato periodicamente permette all'Activity di
-distinguere un'operazione in background ancora viva dallo stato lasciato da un
-processo del servizio terminato.
+staging attiva. Il recupero individua la richiesta valida più recente prima di
+leggerne lo snapshot, quindi un file di stato temporaneamente mancante o
+illeggibile non viene subito scambiato per l'assenza di un trasferimento. Ogni
+snapshot viene accettato solo se sessione, operazione e indicatore terminale sono
+coerenti con la richiesta e con la macchina a stati Android. Il client del
+servizio collegato mantiene a sua volta disabilitati i controlli in conflitto.
+Periodi di tolleranza separati di 15 secondi per uno snapshot illeggibile e per
+un heartbeat invariato assorbono brevi ritardi dello scheduler o del filesystem,
+pur mantenendo limitato il recupero da un processo del servizio terminato.
 
 La classe del servizio mantenuta nel repository rifiuta un riavvio sticky di
 Android privo di un identificatore di sessione valido. Su Android 15 e versioni
