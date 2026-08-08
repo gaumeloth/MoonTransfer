@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import configparser
+import json
 import os
 import re
 import tempfile
@@ -357,6 +358,21 @@ class AndroidSourcePreparationTests(unittest.TestCase):
                 "version"
             ]
             self.assertIn(f'__version__ = "{project_version}"', main_source)
+
+            build_info = json.loads(
+                (
+                    prepared / "moontransfer" / "build-info.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(build_info["croc_version"], "11.0.1")
+            self.assertEqual(build_info["protocol_version"], 2)
+            self.assertRegex(
+                build_info["version"],
+                (
+                    r"^0\.1\.0-(?:(?:alpha|beta|rc)\.\d+|"
+                    r"dev(?:\.[0-9a-f]{12})?)$"
+                ),
+            )
 
             config = configparser.ConfigParser(interpolation=None)
             config.read(ROOT / "android" / "buildozer.spec", encoding="utf-8")

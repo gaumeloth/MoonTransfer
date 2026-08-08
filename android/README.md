@@ -19,6 +19,9 @@ The prototype currently provides:
 - a private recipe that verifies and cross-compiles the pinned `croc` source;
 - an Android runtime probe that locates the packaged executable and checks its
   version without exposing a transfer secret;
+- an embedded build identity shown in the header and in a copyable information
+  dialog, including the source commit, bundled `croc`, protocol, Python runtime,
+  and platform without transfer codes or local paths;
 - source selection and verified destination saving through Android's Storage
   Access Framework (SAF);
 - Android-to-desktop sending and desktop-to-Android receiving compatible with
@@ -58,13 +61,13 @@ The relevant versions are:
 | --- | --- | --- |
 | Desktop `v0.1.0-alpha.1` | `10.4.13` | No |
 | Desktop `v0.1.0-alpha.2` and older prototype APKs | `10.7.0` | No |
-| Current desktop source and Android recipe | `11.0.1` | Yes |
+| Desktop `v0.1.0-alpha.3`, current source, and Android recipe | `11.0.1` | Yes |
 
-After this upgrade, rebuild the desktop application and APK, install the new
-APK, and check that its green transport probe reports `croc 11.0.1`. Do not use
-an old debug APK with a current desktop build, or a current APK with a
-published pre-`croc 11` desktop alpha. This boundary is independent of the
-operating system and CPU architecture.
+For compatibility tests, rebuild the APK from the intended revision and check
+that its green transport probe reports `croc 11.0.1`. Do not use an old debug
+APK with a current desktop build, or a current APK with the pre-`croc 11`
+desktop alphas. This boundary is independent of the operating system and CPU
+architecture.
 
 `croc 11` introduced version 2 of its PAKE wire protocol and intentionally
 rejects the earlier handshake. It binds key establishment to the peers, roles,
@@ -135,6 +138,11 @@ Run these commands from the repository root:
 `prepare` recreates the generated source tree under `build/android/source`.
 `run` launches the Kivy scaffold on the desktop for a quick UI smoke test.
 `build` produces a debug APK under `dist/android`.
+
+The preparation step also embeds `build-info.json`. A clean checkout at an
+exact pre-release tag uses that displayed version; otherwise the APK shows a
+development version with the current commit prefix. The information button in
+the header opens the full copyable diagnostic summary.
 
 When the APK starts on Android, it resolves `libcroc.so` from the application's
 native library directory and runs `croc --version` in a worker thread. A green
