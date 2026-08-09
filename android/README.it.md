@@ -17,6 +17,8 @@ Il prototipo attualmente fornisce:
   esplicitamente approvati e indipendenti da Qt;
 - una configurazione Buildozer e python-for-android con versioni fissate;
 - un target APK di debug `arm64-v8a`;
+- un workflow GitHub Actions dedicato che testa, valida e rende disponibile un
+  APK ARM64 di debug utilizzabile per i test di ogni revisione rilevante;
 - una recipe privata che verifica e compila per Android il sorgente `croc`
   fissato;
 - un probe runtime Android che individua l'eseguibile incluso e ne controlla la
@@ -43,15 +45,16 @@ Il prototipo attualmente fornisce:
 
 Rimane un client sperimentale per file regolari. Può trasferire un singolo file
 o un gruppo di file scelti nella stessa operazione del selettore, ma non può
-trasferire cartelle, riprendere un trasferimento interrotto o produrre artefatti
-release per architetture diverse da `arm64-v8a`. Dichiara `INTERNET`, i permessi
-per foreground service richiesti da `dataSync` e il permesso di notifica usato
-per mostrare lo stato del trasferimento. La versione pubblica visibile sulla
-schermata bloccata è volutamente generica: codici di trasferimento, hash,
-percorsi, content URI ed errori tecnici non vengono mai mostrati lì. SAF
-fornisce accesso solo ai documenti o alle directory di destinazione scelti
-esplicitamente dall'utente; non viene richiesto alcun permesso di archiviazione
-esteso.
+trasferire cartelle o riprendere un trasferimento interrotto. Le build
+automatizzate producono attualmente solamente un APK ARM64 di debug; release
+Android firmate e altre architetture non sono implementate. L'app dichiara
+`INTERNET`, i permessi per foreground service richiesti da `dataSync` e il
+permesso di notifica usato per mostrare lo stato del trasferimento. La versione
+pubblica visibile sulla schermata bloccata è volutamente generica: codici di
+trasferimento, hash, percorsi, content URI ed errori tecnici non vengono mai
+mostrati lì. SAF fornisce accesso solo ai documenti o alle directory di
+destinazione scelti esplicitamente dall'utente; non viene richiesto alcun
+permesso di archiviazione esteso.
 
 ## Compatibilità del trasporto
 
@@ -106,7 +109,8 @@ Su Ubuntu, installa i prerequisiti di sistema prima di compilare:
 sudo apt update
 sudo apt install -y git zip unzip openjdk-17-jdk autoconf libtool \
   pkg-config cmake libffi-dev libssl-dev automake autopoint gettext \
-  make gcc g++
+  build-essential libltdl-dev libncurses5-dev libncursesw5-dev \
+  libtinfo6 zlib1g-dev
 ```
 
 Su Arch Linux e derivate come Garuda Linux:
@@ -142,12 +146,18 @@ Esegui questi comandi dalla radice della repository:
 ./scripts/android.sh prepare
 ./scripts/android.sh run
 ./scripts/android.sh build
+./scripts/android.sh package
 ```
 
 `doctor` controlla i prerequisiti del sistema host, incluse le versioni di Java
 e Go. `prepare` ricrea l'albero dei sorgenti generati sotto
 `build/android/source`. `run` avvia lo scaffold Kivy sul desktop per un rapido
 smoke test della GUI. `build` produce un APK di debug sotto `dist/android`.
+Dopo una build riuscita, `package` ne valida struttura, architettura nativa,
+file applicativi richiesti e identità incorporata, quindi prepara una copia
+versionata sotto `release/`. Il wrapper esegue sempre l'ambiente Android bloccato
+con `uv run --frozen`, quindi questi comandi non aggiornano mai implicitamente
+`android/uv.lock`.
 
 La preparazione incorpora anche `build-info.json`. Se il checkout è pulito e la
 revisione coincide con un tag di pre-release esatto, viene mostrata la versione
@@ -163,6 +173,47 @@ avviato sul dispositivo.
 La prima esecuzione può scaricare pacchetti Python, strumenti Android e archivi
 sorgente. I sorgenti generati e gli output di build non devono essere modificati
 o committati.
+
+## Artefatto di integrazione continua
+
+`.github/workflows/android-build.yml` viene eseguito per pull request, push su
+`main`, tag di pre-release e avvii manuali del workflow. Il job Ubuntu 24.04
+installa versioni fissate di `uv`, Python 3.13.14, Java 17, Go 1.25.12 e Rust
+1.97.1, verifica `android/uv.lock`, installa il gruppo bloccato delle dipendenze
+di build, esegue tutti i test `test_android*.py`, avvia `doctor` e crea l'APK di
+debug `arm64-v8a`.
+
+Il workflow memorizza nella cache Android SDK/NDK scaricati e i dati Gradle.
+Intenzionalmente non include ancora nella cache la build nativa molto più grande
+di python-for-android: ciò rende la prima implementazione più semplice da
+invalidare e controllare, al costo di una build pulita più lenta. La decisione
+potrà essere rivalutata dopo aver raccolto tempi e dati di affidabilità della
+cache da esecuzioni reali.
+
+Prima del caricamento, `package` verifica l'APK come archivio ZIP, rifiuta
+percorsi duplicati o non sicuri e asset `.xcf` riservati ai sorgenti, richiede le
+librerie ARM64 attese di `croc`, Python e dell'applicazione, controlla i file
+dell'applicazione privata generata e confronta i metadati incorporati di
+versione, commit, `croc` e protocollo con la build richiesta. `aapt` di Android
+controlla quindi ID dell'applicazione, nome e codice versione, limiti SDK, stato
+debug e architettura nativa dichiarata. Il file grezzo
+`MoonTransfer-<version>-android-arm64-debug.apk` risultante è scaricabile dal
+riepilogo dell'esecuzione del workflow per 14 giorni senza un ulteriore
+contenitore di archivio.
+
+Questo file è solamente un artefatto di test. Non viene allegato alle GitHub
+Release e non è firmato con una chiave di release controllata dal progetto.
+L'identità di firma debug di Buildozer può essere diversa tra build locali e
+runner GitHub, quindi Android può rifiutare un aggiornamento diretto tra esse.
+Disinstallare prima il prototipo esistente risolve la mancata corrispondenza
+della firma, ma elimina anche i dati privati dell'app.
+
+La versione completa della build e il commit sono incorporati in
+`build-info.json`, mentre la versione completa viene usata come `versionName` di
+Android. Durante la fase di prototipo il `versionCode` di Buildozer resta fissato
+a `1`. Prima di pubblicare artefatti Android di release, un flusso di
+distribuzione firmato dovrà sostituire questo valore provvisorio con una politica
+di codici versione monotonicamente crescenti.
 
 ## Testare i trasferimenti con l'applicazione desktop
 
@@ -474,7 +525,12 @@ distribuzione invece di riutilizzare silenziosamente un vecchio eseguibile.
   il tempo disponibile non viene ripristinato;
 - i trasferimenti interrotti non possono ancora riprendere da un payload
   parziale;
-- viene prodotto solamente un APK di debug `arm64-v8a`;
+- CI e packaging locale producono solamente un APK di debug `arm64-v8a`; non
+  esistono una chiave di release del progetto, pubblicazione Android firmata o
+  artefatti per architetture diverse da ARM64;
+- le identità di firma debug possono variare tra gli host di build e rendere
+  necessario disinstallare un prototipo esistente prima di installare un'altra
+  build di test;
 - la prontezza dell'invio e lo stato del trasferimento dipendono ancora in parte
   dall'output leggibile di `croc`, che non espone un'API strutturata per stato o
   avanzamento; MoonTransfer fissa quindi la versione di `croc` supportata e

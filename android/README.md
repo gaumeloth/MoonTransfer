@@ -17,6 +17,8 @@ The prototype currently provides:
   Qt-independent MoonTransfer modules;
 - a pinned Buildozer and python-for-android configuration;
 - an `arm64-v8a` debug APK target;
+- a dedicated GitHub Actions workflow that tests, validates, and exposes a
+  testable ARM64 debug APK for each relevant revision;
 - a private recipe that verifies and cross-compiles the pinned `croc` source;
 - an Android runtime probe that locates the packaged executable and checks its
   version without exposing a transfer secret;
@@ -41,14 +43,15 @@ The prototype currently provides:
 
 This remains an experimental regular-file client. It can transfer one file or
 a group of files selected in one picker operation, but it cannot transfer
-folders, resume an interrupted transfer, or build release artifacts for
-architectures other than `arm64-v8a`. It declares `INTERNET`, the foreground-
-service permissions required for `dataSync`, and the notification permission
-used to show transfer status. The lock-screen public version of that
-notification is deliberately generic: transfer codes, hashes, paths, content
-URIs and technical errors are never displayed there. SAF grants access only to
-documents or destination directories explicitly chosen by the user; no broad
-storage permission is requested.
+folders or resume an interrupted transfer. Automated builds currently produce
+only an ARM64 debug APK; signed Android releases and other architectures are not
+implemented. The app declares `INTERNET`, the foreground-service permissions
+required for `dataSync`, and the notification permission used to show transfer
+status. The lock-screen public version of that notification is deliberately
+generic: transfer codes, hashes, paths, content URIs and technical errors are
+never displayed there. SAF grants access only to documents or destination
+directories explicitly chosen by the user; no broad storage permission is
+requested.
 
 ## Transport compatibility
 
@@ -99,7 +102,8 @@ On Ubuntu, install the system prerequisites before building:
 sudo apt update
 sudo apt install -y git zip unzip openjdk-17-jdk autoconf libtool \
   pkg-config cmake libffi-dev libssl-dev automake autopoint gettext \
-  make gcc g++
+  build-essential libltdl-dev libncurses5-dev libncursesw5-dev \
+  libtinfo6 zlib1g-dev
 ```
 
 On Arch Linux and derivatives such as Garuda Linux:
@@ -135,12 +139,17 @@ Run these commands from the repository root:
 ./scripts/android.sh prepare
 ./scripts/android.sh run
 ./scripts/android.sh build
+./scripts/android.sh package
 ```
 
 `doctor` checks host-side prerequisites, including Java and Go versions.
 `prepare` recreates the generated source tree under `build/android/source`.
 `run` launches the Kivy scaffold on the desktop for a quick UI smoke test.
-`build` produces a debug APK under `dist/android`.
+`build` produces a debug APK under `dist/android`. After a successful build,
+`package` validates its structure, native architecture, required application
+files, and embedded identity, then stages a versioned copy under `release/`.
+The wrapper always runs the locked Android environment with `uv run --frozen`,
+so these commands never update `android/uv.lock` implicitly.
 
 The preparation step also embeds `build-info.json`. A clean checkout at an
 exact pre-release tag uses that displayed version; otherwise the APK shows a
@@ -153,6 +162,43 @@ status confirms that the transport executable can be started on the device.
 
 The first invocation can download Python packages, Android tooling and source
 archives. Generated source and build output must not be edited or committed.
+
+## Continuous integration artifact
+
+`.github/workflows/android-build.yml` runs on pull requests, pushes to `main`,
+pre-release tags, and manual workflow dispatches. Its Ubuntu 24.04 job installs
+pinned versions of `uv`, Python 3.13.14, Java 17, Go 1.25.12, and Rust 1.97.1,
+verifies `android/uv.lock`, installs the locked build dependency group, runs
+every `test_android*.py` test, executes `doctor`, and builds the `arm64-v8a`
+debug APK.
+
+The workflow caches downloaded Android SDK/NDK and Gradle data. It deliberately
+does not cache the much larger python-for-android native build yet: this keeps
+the first implementation easier to invalidate and audit, at the cost of a
+slower clean build. That decision can be revisited after collecting timings and
+cache reliability data from real runs.
+
+Before upload, `package` verifies the APK as a ZIP archive, rejects duplicate or
+unsafe paths and source-only `.xcf` assets, requires the expected ARM64 `croc`,
+Python, and application libraries, checks the generated private application
+files, and matches embedded version, commit, `croc`, and protocol metadata with
+the requested build. Android's `aapt` then checks the application ID, version
+name and code, SDK bounds, debug status, and declared native architecture. The
+resulting raw
+`MoonTransfer-<version>-android-arm64-debug.apk` is downloadable from the
+workflow run summary for 14 days without an extra archive wrapper.
+
+This file is only a test artifact. It is not attached to GitHub Releases and is
+not signed with a project-controlled release key. Buildozer's debug signing
+identity may differ between local and GitHub-hosted builds, so Android can
+refuse an in-place update between them. Uninstalling the existing prototype
+first resolves the signature mismatch, but also deletes its private app data.
+
+The full build version and commit are embedded in `build-info.json`, and the
+full version is used as Android's `versionName`. During the prototype phase the
+Buildozer `versionCode` is fixed at `1`. A signed distribution workflow must
+replace that placeholder with a monotonically increasing version-code policy
+before Android release artifacts are published.
 
 ## Test transfers with the desktop application
 
@@ -445,7 +491,10 @@ executable.
   allowance while the app is in the background; reaching it cancels the active
   transfer, and starting another one may be refused until the allowance resets;
 - interrupted transfers cannot yet be resumed from a partial payload;
-- only a debug `arm64-v8a` APK is produced;
+- CI and local packaging produce only a debug `arm64-v8a` APK; there is no
+  project release key, signed Android publication, or non-ARM64 artifact;
+- debug signing identities can differ between build hosts, which may require
+  uninstalling an existing prototype before installing another test build;
 - send readiness and transfer status still depend partly on human-readable
   `croc` output because `croc` does not expose a structured status or progress
   API; MoonTransfer therefore pins the supported `croc` version and tests the
