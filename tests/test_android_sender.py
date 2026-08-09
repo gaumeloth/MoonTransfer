@@ -214,6 +214,10 @@ class AndroidSendControllerTests(unittest.TestCase):
             second_path = second_dir / "second.txt"
             first_path.write_bytes(b"first")
             second_path.write_bytes(b"second")
+            expected_main_paths = [
+                str(first_path.resolve(strict=True)),
+                str(second_path.resolve(strict=True)),
+            ]
             selection = StagedSelection(
                 (
                     StagedDocument(
@@ -253,8 +257,10 @@ class AndroidSendControllerTests(unittest.TestCase):
             self.assertEqual(runner.metadata["file_count"], 2)
             self.assertEqual(runner.metadata["directory_count"], 0)
             self.assertEqual(runner.metadata["total_size"], 11)
-            self.assertIn(str(first_path), runner.calls[0]["args"])
-            self.assertIn(str(second_path), runner.calls[0]["args"])
+            self.assertEqual(
+                runner.calls[0]["args"][-2:],
+                expected_main_paths,
+            )
             self.assertFalse(first_dir.exists())
             self.assertFalse(second_dir.exists())
 
