@@ -81,6 +81,29 @@ class AndroidKvLayoutTests(unittest.TestCase):
         self.assertNotIn("_build_send_view", methods)
         self.assertNotIn("_build_receive_view", methods)
 
+    def test_multi_file_copy_and_save_flows_are_exposed_by_the_ui(self) -> None:
+        tree = _application_tree()
+        application = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.ClassDef)
+            and node.name == "MoonTransferAndroidApp"
+        )
+        methods = {
+            node.name: node
+            for node in application.body
+            if isinstance(node, ast.FunctionDef)
+        }
+        picker_source = ast.unparse(methods["_open_save_picker"])
+        layout = KV_PATH.read_text(encoding="utf-8")
+
+        self.assertIn(
+            "select_directory=not proposal.is_single_file",
+            picker_source,
+        )
+        self.assertIn("Invia uno o più file", layout)
+        self.assertIn("Ricevi uno o più file", layout)
+
 
 if __name__ == "__main__":
     unittest.main()

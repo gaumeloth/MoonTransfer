@@ -58,10 +58,10 @@ from moontransfer_android.storage import (
     AndroidFilePicker,
     AndroidSavePicker,
     AndroidStorageError,
-    StagedDocument,
-    cleanup_staged_document,
+    StagedSelection,
+    cleanup_staged_selection,
     cleanup_staging_parent,
-    stage_document_uri,
+    stage_document_uris,
 )
 from moontransfer_android.transport import (
     CrocProbeError,
@@ -194,7 +194,7 @@ class MoonTransferAndroidApp(App):
 
         self._picker: AndroidFilePicker | None = None
         self._save_picker: AndroidSavePicker | None = None
-        self._selected_document: StagedDocument | None = None
+        self._selected_selection: StagedSelection | None = None
         self._service_client: TransferServiceClient | None = None
         self._service_heartbeat = TransferServiceHeartbeatMonitor()
         self._service_revision = -1
@@ -373,8 +373,8 @@ class MoonTransferAndroidApp(App):
             self._save_picker.close()
             self._save_picker = None
         if self._service_client is None:
-            cleanup_staged_document(self._selected_document)
-        self._selected_document = None
+            cleanup_staged_selection(self._selected_selection)
+        self._selected_selection = None
 
     def on_pause(self) -> bool:
         return True
@@ -453,23 +453,23 @@ class MoonTransferAndroidApp(App):
             self._update_controls()
 
     def _selection_cancelled(self) -> None:
-        if self.send_status is not None and self._selected_document is None:
+        if self.send_status is not None and self._selected_selection is None:
             self.send_status.text = "Selezione annullata."
         self._update_controls()
 
-    def _stage_selected_uri(self, uri: Any) -> None:
+    def _stage_selected_uri(self, uris: tuple[Any, ...]) -> None:
         self._staging_cancel.clear()
         self._staging = True
         if self.send_status is not None:
-            self.send_status.text = "Copia del file nell'area privata dell'app..."
+            self.send_status.text = "Copia dei file nell'area privata dell'app..."
             self.send_status.color = TEXT_COLOR
         self._update_controls()
-        Thread(target=self._run_staging, args=(uri,), daemon=True).start()
+        Thread(target=self._run_staging, args=(uris,), daemon=True).start()
 
-    def _run_staging(self, uri: Any) -> None:
+    def _run_staging(self, uris: tuple[Any, ...]) -> None:
         try:
-            document = stage_document_uri(
-                uri,
+            selection = stage_document_uris(
+                uris,
                 self._staging_parent,
                 cancel_requested=self._staging_cancel.is_set,
                 on_progress=lambda copied, total: self._post(
@@ -481,7 +481,7 @@ class MoonTransferAndroidApp(App):
         except Exception as error:
             self._post(self._finish_staging_error, str(error))
         else:
-            self._post(self._finish_staging, document)
+            self._post(self._finish_staging, selection)
 
     def _show_staging_progress(self, copied: int, total: int | None) -> None:
         if self.send_status is None:
@@ -496,41 +496,45 @@ class MoonTransferAndroidApp(App):
                 f"{format_file_size(copied)} / {format_file_size(total)}"
             )
 
-    def _finish_staging(self, document: StagedDocument) -> None:
+    def _finish_staging(self, selection: StagedSelection) -> None:
         self._staging = False
         if self._closing:
-            cleanup_staged_document(document)
+            cleanup_staged_selection(selection)
             return
-        cleanup_staged_document(self._selected_document)
-        self._selected_document = document
+        cleanup_staged_selection(self._selected_selection)
+        self._selected_selection = selection
         if self.file_status is not None:
+            if selection.count == 1:
+                summary = selection.filenames[0]
+            else:
+                summary = f"{selection.count} file selezionati"
             self.file_status.text = (
-                f"{document.filename}\n{format_file_size(document.size)}"
+                f"{summary}\n{format_file_size(selection.total_size)}"
             )
             self.file_status.color = TEXT_COLOR
         if self.send_status is not None:
-            self.send_status.text = "File pronto per la preparazione."
+            self.send_status.text = "File pronti per la preparazione."
             self.send_status.color = SUCCESS_COLOR
         self._update_controls()
 
     def _finish_staging_cancelled(self) -> None:
         self._staging = False
         if self.send_status is not None:
-            self.send_status.text = "Copia del file interrotta."
+            self.send_status.text = "Copia dei file interrotta."
         self._update_controls()
 
     def _finish_staging_error(self, message: str) -> None:
         self._staging = False
         if self.send_status is not None:
-            self.send_status.text = "Impossibile preparare il file selezionato."
+            self.send_status.text = "Impossibile preparare i file selezionati."
             self.send_status.color = ERROR_COLOR
         self._show_error("Preparazione file non riuscita", message)
         self._update_controls()
 
     def _start_send(self, *_args: object) -> None:
-        document = self._selected_document
+        selection = self._selected_selection
         if (
-            document is None
+            selection is None
             or self._transport_executable is None
             or self._service_is_releasing()
         ):
@@ -545,17 +549,17 @@ class MoonTransferAndroidApp(App):
             self.progress_bar.value = 0
         if self.progress_details is not None:
             self.progress_details.text = (
-                f"0 B / {format_file_size(document.size)} | Velocità - | "
+                f"0 B / {format_file_size(selection.total_size)} | Velocità - | "
                 "Trascorso - | Rimanente -"
             )
 
         try:
-            client = TransferServiceClient.for_send(self._cache_root, document)
+            client = TransferServiceClient.for_send(self._cache_root, selection)
             client.start()
         except Exception as error:
             self._show_error("Invio non avviato", str(error))
         else:
-            self._selected_document = None
+            self._selected_selection = None
             self._activate_service(client)
             self._poll_transfer_service()
         self._update_controls()
@@ -590,6 +594,16 @@ class MoonTransferAndroidApp(App):
     ) -> None:
         code_changed = self._code != code
         self._code = code
+        if self.file_status is not None:
+            payload_label = (
+                proposal.filename
+                if proposal.is_single_file
+                else f"{proposal.file_count} file in invio"
+            )
+            self.file_status.text = (
+                f"{payload_label}\n{format_file_size(proposal.size)}"
+            )
+            self.file_status.color = TEXT_COLOR
         if self.code_input is not None:
             self.code_input.text = code
         if self.progress_details is not None:
@@ -634,7 +648,7 @@ class MoonTransferAndroidApp(App):
         message: str,
     ) -> None:
         self._send_state = state
-        self._selected_document = None
+        self._selected_selection = None
         self._code = None
         if self.file_status is not None:
             self.file_status.text = "Nessun file selezionato."
@@ -676,7 +690,7 @@ class MoonTransferAndroidApp(App):
         self._receive_proposal = None
         self._receive_started_at = None
         if self.receive_proposal is not None:
-            self.receive_proposal.text = "Attendo le informazioni sul file..."
+            self.receive_proposal.text = "Attendo le informazioni sul contenuto..."
             self.receive_proposal.color = MUTED_COLOR
         if self.receive_progress_bar is not None:
             self.receive_progress_bar.value = 0
@@ -748,13 +762,29 @@ class MoonTransferAndroidApp(App):
 
     def _on_receive_proposal(self, proposal: TransferSummary) -> None:
         self._receive_proposal = proposal
-        hash_text = proposal.sha256 or "non disponibile per questo contenuto"
         if self.receive_proposal is not None:
-            self.receive_proposal.text = (
-                f"Nome: {proposal.filename}\n"
-                f"Dimensione: {format_file_size(proposal.size)}\n"
-                f"SHA-256: {hash_text}"
-            )
+            if proposal.is_single_file:
+                hash_text = proposal.sha256 or "non disponibile"
+                summary = (
+                    f"Nome: {proposal.filename}\n"
+                    f"Dimensione: {format_file_size(proposal.size)}\n"
+                    f"SHA-256: {hash_text}"
+                )
+            else:
+                roots = proposal.roots or (proposal.filename,)
+                visible_roots = ", ".join(roots[:3])
+                if len(roots) > 3:
+                    visible_roots += f", ... (+{len(roots) - 3})"
+                counts = f"File: {proposal.file_count}"
+                if proposal.directory_count:
+                    counts += f" | Cartelle: {proposal.directory_count}"
+                summary = (
+                    f"{counts}\n"
+                    f"Dimensione totale: {format_file_size(proposal.size)}\n"
+                    f"Contenuto: {visible_roots}\n"
+                    "SHA-256: incluso per ogni file"
+                )
+            self.receive_proposal.text = summary
             self.receive_proposal.color = TEXT_COLOR
         if self.receive_progress_details is not None:
             self.receive_progress_details.text = (
@@ -812,7 +842,8 @@ class MoonTransferAndroidApp(App):
             return
         try:
             picker.open(
-                proposal.filename,
+                proposal.filename if proposal.is_single_file else None,
+                select_directory=not proposal.is_single_file,
                 on_selected=self._save_destination_selected,
                 on_cancelled=self._save_destination_cancelled,
                 on_error=self._save_destination_error,
@@ -838,7 +869,7 @@ class MoonTransferAndroidApp(App):
     def _save_destination_cancelled(self) -> None:
         if self.receive_status is not None:
             self.receive_status.text = (
-                "Salvataggio annullato. Il file verificato resta disponibile "
+                "Salvataggio annullato. Il contenuto verificato resta disponibile "
                 "finché il trasferimento non viene interrotto."
             )
             self.receive_status.color = MUTED_COLOR
@@ -1202,7 +1233,7 @@ class MoonTransferAndroidApp(App):
                 receive_state=self._receive_state,
                 service_operation=service_operation,
                 service_releasing=self._service_is_releasing(),
-                has_selected_document=self._selected_document is not None,
+                has_selected_document=self._selected_selection is not None,
                 transport_available=self._transport_executable is not None,
                 staging=self._staging,
                 file_picker_pending=picker_pending,

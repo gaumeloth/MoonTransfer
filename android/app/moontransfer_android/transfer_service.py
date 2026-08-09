@@ -37,9 +37,9 @@ from moontransfer_android.service_protocol import (
     consume_service_commands,
     read_service_request,
     service_session_dir,
-    staged_document_from_request,
+    staged_selection_from_request,
 )
-from moontransfer_android.storage import cleanup_staged_document
+from moontransfer_android.storage import cleanup_staged_selection
 from moontransfer_android.transport import (
     CrocProcessRunner,
     redact_sensitive_text,
@@ -52,19 +52,19 @@ HEARTBEAT_SECONDS = 1.0
 NOTIFICATION_PROGRESS_INTERVAL_SECONDS = 1.0
 
 _SEND_PHASE_TEXT = {
-    "preparing": "Preparazione e verifica del file...",
-    "sending_metadata": "Invio delle informazioni sul file...",
+    "preparing": "Preparazione e verifica dei file...",
+    "sending_metadata": "Invio delle informazioni sui file...",
     "awaiting_decision": "In attesa della decisione del destinatario...",
-    "sending_file": "Trasferimento del file in corso...",
+    "sending_file": "Trasferimento dei file in corso...",
 }
 _RECEIVE_PHASE_TEXT = {
     "preparing": "Preparazione della ricezione...",
-    "receiving_metadata": "Ricezione delle informazioni sul file...",
+    "receiving_metadata": "Ricezione delle informazioni sui file...",
     "awaiting_decision": "In attesa della tua decisione...",
     "responding_to_decision": "Comunicazione della decisione...",
-    "receiving_file": "Ricezione del file in corso...",
-    "verifying": "Verifica di dimensione e hash SHA-256...",
-    "awaiting_save": "File verificato. Tocca per scegliere dove salvarlo.",
+    "receiving_file": "Ricezione dei file in corso...",
+    "verifying": "Verifica di dimensioni e hash SHA-256...",
+    "awaiting_save": "Contenuto verificato. Scegli dove salvarlo.",
     "saving": "Salvataggio nella destinazione scelta...",
 }
 _INDETERMINATE_STATES = frozenset(
@@ -324,7 +324,9 @@ class TransferServiceRuntime:
             self._notify(force=True)
             if request.operation is TransferServiceOperation.SEND:
                 assert isinstance(controller, AndroidSendController)
-                controller.start(staged_document_from_request(self.cache_root, request))
+                controller.start(
+                    staged_selection_from_request(self.cache_root, request)
+                )
             else:
                 assert isinstance(controller, AndroidReceiveController)
                 if request.metadata_code is None:
@@ -340,8 +342,8 @@ class TransferServiceRuntime:
                 controller.wait(5)
             elif request.operation is TransferServiceOperation.SEND:
                 try:
-                    cleanup_staged_document(
-                        staged_document_from_request(self.cache_root, request)
+                    cleanup_staged_selection(
+                        staged_selection_from_request(self.cache_root, request)
                     )
                 except Exception:
                     pass
@@ -364,14 +366,14 @@ class TransferServiceRuntime:
         request: TransferServiceRequest,
         store: TransferServiceStateStore,
     ) -> AndroidSendController | AndroidReceiveController:
-        runner = self.runner_factory()
         sessions_parent = (
             service_session_dir(self.cache_root, request.session_id)
             / RUNTIME_DIRECTORY_NAME
         )
         if request.operation is TransferServiceOperation.SEND:
             return AndroidSendController(
-                runner=runner,
+                metadata_runner=self.runner_factory(),
+                main_runner=self.runner_factory(),
                 sessions_parent=sessions_parent,
                 callbacks=AndroidSendCallbacks(
                     on_state=lambda state: self._set_state(state.value),
@@ -389,7 +391,7 @@ class TransferServiceRuntime:
             )
 
         return AndroidReceiveController(
-            runner=runner,
+            runner=self.runner_factory(),
             sessions_parent=sessions_parent,
             callbacks=AndroidReceiveCallbacks(
                 on_state=lambda state: self._set_state(state.value),
@@ -588,6 +590,9 @@ class TransferServiceRuntime:
         request = self.request
         sensitive_values: tuple[str, ...] = ()
         if request is not None:
+            document_paths = tuple(
+                document.document_path for document in request.documents
+            )
             sensitive_values = tuple(
                 value
                 for value in (
@@ -595,6 +600,7 @@ class TransferServiceRuntime:
                     request.metadata_code,
                     request.document_path,
                     request.filename,
+                    *document_paths,
                 )
                 if value
             )

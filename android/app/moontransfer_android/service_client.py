@@ -21,7 +21,7 @@ from moontransfer_android.service_protocol import (
     read_service_snapshot,
     submit_service_command,
 )
-from moontransfer_android.storage import StagedDocument
+from moontransfer_android.storage import StagedDocument, StagedSelection
 
 
 SERVICE_HEARTBEAT_TIMEOUT_SECONDS = 15.0
@@ -104,14 +104,14 @@ class TransferServiceClient:
     def for_send(
         cls,
         cache_root: Path,
-        document: StagedDocument,
+        selection: StagedSelection | StagedDocument,
         *,
         service_starter: Callable[[str, str], None] = start_transfer_service,
         service_stopper: Callable[[], None] = stop_transfer_service,
     ) -> TransferServiceClient:
         return cls(
             cache_root,
-            create_send_service_request(cache_root, document),
+            create_send_service_request(cache_root, selection),
             service_starter=service_starter,
             service_stopper=service_stopper,
         )

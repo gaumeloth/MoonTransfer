@@ -5,7 +5,7 @@ import mimetypes
 import os
 import shutil
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,7 +13,11 @@ from typing import Any
 
 from moontransfer.cancellation import OperationCancelled
 from moontransfer.files import is_link_or_reparse
-from moontransfer.protocol import validate_filename
+from moontransfer.protocol import (
+    MAX_PAYLOAD_ROOTS,
+    portable_name_key,
+    validate_filename,
+)
 
 
 DISPLAY_NAME_COLUMN = "_display_name"
@@ -21,6 +25,8 @@ SIZE_COLUMN = "_size"
 COPY_CHUNK_BYTES = 1024 * 1024
 PICK_FILE_REQUEST_CODE = 0x4D54
 SAVE_FILE_REQUEST_CODE = 0x4D55
+SAVE_DIRECTORY_REQUEST_CODE = 0x4D56
+DIRECTORY_MIME_TYPE = "vnd.android.document/directory"
 
 
 class AndroidStorageError(RuntimeError):
@@ -39,6 +45,33 @@ class StagedDocument:
     staging_dir: Path
     filename: str
     size: int
+
+
+@dataclass(frozen=True)
+class StagedSelection:
+    documents: tuple[StagedDocument, ...]
+
+    def __post_init__(self) -> None:
+        if not self.documents:
+            raise ValueError("La selezione staged non può essere vuota.")
+        if len(self.documents) > MAX_PAYLOAD_ROOTS:
+            raise ValueError("La selezione staged contiene troppi file.")
+
+    @property
+    def root_paths(self) -> tuple[Path, ...]:
+        return tuple(document.path for document in self.documents)
+
+    @property
+    def filenames(self) -> tuple[str, ...]:
+        return tuple(document.filename for document in self.documents)
+
+    @property
+    def total_size(self) -> int:
+        return sum(document.size for document in self.documents)
+
+    @property
+    def count(self) -> int:
+        return len(self.documents)
 
 
 def android_content_resolver() -> Any:
@@ -98,6 +131,85 @@ def stage_document_uri(
 ) -> StagedDocument:
     content_resolver = resolver or android_content_resolver()
     metadata = query_document_metadata(content_resolver, uri)
+    return _stage_document_with_metadata(
+        uri,
+        metadata,
+        staging_parent,
+        resolver=content_resolver,
+        cancel_requested=cancel_requested,
+        on_progress=on_progress,
+    )
+
+
+def stage_document_uris(
+    uris: Iterable[Any],
+    staging_parent: Path,
+    *,
+    resolver: Any | None = None,
+    cancel_requested: Callable[[], bool] | None = None,
+    on_progress: Callable[[int, int | None], None] | None = None,
+) -> StagedSelection:
+    selected_uris = tuple(uris)
+    if not selected_uris:
+        raise AndroidStorageError("Nessun file selezionato.")
+    if len(selected_uris) > MAX_PAYLOAD_ROOTS:
+        raise AndroidStorageError(
+            f"Puoi selezionare al massimo {MAX_PAYLOAD_ROOTS} file."
+        )
+
+    content_resolver = resolver or android_content_resolver()
+    metadata = tuple(
+        query_document_metadata(content_resolver, uri)
+        for uri in selected_uris
+    )
+    name_keys = tuple(portable_name_key(item.filename) for item in metadata)
+    if len(set(name_keys)) != len(name_keys):
+        raise AndroidStorageError(
+            "La selezione contiene nomi file incompatibili o duplicati."
+        )
+
+    reported_total = (
+        sum(item.size for item in metadata if item.size is not None)
+        if all(item.size is not None for item in metadata)
+        else None
+    )
+    completed = 0
+    documents: list[StagedDocument] = []
+    try:
+        for uri, item in zip(selected_uris, metadata, strict=True):
+            document = _stage_document_with_metadata(
+                uri,
+                item,
+                staging_parent,
+                resolver=content_resolver,
+                cancel_requested=cancel_requested,
+                on_progress=(
+                    None
+                    if on_progress is None
+                    else lambda copied, _total, base=completed: on_progress(
+                        base + copied,
+                        reported_total,
+                    )
+                ),
+            )
+            documents.append(document)
+            completed += document.size
+        return StagedSelection(tuple(documents))
+    except BaseException:
+        for document in documents:
+            cleanup_staged_document(document)
+        raise
+
+
+def _stage_document_with_metadata(
+    uri: Any,
+    metadata: DocumentMetadata,
+    staging_parent: Path,
+    *,
+    resolver: Any,
+    cancel_requested: Callable[[], bool] | None,
+    on_progress: Callable[[int, int | None], None] | None,
+) -> StagedDocument:
     staging_parent.mkdir(parents=True, exist_ok=True)
     staging_dir = Path(
         tempfile.mkdtemp(prefix="document-", dir=staging_parent)
@@ -111,7 +223,7 @@ def stage_document_uri(
         if cancel_requested and cancel_requested():
             raise OperationCancelled
 
-        parcel_descriptor = content_resolver.openFileDescriptor(uri, "r")
+        parcel_descriptor = resolver.openFileDescriptor(uri, "r")
         if parcel_descriptor is None:
             raise AndroidStorageError("Il file selezionato non può essere aperto.")
         detached_fd = int(parcel_descriptor.detachFd())
@@ -173,6 +285,13 @@ def stage_document_uri(
 def cleanup_staged_document(document: StagedDocument | None) -> None:
     if document is not None:
         shutil.rmtree(document.staging_dir, ignore_errors=True)
+
+
+def cleanup_staged_selection(selection: StagedSelection | None) -> None:
+    if selection is None:
+        return
+    for staging_dir in {document.staging_dir for document in selection.documents}:
+        shutil.rmtree(staging_dir, ignore_errors=True)
 
 
 def cleanup_staging_parent(staging_parent: Path) -> None:
@@ -295,6 +414,162 @@ def save_file_to_uri(
             parcel_descriptor.close()
 
 
+def save_files_to_tree(
+    sources: Iterable[Path],
+    tree_uri: Any,
+    *,
+    container_name: str = "MoonTransfer",
+    resolver: Any | None = None,
+    documents_contract: Any | None = None,
+    cancel_requested: Callable[[], bool] | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
+) -> int:
+    source_paths = tuple(sources)
+    if not source_paths:
+        raise AndroidStorageError("Nessun file verificato da salvare.")
+    if len(source_paths) > MAX_PAYLOAD_ROOTS:
+        raise AndroidStorageError("Troppi file verificati da salvare.")
+
+    portable_container = validate_filename(container_name)
+    names = tuple(validate_filename(source.name) for source in source_paths)
+    name_keys = tuple(portable_name_key(name) for name in names)
+    if len(set(name_keys)) != len(name_keys):
+        raise AndroidStorageError(
+            "I file verificati hanno nomi incompatibili o duplicati."
+        )
+
+    total_size = 0
+    for source in source_paths:
+        try:
+            source_stat = source.lstat()
+        except OSError as error:
+            raise AndroidStorageError(
+                f"File verificato non disponibile: {source.name}."
+            ) from error
+        if is_link_or_reparse(source_stat) or not source.is_file():
+            raise AndroidStorageError(
+                "Il contenuto verificato non è composto da file regolari."
+            )
+        total_size += source_stat.st_size
+
+    content_resolver = resolver or android_content_resolver()
+    contract = documents_contract or android_documents_contract()
+    container_uri = None
+    try:
+        if cancel_requested and cancel_requested():
+            raise OperationCancelled
+        tree_id = contract.getTreeDocumentId(tree_uri)
+        root_uri = contract.buildDocumentUriUsingTree(tree_uri, tree_id)
+        container_uri = contract.createDocument(
+            content_resolver,
+            root_uri,
+            DIRECTORY_MIME_TYPE,
+            portable_container,
+        )
+        if container_uri is None:
+            raise AndroidStorageError(
+                "Il provider non ha creato la cartella di destinazione."
+            )
+
+        copied_total = 0
+        for source, filename in zip(source_paths, names, strict=True):
+            if cancel_requested and cancel_requested():
+                raise OperationCancelled
+            mime_type = mimetypes.guess_type(filename)[0]
+            destination_uri = contract.createDocument(
+                content_resolver,
+                container_uri,
+                mime_type or "application/octet-stream",
+                filename,
+            )
+            if destination_uri is None:
+                raise AndroidStorageError(
+                    f"Il provider non ha creato il file {filename}."
+                )
+            copied = save_file_to_uri(
+                source,
+                destination_uri,
+                resolver=content_resolver,
+                cancel_requested=cancel_requested,
+                on_progress=(
+                    None
+                    if on_progress is None
+                    else lambda current, _total, base=copied_total: on_progress(
+                        base + current,
+                        total_size,
+                    )
+                ),
+            )
+            copied_total += copied
+            if on_progress:
+                on_progress(copied_total, total_size)
+        return copied_total
+    except (AndroidStorageError, OperationCancelled):
+        _delete_document_quietly(contract, content_resolver, container_uri)
+        raise
+    except Exception as error:
+        _delete_document_quietly(contract, content_resolver, container_uri)
+        raise AndroidStorageError(
+            f"Impossibile salvare i file nella cartella scelta: {error}"
+        ) from error
+
+
+def android_documents_contract() -> Any:
+    try:
+        from jnius import autoclass
+    except ImportError as error:
+        raise AndroidStorageError("Runtime Android non disponibile.") from error
+    return autoclass("android.provider.DocumentsContract")
+
+
+def _delete_document_quietly(
+    contract: Any,
+    resolver: Any,
+    uri: Any,
+) -> None:
+    if uri is None:
+        return
+    try:
+        contract.deleteDocument(resolver, uri)
+    except Exception:
+        pass
+
+
+def selected_document_uris(intent: Any) -> tuple[Any, ...]:
+    clip_data = intent.getClipData()
+    if clip_data is None:
+        uri = intent.getData()
+        if uri is None:
+            raise AndroidStorageError(
+                "Android non ha restituito il file selezionato."
+            )
+        return (uri,)
+
+    item_count = int(clip_data.getItemCount())
+    if item_count <= 0:
+        raise AndroidStorageError("Android ha restituito una selezione vuota.")
+    if item_count > MAX_PAYLOAD_ROOTS:
+        raise AndroidStorageError(
+            f"Puoi selezionare al massimo {MAX_PAYLOAD_ROOTS} file."
+        )
+
+    uris: list[Any] = []
+    identities: set[str] = set()
+    for index in range(item_count):
+        uri = clip_data.getItemAt(index).getUri()
+        if uri is None:
+            raise AndroidStorageError(
+                "Android ha restituito un elemento selezionato non valido."
+            )
+        identity = str(uri.toString())
+        if identity not in identities:
+            identities.add(identity)
+            uris.append(uri)
+    if not uris:
+        raise AndroidStorageError("Android ha restituito una selezione vuota.")
+    return tuple(uris)
+
+
 class AndroidFilePicker:
     def __init__(self) -> None:
         try:
@@ -309,7 +584,7 @@ class AndroidFilePicker:
         ).mActivity
         self._intent_class = autoclass("android.content.Intent")
         self._activity_class = autoclass("android.app.Activity")
-        self._on_selected: Callable[[Any], None] | None = None
+        self._on_selected: Callable[[tuple[Any, ...]], None] | None = None
         self._on_cancelled: Callable[[], None] | None = None
         self._on_error: Callable[[Exception], None] | None = None
         self._activity_api.bind(on_activity_result=self._on_activity_result)
@@ -321,7 +596,7 @@ class AndroidFilePicker:
     def open(
         self,
         *,
-        on_selected: Callable[[Any], None],
+        on_selected: Callable[[tuple[Any, ...]], None],
         on_cancelled: Callable[[], None],
         on_error: Callable[[Exception], None],
     ) -> None:
@@ -337,6 +612,7 @@ class AndroidFilePicker:
             intent = self._intent_class(self._intent_class.ACTION_OPEN_DOCUMENT)
             intent.addCategory(self._intent_class.CATEGORY_OPENABLE)
             intent.setType("*/*")
+            intent.putExtra(self._intent_class.EXTRA_ALLOW_MULTIPLE, True)
             intent.addFlags(self._intent_class.FLAG_GRANT_READ_URI_PERMISSION)
             self._activity.startActivityForResult(intent, PICK_FILE_REQUEST_CODE)
         except Exception:
@@ -367,13 +643,8 @@ class AndroidFilePicker:
             return
 
         try:
-            uri = intent.getData()
-            if uri is None:
-                raise AndroidStorageError(
-                    "Android non ha restituito il file selezionato."
-                )
             if on_selected:
-                on_selected(uri)
+                on_selected(selected_document_uris(intent))
         except Exception as error:
             if on_error:
                 on_error(error)
@@ -401,6 +672,7 @@ class AndroidSavePicker:
         self._on_selected: Callable[[Any], None] | None = None
         self._on_cancelled: Callable[[], None] | None = None
         self._on_error: Callable[[Exception], None] | None = None
+        self._request_code: int | None = None
         self._activity_api.bind(on_activity_result=self._on_activity_result)
 
     @property
@@ -409,8 +681,9 @@ class AndroidSavePicker:
 
     def open(
         self,
-        filename: str,
+        filename: str | None,
         *,
+        select_directory: bool = False,
         on_selected: Callable[[Any], None],
         on_cancelled: Callable[[], None],
         on_error: Callable[[Exception], None],
@@ -420,21 +693,41 @@ class AndroidSavePicker:
         if self._activity is None:
             raise AndroidStorageError("Activity Android non disponibile.")
 
-        portable_filename = validate_filename(filename)
-        mime_type = mimetypes.guess_type(portable_filename)[0]
+        portable_filename = (
+            None if select_directory else validate_filename(filename or "")
+        )
+        mime_type = (
+            None
+            if portable_filename is None
+            else mimetypes.guess_type(portable_filename)[0]
+        )
         self._on_selected = on_selected
         self._on_cancelled = on_cancelled
         self._on_error = on_error
+        self._request_code = (
+            SAVE_DIRECTORY_REQUEST_CODE
+            if select_directory
+            else SAVE_FILE_REQUEST_CODE
+        )
         try:
-            intent = self._intent_class(self._intent_class.ACTION_CREATE_DOCUMENT)
-            intent.addCategory(self._intent_class.CATEGORY_OPENABLE)
-            intent.setType(mime_type or "application/octet-stream")
-            intent.putExtra(self._intent_class.EXTRA_TITLE, portable_filename)
+            action = (
+                self._intent_class.ACTION_OPEN_DOCUMENT_TREE
+                if select_directory
+                else self._intent_class.ACTION_CREATE_DOCUMENT
+            )
+            intent = self._intent_class(action)
+            if not select_directory:
+                intent.addCategory(self._intent_class.CATEGORY_OPENABLE)
+                intent.setType(mime_type or "application/octet-stream")
+                intent.putExtra(
+                    self._intent_class.EXTRA_TITLE,
+                    portable_filename,
+                )
             intent.addFlags(
                 self._intent_class.FLAG_GRANT_READ_URI_PERMISSION
                 | self._intent_class.FLAG_GRANT_WRITE_URI_PERMISSION
             )
-            self._activity.startActivityForResult(intent, SAVE_FILE_REQUEST_CODE)
+            self._activity.startActivityForResult(intent, self._request_code)
         except Exception:
             self._clear_callbacks()
             raise
@@ -449,7 +742,7 @@ class AndroidSavePicker:
         result_code: int,
         intent: Any,
     ) -> None:
-        if request_code != SAVE_FILE_REQUEST_CODE or not self.pending:
+        if request_code != self._request_code or not self.pending:
             return
 
         on_selected = self._on_selected
@@ -478,3 +771,4 @@ class AndroidSavePicker:
         self._on_selected = None
         self._on_cancelled = None
         self._on_error = None
+        self._request_code = None

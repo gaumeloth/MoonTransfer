@@ -11,7 +11,8 @@ application and is not part of desktop release artifacts.
 The prototype currently provides:
 
 - a Python 3.13 and Kivy 2.3.1 development environment;
-- a Kivy interface with separate send and receive views for one file;
+- a Kivy interface with separate send and receive views for one or more regular
+  files;
 - generated Android build sources containing only explicitly approved,
   Qt-independent MoonTransfer modules;
 - a pinned Buildozer and python-for-android configuration;
@@ -22,11 +23,12 @@ The prototype currently provides:
 - an embedded build identity shown in the header and in a copyable information
   dialog, including the source commit, bundled `croc`, protocol, Python runtime,
   and platform without transfer codes or local paths;
-- source selection and verified destination saving through Android's Storage
-  Access Framework (SAF);
+- single- or multi-file source selection and verified destination saving
+  through Android's Storage Access Framework (SAF);
 - Android-to-desktop sending and desktop-to-Android receiving compatible with
   MoonTransfer protocol v2;
-- proposal review with filename, size and SHA-256 before download;
+- proposal review with top-level names, file count, total size and SHA-256
+  information before download;
 - acceptance and rejection through the prompted main `croc` connection;
 - a `dataSync` foreground service that owns the active `croc` process and keeps
   transfers running while the user switches to another application;
@@ -37,15 +39,16 @@ The prototype currently provides:
 - transfer progress, cancellation, inactivity and decision timeouts, integrity
   verification and cleanup of private temporary files.
 
-This remains an experimental single-file client. It cannot select or receive
-multiple files or folders, resume an interrupted transfer, or build release
-artifacts for architectures other than `arm64-v8a`. It declares `INTERNET`, the
-foreground-service permissions required for `dataSync`, and the notification
-permission used to show transfer status. The lock-screen public version of that
+This remains an experimental regular-file client. It can transfer one file or
+a group of files selected in one picker operation, but it cannot transfer
+folders, resume an interrupted transfer, or build release artifacts for
+architectures other than `arm64-v8a`. It declares `INTERNET`, the foreground-
+service permissions required for `dataSync`, and the notification permission
+used to show transfer status. The lock-screen public version of that
 notification is deliberately generic: transfer codes, hashes, paths, content
 URIs and technical errors are never displayed there. SAF grants access only to
-documents explicitly chosen by the user; no broad storage permission is
-requested.
+documents or destination directories explicitly chosen by the user; no broad
+storage permission is requested.
 
 ## Transport compatibility
 
@@ -166,40 +169,46 @@ release procedure.
 1. Start MoonTransfer on the desktop, open **Ricevi** (Receive), and choose a
    destination directory.
 2. Start the Android app and wait for the green `croc` transport status.
-3. In **Invia** (Send), press **Seleziona file** (Select file) and choose a small,
-   non-sensitive document from the Android system picker.
-4. Check the displayed name and size, then press **Prepara e invia** (Prepare
-   and send).
-5. The app hashes the private staged copy and displays a 32-character code. The
-   code is also copied to the Android clipboard.
+3. In **Invia** (Send), press **Seleziona file** (Select file) and choose one or
+   more small, non-sensitive documents in the Android system picker. Do not
+   select a folder.
+4. Check the displayed filename or file count and total size, then press
+   **Prepara e invia** (Prepare and send).
+5. The app hashes every private staged copy and displays a 32-character code.
+   The code is also copied to the Android clipboard.
 6. Switch to the messaging application used to communicate the code. Leave
    MoonTransfer in the background while the receiver enters it; the ongoing
    transfer notification must remain visible and identify the current phase.
 7. Enter that code in the desktop **Ricevi** tab and start receiving.
-8. Check the filename, size and SHA-256 information shown by the desktop app,
-   then accept or reject the transfer.
+8. Check the names, counts, total size and SHA-256 information shown by the
+   desktop app, then accept or reject the transfer.
 9. If accepted, both applications should report progress and completion. Check
-   that the verified file appears in the chosen desktop destination. If
+   that every verified file appears in the chosen desktop destination. A
+   multi-file payload is placed in the desktop `MoonTransfer` container. If
    rejected, Android should report the receiver's decision without sending the
    main payload.
-10. Return to MoonTransfer and verify that a new file can be selected and a new
-    transfer started without closing or restarting the application.
+10. Return to MoonTransfer and verify that another selection and transfer can
+    be started without closing or restarting the application.
 
 ### Receive from desktop on Android
 
-1. Start MoonTransfer on the desktop, open **Invia** (Send), and choose one
-   small, non-sensitive file.
+1. Start MoonTransfer on the desktop, open **Invia** (Send), and choose one or
+   more small, non-sensitive files. Do not include folders in this Android
+   compatibility test.
 2. Start the Android app, open **Ricevi** (Receive), enter the code shown by the
    desktop application, and press **Ricevi informazioni** (Receive information).
-3. Check the filename, size and SHA-256 shown on Android.
+3. For one file, check its name, size and SHA-256. For multiple files, check
+   the file count, total size, listed top-level names and the indication that a
+   SHA-256 is included for each file.
 4. Press **Rifiuta** (Reject) to notify the desktop sender without downloading
    the payload, or **Accetta** (Accept) to continue.
-5. After an accepted file has been downloaded into private storage and its
+5. After an accepted payload has been downloaded into private storage and its
    manifest has been verified, Android opens the system save picker.
-6. Choose the final name and location. The system picker handles any existing
-   file confirmation; MoonTransfer does not open that destination before
-   verification succeeds.
-7. Check that both applications report completion and that the saved file is
+6. For one file, choose its final name and location. For multiple files, choose
+   a destination directory; MoonTransfer creates a dedicated `MoonTransfer`
+   child directory and writes the verified files there. MoonTransfer does not
+   open or create the destination before verification succeeds.
+7. Check that both applications report completion and that every saved file is
    available through the selected Android document provider.
 8. Verify that the code field and transfer controls are usable again without
    closing or restarting MoonTransfer.
@@ -207,7 +216,7 @@ release procedure.
 ### Lifecycle and recovery checks
 
 Before treating an Android change as manually validated, also exercise these
-cases with a small, non-sensitive file:
+cases with a small, non-sensitive payload:
 
 1. Start a send, wait for the code, press Home or switch to the messaging app,
    then reopen MoonTransfer. The notification must remain available and the GUI
@@ -270,14 +279,15 @@ notification.
 
 ## Android transfer design
 
-The system picker returns a content URI rather than a normal filesystem path.
-MoonTransfer queries its portable filename and optional size, opens the URI
-through `ContentResolver`, and copies it into a fresh app-private directory with
-mode `0600`. The private copy is the controlled source used for hashing and by
-`croc`; its fingerprint is checked again before the main sender starts. It is
-removed after completion, rejection, failure or cancellation. Stale app-owned
-staging and session directories are removed on the next start only when no
-foreground transfer is active.
+The system picker returns one or more content URIs rather than normal filesystem
+paths. MoonTransfer queries each portable filename and optional size, rejects
+portable-name collisions, opens every URI through `ContentResolver`, and copies
+each document into a separate app-private directory with mode `0600`. These
+private copies are the controlled sources used for hashing and by `croc`; their
+fingerprints are checked again before the main sender starts. They are removed
+after completion, rejection, failure or cancellation. Stale app-owned staging
+and session directories are removed on the next start only when no foreground
+transfer is active.
 
 The Kivy activity does not own the transfer controller or the `croc` child
 process. After validating the user action, it creates a private session and
@@ -325,46 +335,56 @@ command used by the GUI.
 The sender then reuses the desktop protocol instead of sending a raw `croc`
 payload:
 
-1. scan the staged file and calculate SHA-256;
+1. scan the staged file or files and calculate a SHA-256 for each one;
 2. create a protocol-v2 proposal containing a separately generated main-payload
    code;
-3. send the bounded JSON manifest with the single user-facing code;
-4. after the desktop receives the manifest, start the main `croc send` process;
-5. let the prompted desktop receiver communicate acceptance or rejection
+3. start the main `croc send` process and wait until `croc` has collected and
+   hashed all send inputs and announces its code;
+4. start a separate metadata sender and expose the single user-facing code only
+   after that process is also prepared;
+5. transfer the bounded JSON manifest while the main sender remains ready;
+6. let the prompted desktop receiver communicate acceptance or rejection
    through the main `croc` connection.
 
 The Android receiver follows the inverse flow:
 
 1. receive the bounded manifest into an isolated app-private directory;
-2. validate every protocol field and reject unsupported multi-item payloads;
-3. show the single file's portable name, declared size and SHA-256 before
-   downloading it;
+2. validate every protocol field and reject payloads containing directories;
+3. show either the single file's name, size and SHA-256 or the multi-file root
+   names, file count, total size and per-file hash availability before download;
 4. start the prompted main receiver and write `y` or `n` to `croc` so the
    desktop sender receives a protocol-level acceptance or rejection;
 5. for accepted transfers, check private free space and enforce the declared
    byte limit while receiving;
 6. verify the exact received tree, size and SHA-256 against the manifest;
 7. only after verification, launch Android's `ACTION_CREATE_DOCUMENT` picker
-   and copy the verified file to the returned content URI;
+   for one file, or `ACTION_OPEN_DOCUMENT_TREE` for multiple files; the latter
+   creates a dedicated `MoonTransfer` child directory and copies each verified
+   file into it;
 8. remove the manifest and private payload after completion, rejection,
    cancellation or failure.
 
 Cancelling the system save picker does not discard the verified private copy;
 the user can reopen it while the service remains active, or cancel the transfer
 to discard it. This ordering avoids touching an existing destination before
-integrity checks have passed. The system document provider remains responsible
-for final name conflicts and overwrite confirmation.
+integrity checks have passed. For a single file, the system document provider
+remains responsible for final name conflicts and overwrite confirmation. For a
+multi-file save, MoonTransfer asks the provider to create the container and
+files, and attempts to remove that new container if saving is cancelled or
+fails.
 
 Both secrets are passed in `CROC_SECRET`, never as command-line arguments.
-Each session receives an isolated `croc` configuration directory. Process
-output is consumed concurrently from stdout and stderr, bounded per record and
-redacted before callbacks receive it. Process completion is determined from the
-exit status; textual output is parsed only for progress and rejection-oriented
-status. A 15-minute inactivity timeout is reset whenever `croc` emits output,
-so it does not impose a fixed maximum duration on an active transfer. A
-separate 15-minute decision timeout automatically rejects an unanswered
-proposal instead of leaving the desktop sender waiting indefinitely. Only one
-send or receive operation can run at a time.
+Every concurrently active process receives a distinct isolated `croc`
+configuration directory. Process output is consumed concurrently from stdout
+and stderr, bounded per record and redacted before callbacks receive it.
+Process completion is determined from the exit status; textual output is
+parsed for the send-preparation boundary, progress and rejection-oriented
+status. No fixed delay is used to guess when the main sender is ready. A
+15-minute inactivity timeout is reset whenever `croc` emits output, so it does
+not impose a fixed maximum duration on an active transfer. A separate
+15-minute decision timeout automatically rejects an unanswered proposal
+instead of leaving the desktop sender waiting indefinitely. Only one send or
+receive operation can run at a time.
 
 ## Isolation from desktop releases
 
@@ -408,11 +428,15 @@ executable.
 
 ## Known limitations
 
-- only single-file sending and receiving are implemented on Android;
-- directory and multiple-file payloads are not implemented and incoming ones
-  are rejected before the main payload is downloaded;
+- single- and multiple-file sending and receiving are implemented on Android,
+  up to the protocol limit of 256 top-level roots;
+- folder payloads and mixed file/folder payloads are not implemented on Android
+  and are rejected before the main payload is downloaded;
+- files selected together must have distinct portable names, because they are
+  transferred as separate top-level roots;
 - the final SAF copy cannot be made atomically across every third-party document
-  provider; interruption during that local copy can leave a partial destination;
+  provider; MoonTransfer attempts to remove a partial multi-file container, but
+  a provider error or interruption can still leave a partial destination;
 - background execution is protected while the app is covered, the user switches
   applications, or its task is removed from the recent-apps screen, but
   force-stopping the app, restarting the device, or a service/process failure
@@ -422,5 +446,7 @@ executable.
   transfer, and starting another one may be refused until the allowance resets;
 - interrupted transfers cannot yet be resumed from a partial payload;
 - only a debug `arm64-v8a` APK is produced;
-- transfer status still depends partly on human-readable `croc` output because
-  `croc` does not expose a structured progress API.
+- send readiness and transfer status still depend partly on human-readable
+  `croc` output because `croc` does not expose a structured status or progress
+  API; MoonTransfer therefore pins the supported `croc` version and tests the
+  expected preparation message.

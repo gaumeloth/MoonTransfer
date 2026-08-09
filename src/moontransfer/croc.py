@@ -55,6 +55,11 @@ def parse_send_code(line: str) -> str | None:
     return code or None
 
 
+def send_preparation_complete(line: str) -> bool:
+    """Return whether croc finished collecting and hashing send inputs."""
+    return parse_send_code(line) is not None
+
+
 def parse_version_output(output: str) -> str | None:
     match = CROC_VERSION_RE.search(output)
     if not match:

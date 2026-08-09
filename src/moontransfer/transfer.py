@@ -223,6 +223,8 @@ class SendSession:
     paths: SessionPaths | None = None
     proposal: TransferProposal | None = None
     metadata_code: str | None = None
+    main_prepared: bool = False
+    metadata_code_published: bool = False
     rejected_by_receiver: bool = False
 
 
@@ -569,16 +571,11 @@ class SendTransferController(BaseTransferController):
             self._abort_session("Impossibile preparare il trasferimento.", exc)
             return
 
-        self.code_changed.emit(metadata_code)
         self.progress_preview_changed.emit(proposal.size)
-        self.status_changed.emit("Codice generato. Comunicalo al destinatario.")
-
-        try:
-            self._transition(TransferState.TRANSFERRING_METADATA)
-            self._start_metadata_sender(metadata_path)
-            self._start_control_timeout("invio metadati")
-        except Exception as exc:
-            self._abort_session("Impossibile avviare il trasferimento.", exc)
+        self.status_changed.emit(
+            "Preparazione del canale principale di trasferimento..."
+        )
+        self._start_main_sender()
 
     def stop(self) -> None:
         if not self.busy:
@@ -605,6 +602,10 @@ class SendTransferController(BaseTransferController):
             f"(code-id={code_id(session.metadata_code)})"
         )
         args = croc.build_send_args(metadata_path)
+        self._transition(TransferState.TRANSFERRING_METADATA)
+        self.status_changed.emit(
+            "Canale principale preparato. Avvio delle informazioni..."
+        )
         self.runners["metadata_send"].start(
             args,
             env=croc.build_process_environment(
@@ -614,6 +615,7 @@ class SendTransferController(BaseTransferController):
             preview=croc.build_secret_preview(self.croc_path, args),
             sensitive_values=(session.metadata_code,),
         )
+        self._start_control_timeout("invio metadati")
 
     def _start_main_sender(self) -> None:
         session = self._require_session()
@@ -644,7 +646,7 @@ class SendTransferController(BaseTransferController):
             )
 
     def _launch_main_sender(self) -> None:
-        if not self.active or self.state != TransferState.AWAITING_DECISION:
+        if not self.active or self.state != TransferState.PREPARING:
             return
 
         session = self._require_session()
@@ -656,25 +658,65 @@ class SendTransferController(BaseTransferController):
             "[main] invio contenuto principale "
             f"(code-id={code_id(session.proposal.main_code)})"
         )
-        self.progress_started.emit(session.proposal.size, True)
         args = croc.build_send_args(session.payload.root_paths)
         try:
             self.runners["main_send"].start(
                 args,
                 env=croc.build_process_environment(
-                    session.paths.croc_config,
+                    session.paths.main_croc_config,
                     secret=session.proposal.main_code,
                 ),
                 preview=croc.build_secret_preview(self.croc_path, args),
                 sensitive_values=(session.proposal.main_code,),
             )
-            self._start_control_timeout("attesa connessione destinatario")
+            self._start_control_timeout("preparazione invio principale")
         except Exception as exc:
             self.progress_finished.emit(False)
             self._abort_session("Impossibile avviare l'invio principale.", exc)
 
     def _on_runner_line(self, runner_name: str, line: str) -> None:
-        if runner_name != "main_send" or not self.session:
+        if not self.session:
+            return
+
+        session = self.session
+        reported_code = croc.parse_send_code(line)
+        if runner_name == "metadata_send":
+            if reported_code is None or session.metadata_code_published:
+                return
+            if reported_code != session.metadata_code:
+                self._abort_session(
+                    "Il processo metadati ha riportato un codice inatteso."
+                )
+                return
+            session.metadata_code_published = True
+            self.code_changed.emit(session.metadata_code)
+            self.status_changed.emit(
+                "Codice pronto. Comunicalo al destinatario."
+            )
+            return
+
+        if runner_name != "main_send":
+            return
+
+        if reported_code is not None and not session.main_prepared:
+            if not session.proposal or reported_code != session.proposal.main_code:
+                self._abort_session(
+                    "Il processo principale ha riportato un codice inatteso."
+                )
+                return
+            session.main_prepared = True
+            self._stop_control_timeout()
+            if not session.paths:
+                self._abort_session("Sessione di invio incompleta.")
+                return
+            metadata_path = session.paths.metadata_send / CONTROL_METADATA_NAME
+            try:
+                self._start_metadata_sender(metadata_path)
+            except Exception as exc:
+                self._abort_session(
+                    "Impossibile avviare il trasferimento dei metadati.",
+                    exc,
+                )
             return
 
         lowered = line.lower()
@@ -726,14 +768,33 @@ class SendTransferController(BaseTransferController):
 
         if runner_name == "metadata_send":
             self._stop_control_timeout()
+            session = self._require_session()
+            if not session.metadata_code_published:
+                self._abort_session(
+                    "Il processo metadati è terminato prima di rendere disponibile "
+                    "il codice."
+                )
+                return
             self._transition(TransferState.AWAITING_DECISION)
+            if session.proposal:
+                self.progress_started.emit(session.proposal.size, True)
             self.status_changed.emit(
                 "Informazioni inviate. Attendo decisione del destinatario..."
             )
-            self._start_main_sender()
+            self._start_control_timeout("attesa connessione destinatario")
             return
 
         if runner_name != "main_send":
+            return
+
+        if self.state not in {
+            TransferState.AWAITING_DECISION,
+            TransferState.TRANSFERRING_FILE,
+        }:
+            self._abort_session(
+                "Il processo principale è terminato prima del trasferimento "
+                "dei metadati."
+            )
             return
 
         self._stop_control_timeout()
@@ -930,7 +991,7 @@ class ReceiveTransferController(BaseTransferController):
                 args,
                 workdir=session.paths.main_receive,
                 env=croc.build_process_environment(
-                    session.paths.croc_config,
+                    session.paths.main_croc_config,
                     secret=session.proposal.main_code,
                 ),
                 preview=croc.build_secret_preview(self.croc_path, args),

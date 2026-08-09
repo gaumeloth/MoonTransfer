@@ -23,6 +23,12 @@ class CrocCommandTests(unittest.TestCase):
             "alpha beta",
         )
 
+    def test_send_preparation_complete_uses_the_code_announcement(self) -> None:
+        self.assertTrue(croc.send_preparation_complete("Code is: <hidden>"))
+        self.assertFalse(
+            croc.send_preparation_complete("Sending 2 files (4.2 MB)")
+        )
+
     def test_parse_version_output_accepts_legacy_v_prefix(self) -> None:
         self.assertEqual(
             croc.parse_version_output("croc version v10.4.13"),

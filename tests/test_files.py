@@ -239,6 +239,7 @@ class FileHelperTests(unittest.TestCase):
         try:
             self.assertTrue(paths.root.is_dir())
             self.assertTrue(paths.croc_config.is_dir())
+            self.assertTrue(paths.main_croc_config.is_dir())
             self.assertTrue(paths.metadata_send.is_dir())
             self.assertTrue(paths.metadata_receive.is_dir())
             self.assertTrue(paths.main_receive.is_dir())
