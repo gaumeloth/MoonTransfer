@@ -155,10 +155,7 @@ class CrocProcessRunner:
         with self._lock:
             process = self._process
         if process is not None and process.poll() is None:
-            try:
-                process.terminate()
-            except ProcessLookupError:
-                pass
+            _terminate_process(process)
 
     def run(
         self,

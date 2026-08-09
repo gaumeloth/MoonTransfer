@@ -16,13 +16,15 @@ from typing import Any
 from moontransfer.files import is_link_or_reparse
 from moontransfer.progress import TransferProgressSample
 from moontransfer.protocol import (
+    MAX_PAYLOAD_ROOTS,
     TransferProposal,
     generate_session_id,
+    portable_name_key,
     validate_croc_code,
     validate_filename,
     validate_sha256,
 )
-from moontransfer_android.storage import StagedDocument
+from moontransfer_android.storage import StagedDocument, StagedSelection
 
 
 SERVICE_PROTOCOL_VERSION = 1
@@ -56,6 +58,14 @@ class TransferServiceCommandName(str, Enum):
 
 
 @dataclass(frozen=True)
+class StagedFileReference:
+    document_path: str
+    staging_dir: str
+    filename: str
+    size: int
+
+
+@dataclass(frozen=True)
 class TransferServiceRequest:
     version: int
     session_id: str
@@ -65,6 +75,7 @@ class TransferServiceRequest:
     staging_dir: str | None = None
     filename: str | None = None
     size: int | None = None
+    documents: tuple[StagedFileReference, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -81,6 +92,9 @@ class TransferSummary:
     size: int
     sha256: str | None
     is_single_file: bool
+    roots: tuple[str, ...] = ()
+    file_count: int = 0
+    directory_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -118,18 +132,32 @@ def service_session_dir(cache_root: Path, session_id: str) -> Path:
 
 def create_send_service_request(
     cache_root: Path,
-    document: StagedDocument,
+    selection: StagedSelection | StagedDocument,
 ) -> TransferServiceRequest:
-    relative_path = _relative_private_path(cache_root, document.path)
-    relative_staging = _relative_private_path(cache_root, document.staging_dir)
+    if isinstance(selection, StagedDocument):
+        selection = StagedSelection((selection,))
+    references = tuple(
+        StagedFileReference(
+            document_path=_relative_private_path(cache_root, document.path),
+            staging_dir=_relative_private_path(
+                cache_root,
+                document.staging_dir,
+            ),
+            filename=validate_filename(document.filename),
+            size=_validate_size(document.size),
+        )
+        for document in selection.documents
+    )
+    first = references[0]
     request = TransferServiceRequest(
         version=SERVICE_PROTOCOL_VERSION,
         session_id=generate_session_id(),
         operation=TransferServiceOperation.SEND,
-        document_path=relative_path,
-        staging_dir=relative_staging,
-        filename=validate_filename(document.filename),
-        size=_validate_size(document.size),
+        document_path=(first.document_path if len(references) == 1 else None),
+        staging_dir=(first.staging_dir if len(references) == 1 else None),
+        filename=(first.filename if len(references) == 1 else "MoonTransfer"),
+        size=selection.total_size,
+        documents=references,
     )
     _create_service_session(cache_root, request)
     return request
@@ -176,8 +204,6 @@ def read_service_request(
             metadata_code=validate_croc_code(code),
         )
 
-    document_path = _read_relative_private_path(data.get("document_path"))
-    staging_dir = _read_relative_private_path(data.get("staging_dir"))
     filename = data.get("filename")
     size = data.get("size")
     if not isinstance(filename, str):
@@ -185,7 +211,39 @@ def read_service_request(
     if not isinstance(size, int) or isinstance(size, bool):
         raise TransferServiceError("Dimensione del file da inviare non valida.")
 
+    validated_filename = validate_filename(filename)
     validated_size = _validate_size(size)
+    documents_data = data.get("documents")
+    if documents_data is None:
+        document_path = _read_relative_private_path(data.get("document_path"))
+        staging_dir = _read_relative_private_path(data.get("staging_dir"))
+        documents = (
+            StagedFileReference(
+                document_path=document_path,
+                staging_dir=staging_dir,
+                filename=validated_filename,
+                size=validated_size,
+            ),
+        )
+    else:
+        documents = _read_staged_file_references(documents_data)
+        expected_filename = (
+            documents[0].filename if len(documents) == 1 else "MoonTransfer"
+        )
+        if validated_filename != expected_filename:
+            raise TransferServiceError(
+                "Riepilogo dei file staged non coerente."
+            )
+        if validated_size != sum(document.size for document in documents):
+            raise TransferServiceError(
+                "Dimensione totale dei file staged non coerente."
+            )
+        document_path = (
+            documents[0].document_path if len(documents) == 1 else None
+        )
+        staging_dir = (
+            documents[0].staging_dir if len(documents) == 1 else None
+        )
 
     return TransferServiceRequest(
         version=SERVICE_PROTOCOL_VERSION,
@@ -193,8 +251,9 @@ def read_service_request(
         operation=operation,
         document_path=document_path,
         staging_dir=staging_dir,
-        filename=validate_filename(filename),
+        filename=validated_filename,
         size=validated_size,
+        documents=documents,
     )
 
 
@@ -202,20 +261,64 @@ def staged_document_from_request(
     cache_root: Path,
     request: TransferServiceRequest,
 ) -> StagedDocument:
+    selection = staged_selection_from_request(cache_root, request)
+    if selection.count != 1:
+        raise TransferServiceError(
+            "La richiesta contiene più di un file staged."
+        )
+    return selection.documents[0]
+
+
+def staged_selection_from_request(
+    cache_root: Path,
+    request: TransferServiceRequest,
+) -> StagedSelection:
     if request.operation is not TransferServiceOperation.SEND:
-        raise TransferServiceError("La richiesta non contiene un file da inviare.")
-    if (
-        request.document_path is None
-        or request.staging_dir is None
-        or request.filename is None
-        or request.size is None
-    ):
+        raise TransferServiceError("La richiesta non contiene file da inviare.")
+    references = request.documents
+    if not references:
+        if (
+            request.document_path is None
+            or request.staging_dir is None
+            or request.filename is None
+            or request.size is None
+        ):
+            raise TransferServiceError("Richiesta di invio incompleta.")
+        references = (
+            StagedFileReference(
+                document_path=request.document_path,
+                staging_dir=request.staging_dir,
+                filename=request.filename,
+                size=request.size,
+            ),
+        )
+    documents = tuple(
+        _staged_document_from_reference(cache_root, reference)
+        for reference in references
+    )
+    name_keys = tuple(
+        portable_name_key(document.filename) for document in documents
+    )
+    if len(set(name_keys)) != len(name_keys):
+        raise TransferServiceError(
+            "I file staged hanno nomi incompatibili o duplicati."
+        )
+    return StagedSelection(documents)
+
+
+def _staged_document_from_reference(
+    cache_root: Path,
+    reference: StagedFileReference,
+) -> StagedDocument:
+    if not reference.document_path or not reference.staging_dir:
         raise TransferServiceError("Richiesta di invio incompleta.")
-    document = _resolve_private_path(cache_root, request.document_path)
-    staging = _resolve_private_path(cache_root, request.staging_dir)
+    filename = validate_filename(reference.filename)
+    size = _validate_size(reference.size)
+    document = _resolve_private_path(cache_root, reference.document_path)
+    staging = _resolve_private_path(cache_root, reference.staging_dir)
     if document.parent != staging:
         raise TransferServiceError("Percorso di staging del file non coerente.")
-    if document.name != validate_filename(request.filename):
+    if document.name != filename:
         raise TransferServiceError("Nome del file in staging non coerente.")
     staging_stat = staging.lstat()
     if is_link_or_reparse(staging_stat) or not staging.is_dir():
@@ -223,13 +326,13 @@ def staged_document_from_request(
     document_stat = document.lstat()
     if is_link_or_reparse(document_stat) or not document.is_file():
         raise TransferServiceError("Il file in staging non è regolare.")
-    if document_stat.st_size != request.size:
+    if document_stat.st_size != size:
         raise TransferServiceError("Il file in staging è cambiato.")
     return StagedDocument(
         path=document,
         staging_dir=staging,
-        filename=request.filename,
-        size=request.size,
+        filename=filename,
+        size=size,
     )
 
 
@@ -351,6 +454,9 @@ class TransferServiceStateStore:
             size=proposal.size,
             sha256=proposal.sha256,
             is_single_file=proposal.is_single_file,
+            roots=proposal.roots,
+            file_count=proposal.file_count,
+            directory_count=proposal.directory_count,
         )
         self.update(proposal=asdict(summary))
 
@@ -553,6 +659,49 @@ def _validate_size(value: int) -> int:
     return value
 
 
+def _read_staged_file_references(
+    value: Any,
+) -> tuple[StagedFileReference, ...]:
+    if (
+        not isinstance(value, list)
+        or not value
+        or len(value) > MAX_PAYLOAD_ROOTS
+    ):
+        raise TransferServiceError("Elenco dei file staged non valido.")
+    references: list[StagedFileReference] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise TransferServiceError("Riferimento a file staged non valido.")
+        filename = item.get("filename")
+        size = item.get("size")
+        if not isinstance(filename, str):
+            raise TransferServiceError("Nome del file staged non valido.")
+        if not isinstance(size, int) or isinstance(size, bool):
+            raise TransferServiceError(
+                "Dimensione del file staged non valida."
+            )
+        references.append(
+            StagedFileReference(
+                document_path=_read_relative_private_path(
+                    item.get("document_path")
+                ),
+                staging_dir=_read_relative_private_path(
+                    item.get("staging_dir")
+                ),
+                filename=validate_filename(filename),
+                size=_validate_size(size),
+            )
+        )
+    name_keys = tuple(
+        portable_name_key(reference.filename) for reference in references
+    )
+    if len(set(name_keys)) != len(name_keys):
+        raise TransferServiceError(
+            "I riferimenti staged hanno nomi incompatibili o duplicati."
+        )
+    return tuple(references)
+
+
 def _validate_destination_uri(value: Any) -> str:
     if (
         not isinstance(value, str)
@@ -583,12 +732,74 @@ def _read_summary(value: Any) -> TransferSummary | None:
         sha256 = validate_sha256(sha256)
     if not isinstance(is_single_file, bool):
         raise TransferServiceError("Tipo di contenuto nel riepilogo non valido.")
+
+    validated_filename = validate_filename(filename)
+    roots_value = value.get("roots")
+    file_count_value = value.get("file_count")
+    directory_count_value = value.get("directory_count")
+    if (
+        roots_value is None
+        and file_count_value is None
+        and directory_count_value is None
+    ):
+        # Service protocol v1 snapshots created before multi-file support.
+        roots = (validated_filename,)
+        file_count = 1 if is_single_file else 0
+        directory_count = 0 if is_single_file else 1
+    else:
+        if (
+            not isinstance(roots_value, list)
+            or not roots_value
+            or len(roots_value) > MAX_PAYLOAD_ROOTS
+        ):
+            raise TransferServiceError("Radici nel riepilogo non valide.")
+        validated_roots: list[str] = []
+        for root in roots_value:
+            if not isinstance(root, str):
+                raise TransferServiceError(
+                    "Nome di una radice nel riepilogo non valido."
+                )
+            validated_roots.append(validate_filename(root))
+        roots = tuple(validated_roots)
+        root_keys = tuple(portable_name_key(root) for root in roots)
+        if len(set(root_keys)) != len(root_keys):
+            raise TransferServiceError(
+                "Radici duplicate o incompatibili nel riepilogo."
+            )
+        file_count = _summary_count(file_count_value, "file")
+        directory_count = _summary_count(
+            directory_count_value,
+            "directory",
+        )
+        if file_count + directory_count == 0:
+            raise TransferServiceError("Riepilogo del contenuto vuoto.")
+
+    expected_filename = roots[0] if len(roots) == 1 else "MoonTransfer"
+    if validated_filename != expected_filename:
+        raise TransferServiceError("Nome e radici del riepilogo non coerenti.")
+    if is_single_file and (
+        len(roots) != 1 or file_count != 1 or directory_count != 0
+    ):
+        raise TransferServiceError("Tipo e conteggi del riepilogo non coerenti.")
+    if not is_single_file and sha256 is not None:
+        raise TransferServiceError("Hash inatteso per un contenuto multiplo.")
     return TransferSummary(
-        filename=validate_filename(filename),
+        filename=validated_filename,
         size=_validate_size(size),
         sha256=sha256,
         is_single_file=is_single_file,
+        roots=roots,
+        file_count=file_count,
+        directory_count=directory_count,
     )
+
+
+def _summary_count(value: Any, label: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise TransferServiceError(
+            f"Conteggio {label} nel riepilogo non valido."
+        )
+    return value
 
 
 def _read_progress(value: Any) -> TransferProgressSample | None:

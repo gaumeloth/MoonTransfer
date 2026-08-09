@@ -29,7 +29,7 @@ from moontransfer.protocol import (
     read_proposal,
     validate_croc_code,
 )
-from moontransfer_android.storage import save_file_to_uri
+from moontransfer_android.storage import save_file_to_uri, save_files_to_tree
 from moontransfer_android.transport import (
     CrocProcessResult,
     CrocProcessRunner,
@@ -99,6 +99,7 @@ class AndroidReceiveController:
         decision_timeout: float = DECISION_TIMEOUT_SECONDS,
         main_receive_delay: float = MAIN_RECEIVE_DELAY_SECONDS,
         save_file: Callable[..., int] = save_file_to_uri,
+        save_files: Callable[..., int] = save_files_to_tree,
     ) -> None:
         if decision_timeout <= 0:
             raise ValueError("Il timeout di decisione deve essere positivo.")
@@ -111,6 +112,7 @@ class AndroidReceiveController:
         self.decision_timeout = decision_timeout
         self.main_receive_delay = main_receive_delay
         self.save_file = save_file
+        self.save_files = save_files
         self.state = AndroidReceiveState.IDLE
         self.session: AndroidReceiveSession | None = None
         self._cancel_requested = Event()
@@ -161,7 +163,7 @@ class AndroidReceiveController:
     def save_cancelled(self) -> None:
         if self.state == AndroidReceiveState.AWAITING_SAVE:
             self.callbacks.on_status(
-                "Salvataggio annullato. Il file verificato resta disponibile "
+                "Salvataggio annullato. Il contenuto verificato resta disponibile "
                 "finché l'app rimane aperta."
             )
 
@@ -191,23 +193,23 @@ class AndroidReceiveController:
             self._receive_metadata(session)
             proposal = self._require_proposal(session)
 
-            if not proposal.is_single_file:
+            if proposal.directory_count:
                 self.callbacks.on_proposal(proposal)
                 self.callbacks.on_status(
-                    "Il mittente ha proposto elementi non ancora supportati "
+                    "Il mittente ha proposto cartelle non ancora supportate "
                     "su Android. Comunico il rifiuto."
                 )
                 self._receive_main_response(session, accepted=False)
                 terminal_state = AndroidReceiveState.REJECTED
                 terminal_message = (
-                    "Trasferimento rifiutato: il prototipo Android può "
-                    "ricevere un solo file."
+                    "Trasferimento rifiutato: le cartelle non sono ancora "
+                    "supportate su Android."
                 )
             else:
                 self._set_state(AndroidReceiveState.AWAITING_DECISION)
                 self.callbacks.on_proposal(proposal)
                 self.callbacks.on_status(
-                    "Controlla le informazioni e scegli se ricevere il file."
+                    "Controlla le informazioni e scegli se ricevere i file."
                 )
                 accepted = self._wait_for_decision(session)
                 if not accepted:
@@ -234,9 +236,9 @@ class AndroidReceiveController:
                         )
                     else:
                         self._receive_main_response(session, accepted=True)
-                        self._verify_received_file(session)
+                        self._verify_received_payload(session)
                         self._wait_for_save_destination(session)
-                        self._save_received_file(session)
+                        self._save_received_payload(session)
                         terminal_state = AndroidReceiveState.COMPLETED
                         terminal_message = "Ricezione e salvataggio completati."
         except OperationCancelled:
@@ -277,7 +279,7 @@ class AndroidReceiveController:
             raise RuntimeError("Sessione metadati non inizializzata.")
 
         self._set_state(AndroidReceiveState.RECEIVING_METADATA)
-        self.callbacks.on_status("Ricezione delle informazioni sul file...")
+        self.callbacks.on_status("Ricezione delle informazioni sui file...")
         result = self.runner.run(
             croc.build_receive_args(),
             config_dir=session.croc_config,
@@ -342,21 +344,21 @@ class AndroidReceiveController:
 
         self._set_state(AndroidReceiveState.RESPONDING_TO_DECISION)
         self.callbacks.on_status(
-            "Attendo il file dal mittente..."
+            "Attendo il contenuto dal mittente..."
             if accepted
             else "Comunicazione del rifiuto al mittente..."
         )
         self._wait_before_main_receiver()
         if accepted:
             self._set_state(AndroidReceiveState.RECEIVING_FILE)
-            self.callbacks.on_status("Ricezione del file in corso...")
+            self.callbacks.on_status("Ricezione dei file in corso...")
 
         process_guard: Callable[[], None] | None = None
         if accepted:
             process_guard = lambda: self._guard_directory_size(
                 session.main_dir,
                 proposal.size,
-                "file principale",
+                "contenuto principale",
             )
 
         result = self.runner.run(
@@ -372,11 +374,11 @@ class AndroidReceiveController:
         )
         if not accepted:
             return
-        self._ensure_success(result, "Ricezione del file")
+        self._ensure_success(result, "Ricezione del contenuto")
         self._guard_directory_size(
             session.main_dir,
             proposal.size,
-            "file principale",
+            "contenuto principale",
         )
 
     def _ensure_private_capacity(self, session: AndroidReceiveSession) -> None:
@@ -397,12 +399,12 @@ class AndroidReceiveController:
         if sample is not None:
             self.callbacks.on_progress(self._progress.apply(sample))
 
-    def _verify_received_file(self, session: AndroidReceiveSession) -> None:
+    def _verify_received_payload(self, session: AndroidReceiveSession) -> None:
         proposal = self._require_proposal(session)
         if not session.main_dir:
-            raise RuntimeError("Directory del file ricevuto non disponibile.")
+            raise RuntimeError("Directory del contenuto ricevuto non disponibile.")
         self._set_state(AndroidReceiveState.VERIFYING)
-        self.callbacks.on_status("Verifica di dimensione e hash SHA-256...")
+        self.callbacks.on_status("Verifica di dimensioni e hash SHA-256...")
         verify_received_payload(
             session.main_dir,
             proposal,
@@ -413,7 +415,7 @@ class AndroidReceiveController:
         proposal = self._require_proposal(session)
         self._set_state(AndroidReceiveState.AWAITING_SAVE)
         self.callbacks.on_status(
-            "File ricevuto e verificato. Scegli dove salvarlo."
+            "Contenuto ricevuto e verificato. Scegli dove salvarlo."
         )
         self.callbacks.on_save_ready(proposal)
         while not self._save_ready.wait(0.1):
@@ -422,18 +424,27 @@ class AndroidReceiveController:
         if session.destination_uri is None:
             raise RuntimeError("Destinazione di salvataggio mancante.")
 
-    def _save_received_file(self, session: AndroidReceiveSession) -> None:
+    def _save_received_payload(self, session: AndroidReceiveSession) -> None:
         proposal = self._require_proposal(session)
         if not session.main_dir:
-            raise RuntimeError("File verificato non disponibile.")
+            raise RuntimeError("Contenuto verificato non disponibile.")
         self._set_state(AndroidReceiveState.SAVING)
         self.callbacks.on_status("Salvataggio nella destinazione scelta...")
-        self.save_file(
-            session.main_dir / proposal.filename,
-            session.destination_uri,
-            cancel_requested=self._cancel_requested.is_set,
-            on_progress=self.callbacks.on_save_progress,
-        )
+        if proposal.is_single_file:
+            self.save_file(
+                session.main_dir / proposal.filename,
+                session.destination_uri,
+                cancel_requested=self._cancel_requested.is_set,
+                on_progress=self.callbacks.on_save_progress,
+            )
+        else:
+            self.save_files(
+                tuple(session.main_dir / root for root in proposal.roots),
+                session.destination_uri,
+                container_name=proposal.destination_name,
+                cancel_requested=self._cancel_requested.is_set,
+                on_progress=self.callbacks.on_save_progress,
+            )
 
     @staticmethod
     def _guard_directory_size(directory: Path, limit: int, stage: str) -> None:

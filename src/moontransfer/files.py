@@ -34,6 +34,7 @@ class DestinationCheck:
 class SessionPaths:
     root: Path
     croc_config: Path
+    main_croc_config: Path
     metadata_send: Path
     metadata_receive: Path
     main_receive: Path
@@ -85,6 +86,7 @@ def create_session_paths(
         paths = SessionPaths(
             root=root,
             croc_config=root / "croc-config",
+            main_croc_config=root / "main-croc-config",
             metadata_send=root / "metadata-send",
             metadata_receive=root / "metadata-receive",
             main_receive=main_receive,
@@ -92,6 +94,7 @@ def create_session_paths(
 
         for directory in (
             paths.croc_config,
+            paths.main_croc_config,
             paths.metadata_send,
             paths.metadata_receive,
             paths.main_receive,
