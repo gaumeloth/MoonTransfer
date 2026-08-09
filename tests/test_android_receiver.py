@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import shutil
 import sys
 import tempfile
@@ -35,12 +36,14 @@ class _FakeRunner:
         proposal: object,
         *,
         content: bytes = b"payload",
+        contents: dict[str, bytes] | None = None,
         invalid_metadata: bool = False,
         metadata_returncode: int = 0,
         main_returncode: int = 0,
     ) -> None:
         self.proposal = proposal
         self.content = content
+        self.contents = contents or {}
         self.invalid_metadata = invalid_metadata
         self.metadata_returncode = metadata_returncode
         self.main_returncode = main_returncode
@@ -91,12 +94,18 @@ class _FakeRunner:
             )
 
         if stdin_data == b"y\n":
-            filename = self.proposal.filename  # type: ignore[attr-defined]
-            (workdir / filename).write_bytes(self.content)
-            on_line(  # type: ignore[operator]
-                f"{filename} 100% | ({len(self.content)} B/"
-                f"{len(self.content)} B, 1 KB/s)"
-            )
+            for entry in self.proposal.entries:  # type: ignore[attr-defined]
+                destination = workdir.joinpath(*entry.path.split("/"))
+                if entry.is_directory:
+                    destination.mkdir(parents=True, exist_ok=True)
+                    continue
+                content = self.contents.get(entry.path, self.content)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(content)
+                on_line(  # type: ignore[operator]
+                    f"{entry.path} 100% | ({len(content)} B/"
+                    f"{len(content)} B, 1 KB/s)"
+                )
             if process_guard:
                 process_guard()  # type: ignore[operator]
         return CrocProcessResult(
@@ -222,27 +231,108 @@ class AndroidReceiveControllerTests(unittest.TestCase):
             self.assertEqual(runner.calls[1]["secret"], proposal.main_code)
             self.assertEqual(tuple((root / "sessions").iterdir()), ())
 
-    def test_multiple_files_are_rejected_automatically(self) -> None:
+    def test_accepts_verifies_and_saves_multiple_files(self) -> None:
+        contents = {
+            "first.txt": b"first",
+            "second.txt": b"second",
+        }
         proposal = create_payload_proposal(
             roots=("first.txt", "second.txt"),
             entries=(
                 PayloadEntry(
                     path="first.txt",
                     type="file",
-                    size=1,
-                    sha256="a" * 64,
+                    size=len(contents["first.txt"]),
+                    sha256=hashlib.sha256(contents["first.txt"]).hexdigest(),
                 ),
                 PayloadEntry(
                     path="second.txt",
                     type="file",
-                    size=1,
-                    sha256="b" * 64,
+                    size=len(contents["second.txt"]),
+                    sha256=hashlib.sha256(contents["second.txt"]).hexdigest(),
                 ),
             ),
         )
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            runner = _FakeRunner(proposal)
+            runner = _FakeRunner(proposal, contents=contents)
+            proposal_ready = Event()
+            save_ready = Event()
+            finished = Event()
+            terminal: list[AndroidReceiveState] = []
+            saved: list[tuple[tuple[Path, ...], object, str]] = []
+
+            def save_files(
+                sources: tuple[Path, ...],
+                uri: object,
+                *,
+                container_name: str,
+                cancel_requested: object,
+                on_progress: object,
+            ) -> int:
+                destination = root / "saved" / container_name
+                destination.mkdir(parents=True)
+                total = sum(source.stat().st_size for source in sources)
+                copied = 0
+                for source in sources:
+                    shutil.copyfile(source, destination / source.name)
+                    copied += source.stat().st_size
+                    on_progress(copied, total)  # type: ignore[operator]
+                saved.append((sources, uri, container_name))
+                return copied
+
+            controller = AndroidReceiveController(
+                runner=runner,  # type: ignore[arg-type]
+                sessions_parent=root / "sessions",
+                callbacks=AndroidReceiveCallbacks(
+                    on_proposal=lambda _proposal: proposal_ready.set(),
+                    on_save_ready=lambda _proposal: save_ready.set(),
+                    on_finished=lambda state, _message: (
+                        terminal.append(state),
+                        finished.set(),
+                    )
+                ),
+                main_receive_delay=0,
+                save_files=save_files,
+            )
+
+            controller.start("c" * 32)
+            _wait(proposal_ready, "multi-file proposal not received")
+            controller.accept()
+            _wait(save_ready, "multi-file payload not ready to save")
+            controller.save_to_uri("content://destination/tree")
+            _wait(finished, "multi-file receive did not finish")
+
+            self.assertEqual(terminal, [AndroidReceiveState.COMPLETED])
+            self.assertEqual(runner.calls[1]["stdin_data"], b"y\n")
+            self.assertEqual(saved[0][1], "content://destination/tree")
+            self.assertEqual(saved[0][2], "MoonTransfer")
+            self.assertEqual(
+                (root / "saved" / "MoonTransfer" / "first.txt").read_bytes(),
+                contents["first.txt"],
+            )
+            self.assertEqual(
+                (root / "saved" / "MoonTransfer" / "second.txt").read_bytes(),
+                contents["second.txt"],
+            )
+
+    def test_directory_payload_is_rejected_automatically(self) -> None:
+        content = b"nested"
+        proposal = create_payload_proposal(
+            roots=("folder",),
+            entries=(
+                PayloadEntry(path="folder", type="directory"),
+                PayloadEntry(
+                    path="folder/file.txt",
+                    type="file",
+                    size=len(content),
+                    sha256=hashlib.sha256(content).hexdigest(),
+                ),
+            ),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runner = _FakeRunner(proposal, contents={"folder/file.txt": content})
             finished = Event()
             terminal: list[AndroidReceiveState] = []
             controller = AndroidReceiveController(
@@ -257,8 +347,8 @@ class AndroidReceiveControllerTests(unittest.TestCase):
                 main_receive_delay=0,
             )
 
-            controller.start("c" * 32)
-            _wait(finished, "unsupported transfer was not rejected")
+            controller.start("9" * 32)
+            _wait(finished, "directory transfer was not rejected")
 
             self.assertEqual(terminal, [AndroidReceiveState.REJECTED])
             self.assertEqual(runner.calls[1]["stdin_data"], b"n\n")

@@ -21,7 +21,12 @@ sys.path.insert(0, str(ANDROID_APP))
 from moontransfer.cancellation import OperationCancelled  # noqa: E402
 from moontransfer.files import CONTROL_METADATA_NAME  # noqa: E402
 from moontransfer.progress import TransferProgressSample  # noqa: E402
-from moontransfer.protocol import create_proposal, write_control_file  # noqa: E402
+from moontransfer.protocol import (  # noqa: E402
+    PayloadEntry,
+    create_payload_proposal,
+    create_proposal,
+    write_control_file,
+)
 from moontransfer_android.android_runtime import (  # noqa: E402
     AndroidRuntimeError,
     TransferNotification,
@@ -36,6 +41,8 @@ from moontransfer_android.service_protocol import (  # noqa: E402
     TransferServiceCommandName,
     TransferServiceError,
     TransferServiceOperation,
+    TransferServiceStateStore,
+    _read_summary,
     _replace_file_atomic,
     consume_service_commands,
     create_receive_service_request,
@@ -45,9 +52,13 @@ from moontransfer_android.service_protocol import (  # noqa: E402
     read_service_snapshot,
     service_session_dir,
     staged_document_from_request,
+    staged_selection_from_request,
     submit_service_command,
 )
-from moontransfer_android.storage import StagedDocument  # noqa: E402
+from moontransfer_android.storage import (  # noqa: E402
+    StagedDocument,
+    StagedSelection,
+)
 from moontransfer_android.transfer_service import (  # noqa: E402
     TransferServiceRuntime,
     build_transfer_notification,
@@ -113,6 +124,7 @@ class _SuccessfulSendRunner:
         self.block_main = block_main
         self.calls: list[dict[str, object]] = []
         self.stop_requested = False
+        self.metadata_finished = threading.Event()
 
     def run(
         self,
@@ -130,11 +142,17 @@ class _SuccessfulSendRunner:
         self.calls.append({"args": args, "secret": secret})
         is_metadata = str(args[-1]).endswith(CONTROL_METADATA_NAME)
         if is_metadata:
+            on_line("Code is: <hidden>")  # type: ignore[operator]
+            if process_guard:
+                process_guard()  # type: ignore[operator]
+            self.metadata_finished.set()
             return CrocProcessResult(returncode=0, output_tail=())
+        on_line("Code is: <hidden>")  # type: ignore[operator]
         if self.block_main:
             while not cancel_requested():  # type: ignore[operator]
                 time.sleep(0.01)
             raise OperationCancelled
+        self.metadata_finished.wait(2)
         on_line("Sending (->127.0.0.1:9009)")  # type: ignore[operator]
         on_line("example.bin 100% | (7 B/7 B, 1 KB/s)")  # type: ignore[operator]
         return CrocProcessResult(returncode=0, output_tail=())
@@ -310,6 +328,106 @@ class AndroidServiceProtocolTests(unittest.TestCase):
                     stat.S_IMODE((session_dir / "request.json").stat().st_mode),
                     0o600,
                 )
+
+    def test_send_request_round_trips_multiple_private_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_root = Path(tmp) / "cache"
+            documents: list[StagedDocument] = []
+            for index, content in enumerate((b"first", b"second"), start=1):
+                staging_dir = cache_root / "staging" / f"document-{index}"
+                staging_dir.mkdir(parents=True)
+                path = staging_dir / f"file-{index}.bin"
+                path.write_bytes(content)
+                documents.append(
+                    StagedDocument(
+                        path=path,
+                        staging_dir=staging_dir,
+                        filename=path.name,
+                        size=len(content),
+                    )
+                )
+            selection = StagedSelection(tuple(documents))
+
+            created = create_send_service_request(cache_root, selection)
+            restored = read_service_request(cache_root, created.session_id)
+            restored_selection = staged_selection_from_request(
+                cache_root,
+                restored,
+            )
+
+            self.assertEqual(restored.filename, "MoonTransfer")
+            self.assertEqual(restored.size, 11)
+            self.assertIsNone(restored.document_path)
+            self.assertIsNone(restored.staging_dir)
+            self.assertEqual(len(restored.documents), 2)
+            self.assertEqual(restored_selection.filenames, selection.filenames)
+            self.assertEqual(
+                restored_selection.total_size,
+                selection.total_size,
+            )
+            self.assertEqual(
+                restored_selection.root_paths,
+                tuple(path.resolve(strict=True) for path in selection.root_paths),
+            )
+
+    def test_multi_file_proposal_summary_survives_service_state_round_trip(
+        self,
+    ) -> None:
+        proposal = create_payload_proposal(
+            roots=("first.txt", "second.txt"),
+            entries=(
+                PayloadEntry(
+                    path="first.txt",
+                    type="file",
+                    size=1,
+                    sha256="a" * 64,
+                ),
+                PayloadEntry(
+                    path="second.txt",
+                    type="file",
+                    size=2,
+                    sha256="b" * 64,
+                ),
+            ),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_root = Path(tmp) / "cache"
+            request = create_receive_service_request(cache_root, "a" * 32)
+            state = TransferServiceStateStore(cache_root, request)
+
+            state.set_proposal(proposal)
+            summary = read_service_snapshot(
+                cache_root,
+                request.session_id,
+            ).proposal
+
+            self.assertIsNotNone(summary)
+            assert summary is not None
+            self.assertEqual(summary.filename, "MoonTransfer")
+            self.assertEqual(summary.roots, proposal.roots)
+            self.assertEqual(summary.file_count, 2)
+            self.assertEqual(summary.directory_count, 0)
+            self.assertFalse(summary.is_single_file)
+            self.assertIsNone(summary.sha256)
+
+    def test_legacy_single_file_summary_remains_readable(self) -> None:
+        summary = _read_summary(
+            {
+                "filename": "example.bin",
+                "size": 7,
+                "sha256": (
+                    "239f59ed55e737c77147cf55ad0c1b030"
+                    "b6d7ee748a7426952f9b852d5a935e5"
+                ),
+                "is_single_file": True,
+            }
+        )
+
+        self.assertIsNotNone(summary)
+        assert summary is not None
+        self.assertEqual(summary.roots, ("example.bin",))
+        self.assertEqual(summary.file_count, 1)
+        self.assertEqual(summary.directory_count, 0)
 
     def test_send_request_rejects_files_outside_private_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

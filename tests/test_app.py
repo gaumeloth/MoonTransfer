@@ -23,7 +23,10 @@ from moontransfer.app import (
 from moontransfer.build_info import CURRENT_BUILD
 from moontransfer.cancellation import OperationCancelled
 from moontransfer.files import cleanup_session_paths, create_session_paths
-from moontransfer.payload import scan_source_payload
+from moontransfer.payload import (
+    ensure_source_payload_unchanged,
+    scan_source_payload,
+)
 from moontransfer.protocol import create_proposal, write_control_file
 from moontransfer.resources import APP_ICON_PATH
 from moontransfer.transfer import (
@@ -329,7 +332,7 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_send_flow_runs_metadata_then_main_transfer(self) -> None:
+    def test_send_flow_prepares_main_before_publishing_metadata(self) -> None:
         with (
             tempfile.TemporaryDirectory() as tmp,
             mock.patch("moontransfer.app.CrocRunner", _FakeCrocRunner),
@@ -343,7 +346,7 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
             tab._start_send()
             metadata_runner = tab.runners["metadata_send"]
             main_runner = tab.runners["main_send"]
-            _wait_until(metadata_runner.is_running)
+            _wait_until(main_runner.is_running)
             session = tab.controller.session
             session_root = (
                 session.paths.root
@@ -351,8 +354,24 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
                 else None
             )
 
-            self.assertTrue(metadata_runner.is_running())
-            self.assertFalse(main_runner.is_running())
+            self.assertFalse(metadata_runner.is_running())
+            self.assertTrue(main_runner.is_running())
+            self.assertEqual(tab.code_edit.text(), "")
+            assert session is not None
+            assert session.proposal is not None
+            assert session.metadata_code is not None
+
+            main_runner.emit_line(f"Code is: {session.proposal.main_code}")
+            _wait_until(metadata_runner.is_running)
+            self.assertEqual(tab.code_edit.text(), "")
+            self.assertNotEqual(
+                main_runner.starts[-1]["env"]["HOME"],
+                metadata_runner.starts[-1]["env"]["HOME"],
+            )
+
+            metadata_runner.emit_line(
+                f"Code is: {session.metadata_code}"
+            )
             self.assertRegex(tab.code_edit.text(), r"^[0-9a-f]{32}$")
             self.assertEqual(
                 tab.controller.state,
@@ -360,7 +379,6 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
             )
 
             metadata_runner.finish()
-            _wait_until(main_runner.is_running)
             self.assertEqual(
                 tab.controller.state,
                 TransferState.AWAITING_DECISION,
@@ -376,6 +394,26 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
             self.assertIsNotNone(session_root)
             assert session_root is not None
             self.assertFalse(session_root.exists())
+
+    def test_main_preparation_failure_does_not_publish_a_code(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch("moontransfer.app.CrocRunner", _FakeCrocRunner),
+        ):
+            source = Path(tmp) / "example.txt"
+            source.write_bytes(b"content")
+            with mock.patch("moontransfer.widgets.QTimer.singleShot"):
+                tab = SendTab("/fake/croc")
+            tab._add_paths((source,))
+
+            tab._start_send()
+            main_runner = tab.runners["main_send"]
+            _wait_until(main_runner.is_running)
+            main_runner.finish(exit_code=1)
+
+            self.assertEqual(tab.code_edit.text(), "")
+            self.assertFalse(tab.runners["metadata_send"].is_running())
+            self.assertEqual(tab.controller.state, TransferState.FAILED)
 
     def test_send_flow_passes_multiple_roots_to_one_main_process(self) -> None:
         with (
@@ -397,7 +435,7 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
 
             metadata_runner = tab.runners["metadata_send"]
             main_runner = tab.runners["main_send"]
-            _wait_until(metadata_runner.is_running)
+            _wait_until(main_runner.is_running)
             session = tab.controller.session
             assert session is not None
             assert session.proposal is not None
@@ -410,13 +448,17 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
                 {entry.path for entry in session.proposal.entries},
             )
 
-            metadata_runner.finish()
-            _wait_until(main_runner.is_running)
             main_args = main_runner.starts[-1]["args"]
             self.assertEqual(
                 main_args[-2:],
                 [str(source_file.resolve()), str(source_folder.resolve())],
             )
+
+            assert session.metadata_code is not None
+            main_runner.emit_line(f"Code is: {session.proposal.main_code}")
+            _wait_until(metadata_runner.is_running)
+            metadata_runner.emit_line(f"Code is: {session.metadata_code}")
+            metadata_runner.finish()
 
             main_runner.finish()
             self.assertEqual(tab.controller.state, TransferState.COMPLETED)
@@ -497,13 +539,18 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
                 tab = SendTab("/fake/croc")
             tab._add_paths((source,))
             tab._start_send()
-            _wait_until(tab.runners["metadata_send"].is_running)
+            main_runner = tab.runners["main_send"]
+            _wait_until(main_runner.is_running)
             session = tab.controller.session
             assert session is not None
             assert session.paths is not None
             session_root = session.paths.root
 
-            tab.runners["metadata_send"].finish(exit_code=1)
+            assert session.proposal is not None
+            main_runner.emit_line(f"Code is: {session.proposal.main_code}")
+            metadata_runner = tab.runners["metadata_send"]
+            _wait_until(metadata_runner.is_running)
+            metadata_runner.finish(exit_code=1)
 
             self.assertEqual(tab.controller.state, TransferState.FAILED)
             self.assertFalse(tab.controller.active)
@@ -511,9 +558,24 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
             self.assertFalse(session_root.exists())
 
     def test_send_aborts_if_source_changes_after_hashing(self) -> None:
+        check_started = Event()
+        release_check = Event()
+
+        def delayed_source_check(payload, *, cancel_requested):
+            check_started.set()
+            release_check.wait(timeout=2)
+            return ensure_source_payload_unchanged(
+                payload,
+                cancel_requested=cancel_requested,
+            )
+
         with (
             tempfile.TemporaryDirectory() as tmp,
             mock.patch("moontransfer.app.CrocRunner", _FakeCrocRunner),
+            mock.patch(
+                "moontransfer.transfer.ensure_source_payload_unchanged",
+                side_effect=delayed_source_check,
+            ),
         ):
             source = Path(tmp) / "example.txt"
             source.write_bytes(b"content")
@@ -521,7 +583,7 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
                 tab = SendTab("/fake/croc")
             tab._add_paths((source,))
             tab._start_send()
-            _wait_until(tab.runners["metadata_send"].is_running)
+            _wait_until(check_started.is_set)
             session = tab.controller.session
             assert session is not None
             assert session.paths is not None
@@ -529,7 +591,7 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
 
             source.write_bytes(b"changed content")
             with mock.patch("moontransfer.app._show_controller_error"):
-                tab.runners["metadata_send"].finish()
+                release_check.set()
                 _wait_until(
                     lambda: tab.controller.state == TransferState.FAILED
                 )
@@ -800,8 +862,8 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
             tab._add_paths((source,))
             tab._start_send()
 
-            metadata_runner = tab.runners["metadata_send"]
-            _wait_until(metadata_runner.is_running)
+            main_runner = tab.runners["main_send"]
+            _wait_until(main_runner.is_running)
             session = tab.controller.session
             assert session is not None
             assert session.paths is not None
@@ -809,12 +871,12 @@ class TransferFlowCharacterizationTests(unittest.TestCase):
 
             tab._stop_send()
 
-            self.assertTrue(metadata_runner.stop_requested)
+            self.assertTrue(main_runner.stop_requested)
             self.assertTrue(tab.controller.busy)
             self.assertIs(tab.controller.session, session)
             self.assertTrue(session_root.exists())
 
-            metadata_runner.finish(
+            main_runner.finish(
                 exit_code=15,
                 exit_status=QProcess.ExitStatus.CrashExit,
             )
