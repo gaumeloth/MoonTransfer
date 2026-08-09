@@ -497,16 +497,18 @@ una copia obsoleta del protocollo.
 ## Build nativa di croc
 
 La recipe locale sotto `recipes/croc` fissa la stessa versione di `croc`
-dichiarata dal progetto desktop. Verifica l'archivio sorgente upstream tramite
-SHA-512 e compila un eseguibile Android ARM64 position-independent con cgo
+dichiarata dal progetto desktop. Scarica l'asset sorgente esplicito allegato a
+quella release upstream, ne verifica il digest SHA-256 pubblicato e compila
+usando i moduli Go vendorizzati inclusi invece di risolvere le dipendenze durante
+la build. Crea quindi un eseguibile Android ARM64 position-independent con cgo
 abilitato. In questo modo Go delega la risoluzione dei nomi dei relay al resolver
 DNS nativo di Android, rispettando la rete, la VPN e il Private DNS attivi.
 L'eseguibile viene incluso come `lib/arm64-v8a/libcroc.so`, mantenendolo
 nell'area delle librerie native firmata dell'APK. Nel pacchetto dell'applicazione
-viene inclusa anche la licenza MIT upstream. Il comando di build Android
-calcola l'impronta di questa recipe; quando ne cambiano versione, checksum o
-logica di compilazione, rimuove la cache nativa obsoleta di `croc` e ricrea la
-distribuzione invece di riutilizzare silenziosamente un vecchio eseguibile.
+viene inclusa anche la licenza MIT upstream. Il comando di build Android calcola
+l'impronta di questa recipe; quando ne cambiano versione, checksum o logica di
+compilazione, rimuove la cache nativa obsoleta di `croc` e ricrea la distribuzione
+invece di riutilizzare silenziosamente un vecchio eseguibile.
 
 ## Limitazioni note
 

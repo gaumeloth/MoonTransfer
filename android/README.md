@@ -466,16 +466,18 @@ Android prototype cannot silently retain an outdated copy of the protocol.
 ## Native croc build
 
 The local recipe under `recipes/croc` pins the same `croc` version declared by
-the desktop project. It verifies the upstream source archive with SHA-512 and
-builds a position-independent ARM64 Android executable with cgo enabled. This
-lets Go delegate relay hostname resolution to Android's native DNS resolver, so
-the app respects the active network, VPN, and Private DNS configuration. The
-executable is packaged as `lib/arm64-v8a/libcroc.so`, which keeps it inside the
-APK's signed native-library area. The upstream MIT license is also included in
-the application package. The Android build command fingerprints this recipe;
-when its version, checksum, or build logic changes, it removes the stale native
-`croc` cache and rebuilds the distribution instead of silently reusing an old
-executable.
+the desktop project. It downloads the explicit source asset attached to that
+upstream release, verifies its published SHA-256 digest, and builds against the
+included vendored Go modules rather than resolving dependencies during the
+build. It then creates a position-independent ARM64 Android executable with cgo
+enabled. This lets Go delegate relay hostname resolution to Android's native DNS
+resolver, so the app respects the active network, VPN, and Private DNS
+configuration. The executable is packaged as `lib/arm64-v8a/libcroc.so`, which
+keeps it inside the APK's signed native-library area. The upstream MIT license
+is also included in the application package. The Android build command
+fingerprints this recipe; when its version, checksum, or build logic changes, it
+removes the stale native `croc` cache and rebuilds the distribution instead of
+silently reusing an old executable.
 
 ## Known limitations
 
