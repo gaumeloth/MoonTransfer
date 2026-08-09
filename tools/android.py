@@ -2,16 +2,21 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import importlib.metadata
 import importlib.util
+import json
 import platform
 import re
 import shutil
 import subprocess
 import sys
+import tarfile
+import zipfile
 from collections.abc import Callable, Sequence
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
+from tools.build_metadata import BuildMetadata, VERSION_RE, create_build_metadata
 from tools.prepare_android import ROOT, prepare_android_source
 
 
@@ -35,6 +40,32 @@ CROC_BUILD_CACHE_PATHS = (
     Path("build/other_builds/croc"),
     Path("build/libs_collections/moontransfer"),
     Path("dists/moontransfer"),
+)
+ANDROID_DIST_DIR = ROOT / "dist" / "android"
+ANDROID_RELEASE_DIR = ROOT / "release"
+ANDROID_ARCHITECTURE = "arm64-v8a"
+MAX_PRIVATE_ARCHIVE_BYTES = 64 * 1024 * 1024
+REQUIRED_APK_MEMBERS = frozenset(
+    {
+        "AndroidManifest.xml",
+        "assets/private.tar",
+        "classes.dex",
+        f"lib/{ANDROID_ARCHITECTURE}/libcroc.so",
+        f"lib/{ANDROID_ARCHITECTURE}/libmain.so",
+        f"lib/{ANDROID_ARCHITECTURE}/libpython3.13.so",
+    }
+)
+REQUIRED_PRIVATE_MEMBERS = frozenset(
+    {
+        "main.pyc",
+        "moontransfer/build-info.json",
+        "moontransfer/protocol.pyc",
+        "moontransfer_android/application.pyc",
+        "moontransfer_android/licenses/croc.txt",
+        "moontransfer_android/moontransfer.kv",
+        "moontransfer_android/service.pyc",
+        "moontransfer_android/transport.pyc",
+    }
 )
 EXPECTED_PYTHON = (3, 13)
 COMMON_BUILD_COMMANDS = (
@@ -246,12 +277,16 @@ def run_local_prototype() -> int:
     ).returncode
 
 
-def build_debug_apk() -> int:
+def build_debug_apk(
+    *,
+    version: str | None = None,
+    commit: str | None = None,
+) -> int:
     issues = print_environment_report()
     if issues:
         return 1
 
-    prepare_android_source()
+    prepare_android_source(version=version, commit=commit)
     croc_fingerprint, _ = invalidate_stale_croc_build_cache()
     buildozer = shutil.which("buildozer")
     assert buildozer is not None
@@ -265,26 +300,246 @@ def build_debug_apk() -> int:
     return result.returncode
 
 
+def _validate_archive_names(names: Sequence[str], *, label: str) -> None:
+    if len(names) != len(set(names)):
+        raise RuntimeError(f"{label} contains duplicate member names.")
+    for name in names:
+        path = PurePosixPath(name)
+        if path.is_absolute() or ".." in path.parts:
+            raise RuntimeError(f"{label} contains an unsafe member path: {name!r}.")
+
+
+def _read_private_build_info(
+    archive: zipfile.ZipFile,
+) -> tuple[dict[str, object], tuple[str, ...]]:
+    private_info = archive.getinfo("assets/private.tar")
+    if private_info.file_size > MAX_PRIVATE_ARCHIVE_BYTES:
+        raise RuntimeError(
+            "Android private application archive is unexpectedly large."
+        )
+
+    private_data = archive.read(private_info)
+    try:
+        with tarfile.open(fileobj=io.BytesIO(private_data), mode="r:gz") as private:
+            names = tuple(member.name for member in private.getmembers())
+            _validate_archive_names(
+                names,
+                label="Android private application archive",
+            )
+            missing = REQUIRED_PRIVATE_MEMBERS.difference(names)
+            if missing:
+                raise RuntimeError(
+                    "Android private application archive is missing: "
+                    + ", ".join(sorted(missing))
+                )
+            non_files = {
+                name
+                for name in REQUIRED_PRIVATE_MEMBERS
+                if not private.getmember(name).isfile()
+            }
+            if non_files:
+                raise RuntimeError(
+                    "Android private application archive has invalid files: "
+                    + ", ".join(sorted(non_files))
+                )
+            build_info_member = private.getmember("moontransfer/build-info.json")
+            stream = private.extractfile(build_info_member)
+            if stream is None:
+                raise RuntimeError(
+                    "Unable to read embedded Android build metadata."
+                )
+            raw_build_info = stream.read(8 * 1024 + 1)
+    except (tarfile.TarError, KeyError) as exc:
+        raise RuntimeError(
+            "Android private application archive is not valid."
+        ) from exc
+
+    if len(raw_build_info) > 8 * 1024:
+        raise RuntimeError("Embedded Android build metadata is too large.")
+    try:
+        build_info = json.loads(raw_build_info.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            "Embedded Android build metadata is not valid JSON."
+        ) from exc
+    if not isinstance(build_info, dict):
+        raise RuntimeError("Embedded Android build metadata is not an object.")
+    return build_info, names
+
+
+def validate_debug_apk(
+    apk: Path,
+    *,
+    expected: BuildMetadata,
+) -> None:
+    apk = apk.expanduser().absolute()
+    if apk.is_symlink() or not apk.is_file():
+        raise RuntimeError(f"Android APK not found or unsafe: {apk}")
+
+    try:
+        with zipfile.ZipFile(apk) as archive:
+            names = tuple(archive.namelist())
+            _validate_archive_names(names, label="Android APK")
+            missing = REQUIRED_APK_MEMBERS.difference(names)
+            if missing:
+                raise RuntimeError(
+                    "Android APK is missing: " + ", ".join(sorted(missing))
+                )
+            invalid_files = {
+                name
+                for name in REQUIRED_APK_MEMBERS
+                if archive.getinfo(name).is_dir()
+                or archive.getinfo(name).file_size == 0
+            }
+            if invalid_files:
+                raise RuntimeError(
+                    "Android APK has invalid files: "
+                    + ", ".join(sorted(invalid_files))
+                )
+            if any(name.lower().endswith(".xcf") for name in names):
+                raise RuntimeError(
+                    "Android APK contains an excluded source asset."
+                )
+
+            architectures = {
+                parts[1]
+                for name in names
+                if len(parts := PurePosixPath(name).parts) >= 3
+                and parts[0] == "lib"
+            }
+            if architectures != {ANDROID_ARCHITECTURE}:
+                found = ", ".join(sorted(architectures)) or "none"
+                raise RuntimeError(
+                    "Android APK contains unexpected native architectures: "
+                    f"{found}."
+                )
+
+            build_info, private_names = _read_private_build_info(archive)
+            if any(name.lower().endswith(".xcf") for name in private_names):
+                raise RuntimeError(
+                    "Android private application archive contains an excluded "
+                    "source asset."
+                )
+            damaged = archive.testzip()
+            if damaged is not None:
+                raise RuntimeError(f"Android APK has a damaged member: {damaged}.")
+    except zipfile.BadZipFile as exc:
+        raise RuntimeError(f"Android APK is not a valid ZIP archive: {apk}") from exc
+
+    expected_build_info = {
+        "schema_version": expected.schema_version,
+        "version": expected.version,
+        "commit": expected.commit,
+        "croc_version": expected.croc_version,
+        "protocol_version": expected.protocol_version,
+    }
+    if build_info != expected_build_info:
+        raise RuntimeError(
+            "Embedded Android build metadata does not match the requested build."
+        )
+
+
+def package_debug_apk(
+    metadata: BuildMetadata,
+    *,
+    dist_dir: Path = ANDROID_DIST_DIR,
+    release_dir: Path = ANDROID_RELEASE_DIR,
+) -> Path:
+    if not VERSION_RE.fullmatch(metadata.version):
+        raise RuntimeError(
+            f"Unsafe Android artifact version: {metadata.version!r}."
+        )
+
+    dist_dir = dist_dir.expanduser().absolute()
+    release_dir = release_dir.expanduser().absolute()
+    source = (
+        dist_dir
+        / f"moontransfer-{metadata.version}-{ANDROID_ARCHITECTURE}-debug.apk"
+    )
+    validate_debug_apk(source, expected=metadata)
+
+    if release_dir.is_symlink():
+        raise RuntimeError(f"Refusing symbolic release directory: {release_dir}")
+    release_dir.mkdir(parents=True, exist_ok=True)
+    destination = (
+        release_dir
+        / f"MoonTransfer-{metadata.version}-android-arm64-debug.apk"
+    )
+    if destination.is_symlink() or (
+        destination.exists() and not destination.is_file()
+    ):
+        raise RuntimeError(f"Refusing unsafe release artifact: {destination}")
+    temporary = destination.with_name(f".{destination.name}.tmp")
+    if temporary.is_symlink() or (
+        temporary.exists() and not temporary.is_file()
+    ):
+        raise RuntimeError(f"Refusing unsafe temporary artifact: {temporary}")
+    temporary.unlink(missing_ok=True)
+    try:
+        shutil.copy2(source, temporary)
+        validate_debug_apk(temporary, expected=metadata)
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+    validate_debug_apk(destination, expected=metadata)
+    return destination
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Develop and build the isolated MoonTransfer Android prototype."
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("doctor", help="Check Android build prerequisites.")
-    subparsers.add_parser("prepare", help="Generate the Android source tree.")
+    prepare_parser = subparsers.add_parser(
+        "prepare",
+        help="Generate the Android source tree.",
+    )
     subparsers.add_parser("run", help="Run the Kivy scaffold on the host.")
-    subparsers.add_parser("build", help="Build an arm64 debug APK.")
+    build_parser = subparsers.add_parser(
+        "build",
+        help="Build an arm64 debug APK.",
+    )
+    package_parser = subparsers.add_parser(
+        "package",
+        help="Validate and stage the arm64 debug APK as a CI artifact.",
+    )
+    for command_parser in (prepare_parser, build_parser, package_parser):
+        command_parser.add_argument(
+            "--version",
+            help="Full version embedded in the Android build.",
+        )
+        command_parser.add_argument(
+            "--commit",
+            help="Git commit embedded in the Android build.",
+        )
     args = parser.parse_args()
 
     if args.command == "doctor":
         return int(bool(print_environment_report()))
     if args.command == "prepare":
-        print(prepare_android_source())
+        print(
+            prepare_android_source(
+                version=args.version,
+                commit=args.commit,
+            )
+        )
         return 0
     if args.command == "run":
         return run_local_prototype()
     if args.command == "build":
-        return build_debug_apk()
+        return build_debug_apk(
+            version=args.version,
+            commit=args.commit,
+        )
+    if args.command == "package":
+        metadata = create_build_metadata(
+            ROOT,
+            version=args.version,
+            commit=args.commit,
+        )
+        print(package_debug_apk(metadata))
+        return 0
     parser.error(f"Unknown command: {args.command}")
     return 2
 

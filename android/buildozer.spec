@@ -32,6 +32,7 @@ android.minapi = 24
 android.ndk = 28c
 android.ndk_api = 24
 android.archs = arm64-v8a
+android.numeric_version = 1
 android.allow_backup = False
 android.enable_androidx = True
 android.debug_artifact = apk

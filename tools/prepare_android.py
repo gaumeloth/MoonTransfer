@@ -4,7 +4,6 @@ import argparse
 import shutil
 import sys
 import tempfile
-import tomllib
 from pathlib import Path
 
 
@@ -27,16 +26,6 @@ SHARED_MODULES = (
     "resources.py",
 )
 ANDROID_ASSET_SUFFIXES = frozenset({".png"})
-
-
-def read_project_version(pyproject: Path) -> str:
-    with pyproject.open("rb") as stream:
-        data = tomllib.load(stream)
-
-    version = data.get("project", {}).get("version")
-    if not isinstance(version, str) or not version:
-        raise RuntimeError("Missing project version in pyproject.toml.")
-    return version
 
 
 def _copy_android_app(source: Path, destination: Path) -> None:
@@ -83,6 +72,8 @@ def prepare_android_source(
     *,
     root: Path = ROOT,
     destination: Path | None = None,
+    version: str | None = None,
+    commit: str | None = None,
 ) -> Path:
     root = root.resolve()
     destination = (
@@ -105,11 +96,15 @@ def prepare_android_source(
             root / "src" / "moontransfer",
             temporary / "moontransfer",
         )
-        version = read_project_version(root / "pyproject.toml")
-        _write_entrypoint(temporary, version)
+        metadata = create_build_metadata(
+            root,
+            version=version,
+            commit=commit,
+        )
+        _write_entrypoint(temporary, metadata.version)
         write_build_metadata(
             temporary / "moontransfer" / "build-info.json",
-            create_build_metadata(root),
+            metadata,
         )
 
         if destination.exists():
@@ -131,9 +126,21 @@ def main() -> int:
         type=Path,
         help="Override the generated source destination.",
     )
+    parser.add_argument(
+        "--version",
+        help="Full version embedded in the generated Android source.",
+    )
+    parser.add_argument(
+        "--commit",
+        help="Git commit embedded in the generated Android source.",
+    )
     args = parser.parse_args()
 
-    destination = prepare_android_source(destination=args.destination)
+    destination = prepare_android_source(
+        destination=args.destination,
+        version=args.version,
+        commit=args.commit,
+    )
     print(destination)
     return 0
 
