@@ -42,6 +42,11 @@ p4a.branch = v2026.05.09
 p4a.bootstrap = sdl2
 p4a.local_recipes = recipes
 
+[app@ci]
+# CI runs without a terminal. Keep automatic SDK license acceptance explicit
+# and isolated from local builds, which retain Buildozer's interactive prompt.
+android.accept_sdk_license = True
+
 [buildozer]
 log_level = 2
 warn_on_root = 1

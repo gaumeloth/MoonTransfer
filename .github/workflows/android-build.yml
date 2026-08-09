@@ -104,19 +104,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-android-gradle-
 
-      - name: Seed accepted Android SDK licenses
-        shell: bash
-        run: |
-          set -euo pipefail
-          source_licenses="${ANDROID_HOME}/licenses"
-          target_licenses="${HOME}/.buildozer/android/platform/android-sdk/licenses"
-          if [ ! -d "${source_licenses}" ]; then
-            echo "The hosted Android SDK does not contain accepted licenses." >&2
-            exit 1
-          fi
-          install -d "${target_licenses}"
-          cp -a "${source_licenses}/." "${target_licenses}/"
-
       - name: Verify the Android dependency lock
         run: uv lock --check --project android
 
@@ -150,6 +137,7 @@ jobs:
       - name: Build the Android debug APK
         run: >-
           ./scripts/android.sh build
+          --buildozer-profile ci
           --version "${{ steps.package-version.outputs.version }}"
           --commit "${{ github.sha }}"
 

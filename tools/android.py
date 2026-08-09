@@ -97,6 +97,7 @@ MACOS_BUILD_COMMANDS = (
     "pkg-config",
     "clang",
 )
+SUPPORTED_BUILDOZER_PROFILES = ("ci",)
 
 
 def required_build_commands(system: str) -> tuple[str, ...]:
@@ -277,10 +278,25 @@ def run_local_prototype() -> int:
     ).returncode
 
 
+def buildozer_debug_command(
+    buildozer: str,
+    *,
+    profile: str | None = None,
+) -> list[str]:
+    command = [buildozer]
+    if profile is not None:
+        if profile not in SUPPORTED_BUILDOZER_PROFILES:
+            raise ValueError(f"Unsupported Buildozer profile: {profile}")
+        command.extend(("--profile", profile))
+    command.extend(("--verbose", "android", "debug"))
+    return command
+
+
 def build_debug_apk(
     *,
     version: str | None = None,
     commit: str | None = None,
+    buildozer_profile: str | None = None,
 ) -> int:
     issues = print_environment_report()
     if issues:
@@ -291,7 +307,7 @@ def build_debug_apk(
     buildozer = shutil.which("buildozer")
     assert buildozer is not None
     result = subprocess.run(
-        [buildozer, "--verbose", "android", "debug"],
+        buildozer_debug_command(buildozer, profile=buildozer_profile),
         cwd=ANDROID_DIR,
         check=False,
     )
@@ -513,6 +529,11 @@ def main() -> int:
             "--commit",
             help="Git commit embedded in the Android build.",
         )
+    build_parser.add_argument(
+        "--buildozer-profile",
+        choices=SUPPORTED_BUILDOZER_PROFILES,
+        help="Optional Buildozer profile; 'ci' enables non-interactive SDK setup.",
+    )
     args = parser.parse_args()
 
     if args.command == "doctor":
@@ -531,6 +552,7 @@ def main() -> int:
         return build_debug_apk(
             version=args.version,
             commit=args.commit,
+            buildozer_profile=args.buildozer_profile,
         )
     if args.command == "package":
         metadata = create_build_metadata(

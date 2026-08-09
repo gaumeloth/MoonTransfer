@@ -130,6 +130,13 @@ class AndroidBuildConfigurationTests(unittest.TestCase):
         self.assertEqual(self.app["android.archs"], "arm64-v8a")
         self.assertEqual(self.app["android.numeric_version"], "1")
 
+    def test_ci_profile_alone_accepts_sdk_licenses_automatically(self) -> None:
+        self.assertNotIn("android.accept_sdk_license", self.app)
+        self.assertEqual(
+            self.config["app@ci"]["android.accept_sdk_license"],
+            "True",
+        )
+
     def test_croc_recipe_is_pinned_and_packaged_as_a_native_executable(self) -> None:
         recipe_path = ROOT / "android" / "recipes" / "croc" / "__init__.py"
         recipe_source = recipe_path.read_text(encoding="utf-8")
@@ -717,6 +724,29 @@ class AndroidNotificationSourceTests(unittest.TestCase):
 
 
 class AndroidDoctorTests(unittest.TestCase):
+    def test_buildozer_debug_command_applies_the_ci_profile_before_target(self) -> None:
+        self.assertEqual(
+            android_tool.buildozer_debug_command(
+                "/usr/bin/buildozer",
+                profile="ci",
+            ),
+            [
+                "/usr/bin/buildozer",
+                "--profile",
+                "ci",
+                "--verbose",
+                "android",
+                "debug",
+            ],
+        )
+
+    def test_buildozer_debug_command_rejects_unknown_profiles(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Unsupported Buildozer profile"):
+            android_tool.buildozer_debug_command(
+                "/usr/bin/buildozer",
+                profile="unknown",
+            )
+
     def test_required_commands_are_platform_specific(self) -> None:
         linux = android_tool.required_build_commands("Linux")
         macos = android_tool.required_build_commands("Darwin")
