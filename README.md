@@ -770,16 +770,16 @@ MoonTransfer is in active early development. It already provides a graphical
 send/receive flow, bundles a pinned and checksum-verified `croc` binary during
 builds, includes unit tests for the non-GUI logic, and publishes native
 pre-built alpha archives for the main platforms. The current public line is
-`v0.1.0-alpha.3`. Android is a functional but experimental single-file debug
-target, not a supported end-user release.
+`v0.1.0-alpha.3`. Android is a functional but experimental debug target for
+single or multiple regular files, not a supported end-user release.
 
 Possible future improvements, in indicative order:
 
 - collect feedback from `alpha.3` and continue validating the automated
   `onedir` artifacts on their target systems;
 - continue hardening the Kivy Android target, especially lifecycle edge cases,
-  device coverage, multi-item payloads, and release packaging, before treating
-  Android as a supported platform;
+  device and document-provider coverage, folder payloads, and release packaging,
+  before treating Android as a supported platform;
 - add signing and notarization where appropriate, then evaluate more native
   distribution formats such as AppImage, a Windows installer, and a macOS disk
   image;
@@ -1352,13 +1352,23 @@ in tests with two instances on the same machine.
 `--classic=false` keeps MoonTransfer on `croc`'s modern transfer mode even if
 the user's global `croc` configuration has remembered classic mode.
 
-After the metadata transfer, the sender verifies that the inventoried roots
-have not changed, starts one main `croc send` process with every selected root,
-and waits. The receiver starts the main `croc` process without `--yes`, then
-MoonTransfer writes `y` or `n` to that process based on the user's GUI choice.
-This uses `croc`'s own accept/reject prompt instead of a separate MoonTransfer
-decision transfer. If the receiver rejects the payload, the main transfer is
-refused and no payload content is downloaded.
+Before exposing the metadata code, the sender verifies that the inventoried
+roots have not changed and starts one main `croc send` process with every
+selected root. MoonTransfer waits until the pinned `croc` version announces
+its code: this happens after `croc` has collected and hashed the send inputs,
+and is therefore used as the preparation boundary. It then starts the metadata
+sender in a second, isolated `croc` configuration directory and publishes the
+metadata code only after that process reaches the same boundary. The two
+processes overlap only while the small manifest is transferred; afterwards the
+prepared main sender remains waiting for the receiver's decision.
+
+The receiver starts the main `croc` process without `--yes`, then MoonTransfer
+writes `y` or `n` to that process based on the user's GUI choice. This uses
+`croc`'s own accept/reject prompt instead of a separate MoonTransfer decision
+transfer. If the receiver rejects the payload, the main transfer is refused
+and no payload content is downloaded. A main sender that exits before the
+metadata exchange completes is treated as a transfer failure rather than
+publishing a code for an unusable session.
 
 - When receiving metadata, control files are received into temporary session
   directories first. Transfer codes are passed through `CROC_SECRET`, not as
@@ -1405,14 +1415,14 @@ explicit allowlist of Qt-independent MoonTransfer modules, so the protocol is
 shared without adding Kivy to desktop runtime dependencies.
 
 The current prototype packages a verified ARM64 `croc` executable and can send
-or receive one file between Android and the desktop application using the
-shared protocol-v2 manifest and Android's Storage Access Framework. A `dataSync`
-foreground service owns active transfers, so switching applications does not
-abort `croc`; a private state-aware notification reports phase and available
-progress metrics and provides a session-bound stop action, then leaves a
-dismissible result. The service handles Android 15 `dataSync` timeouts and
-invalid sticky restarts, but interrupted sessions still cannot be resumed.
-Multiple files, folders, and release packaging are not implemented.
+or receive one or more regular files between Android and the desktop
+application using the shared protocol-v2 manifest and Android's Storage Access
+Framework. A `dataSync` foreground service owns active transfers, so switching
+applications does not abort `croc`; a private state-aware notification reports
+phase and available progress metrics and provides a session-bound stop action,
+then leaves a dismissible result. The service handles Android 15 `dataSync`
+timeouts and invalid sticky restarts, but interrupted sessions still cannot be
+resumed. Folders and release packaging are not implemented.
 Setup, diagnostics, build commands, design details, and manual compatibility
 tests are documented in [android/README.md](android/README.md).
 

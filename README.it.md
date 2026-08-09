@@ -788,18 +788,18 @@ MoonTransfer è in una fase di sviluppo iniziale attiva. Offre già un flusso
 grafico di invio/ricezione, include nella build un binario `croc` fissato e
 verificato tramite checksum, contiene test unitari per la logica non-GUI e
 pubblica archivi alpha nativi pre-buildati per le piattaforme principali. La
-linea pubblica attuale è `v0.1.0-alpha.3`. Android è un target di debug a file
-singolo funzionante ma sperimentale, non una release supportata per l'utente
-finale.
+linea pubblica attuale è `v0.1.0-alpha.3`. Android è un target di debug
+funzionante ma sperimentale per file regolari singoli o multipli, non una
+release supportata per l'utente finale.
 
 Possibili miglioramenti futuri, in ordine indicativo:
 
 - raccogliere feedback su `alpha.3` e continuare a validare gli artefatti
   `onedir` automatizzati sui rispettivi sistemi;
 - continuare a consolidare il target Android basato su Kivy, in particolare
-  casi limite del ciclo di vita, copertura di dispositivi, payload multipli e
-  packaging di release, prima di considerare Android una piattaforma
-  supportata;
+  casi limite del ciclo di vita, copertura di dispositivi e provider di
+  documenti, payload con cartelle e packaging di release, prima di considerare
+  Android una piattaforma supportata;
 - aggiungere firma e notarizzazione dove opportuno, quindi valutare formati di
   distribuzione più nativi come AppImage, un installer Windows e un'immagine
   disco macOS;
@@ -1412,15 +1412,25 @@ stessa macchina può rendere instabile la negoziazione.
 `--classic=false` mantiene MoonTransfer sulla modalità moderna di `croc` anche
 se la configurazione globale dell'utente ha memorizzato la modalità classic.
 
-Dopo il trasferimento dei metadati, il mittente verifica che gli elementi
-inventariati non siano cambiati, avvia un unico processo `croc send` principale
-con tutti gli elementi selezionati e rimane in attesa. Il destinatario avvia il
-processo `croc` principale senza `--yes`, poi MoonTransfer scrive `y` o `n` su
-quel processo in base alla scelta fatta nella GUI. In questo modo viene usato
-il prompt accetta/rifiuta di `croc` invece di un trasferimento di decisione
-separato di MoonTransfer. Se il destinatario rifiuta il payload, il
-trasferimento principale viene rifiutato e nessun contenuto del payload viene
-scaricato.
+Prima di mostrare il codice dei metadati, il mittente verifica che gli elementi
+inventariati non siano cambiati e avvia un unico processo `croc send`
+principale con tutti gli elementi selezionati. MoonTransfer attende che la
+versione fissata di `croc` comunichi il proprio codice: ciò avviene dopo che
+`croc` ha raccolto e calcolato gli hash degli elementi da inviare e viene quindi
+usato come confine della preparazione. Avvia poi il mittente dei metadati in una
+seconda directory di configurazione `croc` isolata e mostra il relativo codice
+solo quando anche questo processo raggiunge lo stesso punto. I due processi si
+sovrappongono soltanto durante il trasferimento del piccolo manifest; in
+seguito rimane in attesa il mittente principale già preparato.
+
+Il destinatario avvia il processo `croc` principale senza `--yes`, poi
+MoonTransfer scrive `y` o `n` su quel processo in base alla scelta fatta nella
+GUI. In questo modo viene usato il prompt accetta/rifiuta di `croc` invece di un
+trasferimento di decisione separato di MoonTransfer. Se il destinatario rifiuta
+il payload, il trasferimento principale viene rifiutato e nessun contenuto del
+payload viene scaricato. Se il mittente principale termina prima del
+completamento dello scambio dei metadati, MoonTransfer segnala un errore invece
+di mostrare il codice di una sessione inutilizzabile.
 
 - In ricezione dei metadati, i file di controllo vengono prima ricevuti in
   directory temporanee di sessione. I codici di trasferimento vengono passati
@@ -1470,15 +1480,15 @@ così il protocollo viene condiviso senza aggiungere Kivy alle dipendenze runtim
 desktop.
 
 Il prototipo attuale include un eseguibile `croc` ARM64 verificato e può inviare
-o ricevere un file tra Android e l'applicazione desktop usando il manifest
-condiviso del protocollo v2 e lo Storage Access Framework di Android. Un
-foreground service `dataSync` possiede i trasferimenti attivi, quindi passare a
-un'altra applicazione non interrompe `croc`; una notifica privata legata allo
-stato mostra fase e metriche di avanzamento disponibili e fornisce un'azione di
-arresto legata alla sessione, quindi lascia un risultato dismissibile. Il
-servizio gestisce i timeout `dataSync` di Android 15 e i riavvii sticky non
-validi, ma le sessioni interrotte non possono ancora essere riprese. File
-multipli, cartelle e packaging release non sono implementati.
+o ricevere uno o più file regolari tra Android e l'applicazione desktop usando
+il manifest condiviso del protocollo v2 e lo Storage Access Framework di
+Android. Un foreground service `dataSync` possiede i trasferimenti attivi,
+quindi passare a un'altra applicazione non interrompe `croc`; una notifica
+privata legata allo stato mostra fase e metriche di avanzamento disponibili e
+fornisce un'azione di arresto legata alla sessione, quindi lascia un risultato
+dismissibile. Il servizio gestisce i timeout `dataSync` di Android 15 e i
+riavvii sticky non validi, ma le sessioni interrotte non possono ancora essere
+riprese. Cartelle e packaging release non sono implementati.
 Configurazione, diagnostica, comandi di build, dettagli
 progettuali e test manuali di compatibilità sono documentati in
 [android/README.it.md](android/README.it.md).
