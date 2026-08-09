@@ -10,11 +10,11 @@ from pythonforandroid.util import ensure_dir
 
 class CrocRecipe(Recipe):
     version = "11.0.1"
-    url = "https://github.com/schollz/croc/archive/refs/tags/v{version}.tar.gz"
-    sha512sum = (
-        "fc316adff9c977d38031d49a87f9e6df2da1596e2279d8890cfc81d5c63f2f57"
-        "ed082117b5e26eba8b9f6b7c80355746563be11b8a460ef4ae089666f3030b26"
+    url = (
+        "https://github.com/schollz/croc/releases/download/v{version}/"
+        "croc_v{version}_src.tar.gz"
     )
+    sha256sum = "35c8333b1ba6c5d2185b8d6d71a3a8969f6aac4f0ac6c2bd90f7e3157bd4e3d0"
     built_libraries = {"libcroc.so": "."}
 
     def get_recipe_env(self, arch=None, with_flags_in_cc=True):
@@ -55,7 +55,7 @@ class CrocRecipe(Recipe):
             shprint(
                 sh.Command(go),
                 "build",
-                "-mod=readonly",
+                "-mod=vendor",
                 "-trimpath",
                 "-buildvcs=false",
                 "-ldflags=-s -w -buildid=",

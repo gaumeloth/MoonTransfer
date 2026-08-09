@@ -152,7 +152,7 @@ class AndroidBuildConfigurationTests(unittest.TestCase):
             if isinstance(statement, ast.Assign)
             and len(statement.targets) == 1
             and isinstance((target := statement.targets[0]), ast.Name)
-            and target.id in {"version", "url", "sha512sum", "built_libraries"}
+            and target.id in {"version", "url", "sha256sum", "built_libraries"}
         }
 
         project = read_toml(ROOT / "pyproject.toml")
@@ -162,14 +162,16 @@ class AndroidBuildConfigurationTests(unittest.TestCase):
         )
         self.assertEqual(
             assignments["url"],
-            "https://github.com/schollz/croc/archive/refs/tags/v{version}.tar.gz",
+            "https://github.com/schollz/croc/releases/download/v{version}/"
+            "croc_v{version}_src.tar.gz",
         )
         self.assertEqual(
-            assignments["sha512sum"],
-            "fc316adff9c977d38031d49a87f9e6df2da1596e2279d8890cfc81d5c63f2f57"
-            "ed082117b5e26eba8b9f6b7c80355746563be11b8a460ef4ae089666f3030b26",
+            assignments["sha256sum"],
+            "35c8333b1ba6c5d2185b8d6d71a3a8969f6aac4f0ac6c2bd90f7e3157bd4e3d0",
         )
         self.assertEqual(assignments["built_libraries"], {"libcroc.so": "."})
+        self.assertIn('"-mod=vendor"', recipe_source)
+        self.assertNotIn('"-mod=readonly"', recipe_source)
         self.assertIn('"GOOS": "android"', recipe_source)
         self.assertIn('"CGO_ENABLED": "1"', recipe_source)
         self.assertIn("with_flags_in_cc=False", recipe_source)
