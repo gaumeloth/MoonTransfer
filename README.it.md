@@ -1301,7 +1301,9 @@ l'ambiente di build Android bloccato; esegue i test specifici Android e la
 diagnostica dell'host; quindi crea l'APK ARM64 di debug. I download di Android
 SDK/NDK e Gradle vengono memorizzati nella cache, mentre la grande build nativa
 di python-for-android resta intenzionalmente fuori dalla cache finché il
-workflow non avrà prodotto dati reali sufficienti su tempi e affidabilità.
+workflow non avrà prodotto dati reali sufficienti su tempi e affidabilità. Un
+profilo Buildozer `ci` dedicato accetta in modo non interattivo le licenze SDK
+configurate; le normali build locali mantengono la richiesta interattiva.
 
 Prima del caricamento, MoonTransfer controlla che l'archivio APK non contenga
 percorsi non sicuri o duplicati, verifica le librerie native ARM64 e i file

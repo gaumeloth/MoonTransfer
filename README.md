@@ -1250,7 +1250,8 @@ installs the locked Android build environment; runs the Android-specific tests
 and host diagnostics; and builds the ARM64 debug APK. Android SDK/NDK and Gradle
 downloads are cached, while the large python-for-android native build is
 deliberately not cached until the workflow has enough real timing and
-reliability data.
+reliability data. A dedicated Buildozer `ci` profile accepts the configured SDK
+licenses non-interactively; normal local builds retain the interactive prompt.
 
 Before upload, MoonTransfer checks the APK archive for unsafe or duplicate
 entries, verifies the expected ARM64 native libraries and generated application

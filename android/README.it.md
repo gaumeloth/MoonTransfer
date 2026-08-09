@@ -183,6 +183,11 @@ installa versioni fissate di `uv`, Python 3.13.14, Java 17, Go 1.25.12 e Rust
 di build, esegue tutti i test `test_android*.py`, avvia `doctor` e crea l'APK di
 debug `arm64-v8a`.
 
+Il workflow seleziona il profilo Buildozer dedicato `ci`. Questo profilo accetta
+in modo non interattivo le licenze Android SDK configurate mentre Buildozer
+installa SDK e NDK isolati. Le normali build locali non selezionano il profilo e
+mantengono la richiesta interattiva di Buildozer per le licenze.
+
 Il workflow memorizza nella cache Android SDK/NDK scaricati e i dati Gradle.
 Intenzionalmente non include ancora nella cache la build nativa molto più grande
 di python-for-android: ciò rende la prima implementazione più semplice da

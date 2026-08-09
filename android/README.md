@@ -172,6 +172,11 @@ verifies `android/uv.lock`, installs the locked build dependency group, runs
 every `test_android*.py` test, executes `doctor`, and builds the `arm64-v8a`
 debug APK.
 
+The workflow selects the dedicated Buildozer `ci` profile. That profile accepts
+the configured Android SDK licenses non-interactively while Buildozer installs
+its isolated SDK and NDK. Normal local builds do not select the profile and
+retain Buildozer's interactive license prompt.
+
 The workflow caches downloaded Android SDK/NDK and Gradle data. It deliberately
 does not cache the much larger python-for-android native build yet: this keeps
 the first implementation easier to invalidate and audit, at the cost of a
