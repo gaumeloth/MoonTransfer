@@ -85,7 +85,7 @@ LINUX_BUILD_COMMANDS = (
     "autoconf",
     "automake",
     "autopoint",
-    "libtool",
+    "libtoolize",
     "pkg-config",
     "gcc",
     "g++",
@@ -93,7 +93,7 @@ LINUX_BUILD_COMMANDS = (
 MACOS_BUILD_COMMANDS = (
     "autoconf",
     "automake",
-    "libtool",
+    "glibtoolize",
     "pkg-config",
     "clang",
 )

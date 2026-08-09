@@ -723,8 +723,12 @@ class AndroidDoctorTests(unittest.TestCase):
 
         self.assertIn("gcc", linux)
         self.assertIn("go", linux)
+        self.assertIn("libtoolize", linux)
+        self.assertNotIn("glibtoolize", linux)
         self.assertNotIn("clang", linux)
         self.assertIn("clang", macos)
+        self.assertIn("glibtoolize", macos)
+        self.assertNotIn("libtoolize", macos)
         self.assertNotIn("gcc", macos)
 
     def test_missing_command_detection_is_deterministic(self) -> None:
