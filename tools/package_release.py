@@ -92,6 +92,26 @@ RELEASE_DOCUMENT_NAMES = (
     "README.it.md",
 )
 
+LINUX_QT_XCB_RUNTIME_LIBRARIES = (
+    "libX11-xcb.so.1",
+    "libxcb-cursor.so.0",
+    "libxcb-glx.so.0",
+    "libxcb-icccm.so.4",
+    "libxcb-image.so.0",
+    "libxcb-keysyms.so.1",
+    "libxcb-randr.so.0",
+    "libxcb-render-util.so.0",
+    "libxcb-render.so.0",
+    "libxcb-shape.so.0",
+    "libxcb-shm.so.0",
+    "libxcb-sync.so.1",
+    "libxcb-util.so.1",
+    "libxcb-xfixes.so.0",
+    "libxcb-xkb.so.1",
+    "libxkbcommon-x11.so.0",
+    "libxkbcommon.so.0",
+)
+
 
 def normalize_architecture(machine: str) -> str:
     normalized = machine.strip().lower()
@@ -195,6 +215,20 @@ def verify_croc_version(croc_path: Path, expected_version: str) -> None:
         )
 
 
+def validate_linux_qt_runtime(bundle: Path) -> None:
+    internal = bundle / "_internal"
+    missing = tuple(
+        name
+        for name in LINUX_QT_XCB_RUNTIME_LIBRARIES
+        if not (internal / name).is_file()
+    )
+    if missing:
+        raise FileNotFoundError(
+            "Runtime Qt XCB/XKB incompleto nel bundle Linux: "
+            + ", ".join(missing)
+        )
+
+
 def validate_bundle(
     root: Path,
     target: ReleaseTarget,
@@ -209,6 +243,8 @@ def validate_bundle(
         raise FileNotFoundError(f"Eseguibile MoonTransfer non trovato: {executable}")
     if os.name != "nt" and not os.access(executable, os.X_OK):
         raise PermissionError(f"Eseguibile MoonTransfer non avviabile: {executable}")
+    if target.system == "Linux":
+        validate_linux_qt_runtime(bundle)
 
     croc_path = find_bundled_croc(bundle, target.croc_name)
     if verify_croc:
