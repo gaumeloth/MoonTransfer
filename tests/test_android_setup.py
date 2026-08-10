@@ -2,16 +2,21 @@ from __future__ import annotations
 
 import ast
 import configparser
+import io
 import json
 import os
 import re
+import tarfile
 import tempfile
 import tomllib
 import unittest
+import zipfile
+from dataclasses import asdict
 from pathlib import Path
 
 from tools import android as android_tool
 from tools import prepare_android
+from tools.build_metadata import BuildMetadata
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,6 +25,52 @@ ROOT = Path(__file__).resolve().parents[1]
 def read_toml(path: Path) -> dict[str, object]:
     with path.open("rb") as stream:
         return tomllib.load(stream)
+
+
+def _android_build_metadata(
+    *,
+    version: str = "0.1.0-dev.42-0123456789ab",
+) -> BuildMetadata:
+    return BuildMetadata(
+        schema_version=1,
+        version=version,
+        commit="0123456789abcdef0123456789abcdef01234567",
+        croc_version="11.0.1",
+        protocol_version=2,
+    )
+
+
+def _write_test_apk(
+    path: Path,
+    metadata: BuildMetadata,
+    *,
+    omit: str | None = None,
+    extra_members: tuple[str, ...] = (),
+) -> None:
+    private_buffer = io.BytesIO()
+    with tarfile.open(fileobj=private_buffer, mode="w:gz") as private:
+        for name in sorted(android_tool.REQUIRED_PRIVATE_MEMBERS):
+            if name == "moontransfer/build-info.json":
+                content = json.dumps(asdict(metadata)).encode("utf-8")
+            else:
+                content = b"test"
+            member = tarfile.TarInfo(name)
+            member.size = len(content)
+            private.addfile(member, io.BytesIO(content))
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as apk:
+        for name in sorted(android_tool.REQUIRED_APK_MEMBERS):
+            if name == omit:
+                continue
+            content = (
+                private_buffer.getvalue()
+                if name == "assets/private.tar"
+                else b"test"
+            )
+            apk.writestr(name, content)
+        for name in extra_members:
+            apk.writestr(name, b"test")
 
 
 class AndroidDependencyIsolationTests(unittest.TestCase):
@@ -77,6 +128,14 @@ class AndroidBuildConfigurationTests(unittest.TestCase):
         self.assertEqual(self.app["android.ndk"], "28c")
         self.assertEqual(self.app["android.api"], "36")
         self.assertEqual(self.app["android.archs"], "arm64-v8a")
+        self.assertEqual(self.app["android.numeric_version"], "1")
+
+    def test_ci_profile_alone_accepts_sdk_licenses_automatically(self) -> None:
+        self.assertNotIn("android.accept_sdk_license", self.app)
+        self.assertEqual(
+            self.config["app@ci"]["android.accept_sdk_license"],
+            "True",
+        )
 
     def test_croc_recipe_is_pinned_and_packaged_as_a_native_executable(self) -> None:
         recipe_path = ROOT / "android" / "recipes" / "croc" / "__init__.py"
@@ -93,7 +152,7 @@ class AndroidBuildConfigurationTests(unittest.TestCase):
             if isinstance(statement, ast.Assign)
             and len(statement.targets) == 1
             and isinstance((target := statement.targets[0]), ast.Name)
-            and target.id in {"version", "url", "sha512sum", "built_libraries"}
+            and target.id in {"version", "url", "sha256sum", "built_libraries"}
         }
 
         project = read_toml(ROOT / "pyproject.toml")
@@ -103,14 +162,16 @@ class AndroidBuildConfigurationTests(unittest.TestCase):
         )
         self.assertEqual(
             assignments["url"],
-            "https://github.com/schollz/croc/archive/refs/tags/v{version}.tar.gz",
+            "https://github.com/schollz/croc/releases/download/v{version}/"
+            "croc_v{version}_src.tar.gz",
         )
         self.assertEqual(
-            assignments["sha512sum"],
-            "fc316adff9c977d38031d49a87f9e6df2da1596e2279d8890cfc81d5c63f2f57"
-            "ed082117b5e26eba8b9f6b7c80355746563be11b8a460ef4ae089666f3030b26",
+            assignments["sha256sum"],
+            "35c8333b1ba6c5d2185b8d6d71a3a8969f6aac4f0ac6c2bd90f7e3157bd4e3d0",
         )
         self.assertEqual(assignments["built_libraries"], {"libcroc.so": "."})
+        self.assertIn('"-mod=vendor"', recipe_source)
+        self.assertNotIn('"-mod=readonly"', recipe_source)
         self.assertIn('"GOOS": "android"', recipe_source)
         self.assertIn('"CGO_ENABLED": "1"', recipe_source)
         self.assertIn("with_flags_in_cc=False", recipe_source)
@@ -230,6 +291,88 @@ class AndroidBuildConfigurationTests(unittest.TestCase):
             f'{self.app["package.domain"]}.{self.app["package.name"]}',
             "io.github.gaumeloth.moontransfer",
         )
+
+
+class AndroidApkPackagingTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        self.dist = self.root / "dist"
+        self.release = self.root / "release"
+        self.metadata = _android_build_metadata()
+        self.apk = (
+            self.dist
+            / (
+                f"moontransfer-{self.metadata.version}-"
+                f"{android_tool.ANDROID_ARCHITECTURE}-debug.apk"
+            )
+        )
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def test_validates_and_stages_a_versioned_debug_apk(self) -> None:
+        _write_test_apk(self.apk, self.metadata)
+
+        android_tool.validate_debug_apk(self.apk, expected=self.metadata)
+        staged = android_tool.package_debug_apk(
+            self.metadata,
+            dist_dir=self.dist,
+            release_dir=self.release,
+        )
+
+        self.assertEqual(
+            staged.name,
+            f"MoonTransfer-{self.metadata.version}-android-arm64-debug.apk",
+        )
+        self.assertEqual(staged.read_bytes(), self.apk.read_bytes())
+
+    def test_rejects_an_apk_without_the_packaged_croc_binary(self) -> None:
+        croc_member = (
+            f"lib/{android_tool.ANDROID_ARCHITECTURE}/libcroc.so"
+        )
+        _write_test_apk(self.apk, self.metadata, omit=croc_member)
+
+        with self.assertRaisesRegex(RuntimeError, "libcroc.so"):
+            android_tool.validate_debug_apk(
+                self.apk,
+                expected=self.metadata,
+            )
+
+    def test_rejects_an_apk_with_an_unexpected_native_architecture(self) -> None:
+        _write_test_apk(
+            self.apk,
+            self.metadata,
+            extra_members=("lib/x86_64/libunexpected.so",),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "x86_64"):
+            android_tool.validate_debug_apk(
+                self.apk,
+                expected=self.metadata,
+            )
+
+    def test_rejects_mismatched_embedded_build_metadata(self) -> None:
+        _write_test_apk(
+            self.apk,
+            _android_build_metadata(version="0.1.0-dev.stale"),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "does not match"):
+            android_tool.validate_debug_apk(
+                self.apk,
+                expected=self.metadata,
+            )
+
+    def test_rejects_an_unsafe_artifact_version(self) -> None:
+        unsafe = _android_build_metadata(version="../outside")
+
+        with self.assertRaisesRegex(RuntimeError, "Unsafe Android artifact"):
+            android_tool.package_debug_apk(
+                unsafe,
+                dist_dir=self.dist,
+                release_dir=self.release,
+            )
 
 
 class AndroidCrocBuildCacheTests(unittest.TestCase):
@@ -359,16 +502,17 @@ class AndroidSourcePreparationTests(unittest.TestCase):
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             destination = Path(tmp) / "source"
+            build_version = "0.1.0-alpha.99"
+            build_commit = "0123456789abcdef0123456789abcdef01234567"
             prepared = prepare_android.prepare_android_source(
                 root=ROOT,
                 destination=destination,
+                version=build_version,
+                commit=build_commit,
             )
 
             main_source = (prepared / "main.py").read_text(encoding="utf-8")
-            project_version = read_toml(ROOT / "pyproject.toml")["project"][
-                "version"
-            ]
-            self.assertIn(f'__version__ = "{project_version}"', main_source)
+            self.assertIn(f'__version__ = "{build_version}"', main_source)
 
             build_info = json.loads(
                 (
@@ -377,13 +521,8 @@ class AndroidSourcePreparationTests(unittest.TestCase):
             )
             self.assertEqual(build_info["croc_version"], "11.0.1")
             self.assertEqual(build_info["protocol_version"], 2)
-            self.assertRegex(
-                build_info["version"],
-                (
-                    r"^0\.1\.0-(?:(?:alpha|beta|rc)\.\d+|"
-                    r"dev(?:\.[0-9a-f]{12})?)$"
-                ),
-            )
+            self.assertEqual(build_info["version"], build_version)
+            self.assertEqual(build_info["commit"], build_commit)
 
             config = configparser.ConfigParser(interpolation=None)
             config.read(ROOT / "android" / "buildozer.spec", encoding="utf-8")
@@ -392,7 +531,7 @@ class AndroidSourcePreparationTests(unittest.TestCase):
                 main_source,
             )
             self.assertIsNotNone(version_match)
-            self.assertEqual(version_match.group(1), project_version)
+            self.assertEqual(version_match.group(1), build_version)
 
             self.assertTrue(
                 (
@@ -587,14 +726,41 @@ class AndroidNotificationSourceTests(unittest.TestCase):
 
 
 class AndroidDoctorTests(unittest.TestCase):
+    def test_buildozer_debug_command_applies_the_ci_profile_before_target(self) -> None:
+        self.assertEqual(
+            android_tool.buildozer_debug_command(
+                "/usr/bin/buildozer",
+                profile="ci",
+            ),
+            [
+                "/usr/bin/buildozer",
+                "--profile",
+                "ci",
+                "--verbose",
+                "android",
+                "debug",
+            ],
+        )
+
+    def test_buildozer_debug_command_rejects_unknown_profiles(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Unsupported Buildozer profile"):
+            android_tool.buildozer_debug_command(
+                "/usr/bin/buildozer",
+                profile="unknown",
+            )
+
     def test_required_commands_are_platform_specific(self) -> None:
         linux = android_tool.required_build_commands("Linux")
         macos = android_tool.required_build_commands("Darwin")
 
         self.assertIn("gcc", linux)
         self.assertIn("go", linux)
+        self.assertIn("libtoolize", linux)
+        self.assertNotIn("glibtoolize", linux)
         self.assertNotIn("clang", linux)
         self.assertIn("clang", macos)
+        self.assertIn("glibtoolize", macos)
+        self.assertNotIn("libtoolize", macos)
         self.assertNotIn("gcc", macos)
 
     def test_missing_command_detection_is_deterministic(self) -> None:

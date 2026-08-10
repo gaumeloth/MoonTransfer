@@ -1,0 +1,176 @@
+name: Build Android artifact
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - "v[0-9]*-alpha.*"
+      - "v[0-9]*-beta.*"
+      - "v[0-9]*-rc.*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+env:
+  UV_VERSION: "0.11.29"
+  PYTHON_VERSION: "3.13.14"
+  JAVA_VERSION: "17"
+  GO_VERSION: "1.25.12"
+  RUST_VERSION: "1.97.1"
+
+jobs:
+  build:
+    name: Build android-arm64 debug APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: android/uv.lock
+
+      - name: Install Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Install Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Install Rust
+        run: |
+          rustup set profile minimal
+          rustup toolchain install "${RUST_VERSION}" --no-self-update
+          rustup default "${RUST_VERSION}"
+
+      - name: Install Android host prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes \
+            autoconf \
+            automake \
+            autopoint \
+            build-essential \
+            cmake \
+            gettext \
+            git \
+            libffi-dev \
+            libltdl-dev \
+            libncurses5-dev \
+            libncursesw5-dev \
+            libssl-dev \
+            libtinfo6 \
+            libtool \
+            pkg-config \
+            unzip \
+            zip \
+            zlib1g-dev
+
+      - name: Restore the Android SDK and NDK cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.buildozer/android/platform
+          key: ${{ runner.os }}-buildozer-platform-${{ hashFiles('android/buildozer.spec') }}
+          restore-keys: |
+            ${{ runner.os }}-buildozer-platform-
+
+      - name: Restore the Gradle cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-android-gradle-${{ hashFiles('android/buildozer.spec') }}
+          restore-keys: |
+            ${{ runner.os }}-android-gradle-
+
+      - name: Verify the Android dependency lock
+        run: uv lock --check --project android
+
+      - name: Install locked Android dependencies
+        run: uv sync --project android --frozen --group build
+
+      - name: Run Android unit tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: >-
+          uv run --project android --frozen --group build
+          python -m unittest discover -s tests -p 'test_android*.py' -v
+
+      - name: Check the Android build environment
+        run: ./scripts/android.sh doctor
+
+      - name: Determine the package version
+        id: package-version
+        shell: bash
+        run: |
+          set -eu
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            project_version="$(uv version --short)"
+            short_sha="$(printf '%s' "${GITHUB_SHA}" | cut -c1-12)"
+            version="${project_version}-dev.${GITHUB_RUN_NUMBER}-${short_sha}"
+          fi
+          printf 'version=%s\n' "${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build the Android debug APK
+        run: >-
+          ./scripts/android.sh build
+          --buildozer-profile ci
+          --version "${{ steps.package-version.outputs.version }}"
+          --commit "${{ github.sha }}"
+
+      - name: Validate and stage the Android debug APK
+        run: >-
+          ./scripts/android.sh package
+          --version "${{ steps.package-version.outputs.version }}"
+          --commit "${{ github.sha }}"
+
+      - name: Verify the Android manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="release/MoonTransfer-${{ steps.package-version.outputs.version }}-android-arm64-debug.apk"
+          aapt="$(find "${ANDROID_HOME}/build-tools" -type f -name aapt -print | sort -V | tail -n 1)"
+          if [ -z "${aapt}" ]; then
+            echo "Unable to locate aapt in the Android SDK." >&2
+            exit 1
+          fi
+
+          badging="$("${aapt}" dump badging "${apk}")"
+          printf '%s\n' "${badging}"
+          grep -Fq "package: name='io.github.gaumeloth.moontransfer' versionCode='1' versionName='${{ steps.package-version.outputs.version }}'" <<<"${badging}"
+          grep -Fq "compileSdkVersion='36'" <<<"${badging}"
+          grep -Fxq "sdkVersion:'24'" <<<"${badging}"
+          grep -Fxq "targetSdkVersion:'36'" <<<"${badging}"
+          grep -Fxq "application-debuggable" <<<"${badging}"
+          grep -Fxq "native-code: 'arm64-v8a'" <<<"${badging}"
+
+      - name: Upload the testable Android artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          path: release/MoonTransfer-*-android-arm64-debug.apk
+          archive: false
+          if-no-files-found: error
+          retention-days: 14

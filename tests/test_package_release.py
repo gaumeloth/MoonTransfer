@@ -104,6 +104,21 @@ class PackageReleaseTests(unittest.TestCase):
                     "10.4.13",
                 )
 
+    def test_validate_linux_bundle_rejects_incomplete_qt_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = package_release.TARGETS["linux-x86_64"]
+            bundle = self._create_bundle(root, target)
+            missing = "libxkbcommon-x11.so.0"
+            (bundle / "_internal" / missing).unlink()
+
+            with self.assertRaisesRegex(FileNotFoundError, missing):
+                package_release.validate_bundle(
+                    root,
+                    target,
+                    verify_croc=False,
+                )
+
     def test_create_linux_package_preserves_executable_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -203,6 +218,9 @@ class PackageReleaseTests(unittest.TestCase):
         croc.parent.mkdir(parents=True, exist_ok=True)
         croc.write_bytes(b"croc")
         croc.chmod(0o755)
+        if target.system == "Linux":
+            for name in package_release.LINUX_QT_XCB_RUNTIME_LIBRARIES:
+                (bundle / "_internal" / name).write_bytes(b"library")
         (root / "pyproject.toml").write_text(
             '[project]\nversion = "0.1.0"\n',
             encoding="utf-8",

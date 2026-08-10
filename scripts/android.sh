@@ -1,8 +1,8 @@
 #!/usr/bin/env sh
 set -eu
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+ROOT=$(CDPATH='' cd -- "$SCRIPT_DIR/.." && pwd)
 
 if ! command -v uv >/dev/null 2>&1; then
     printf '%s\n' \
@@ -17,5 +17,5 @@ if [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/javac" ]; then
 fi
 
 cd "$ROOT"
-exec uv run --project "$ROOT/android" --group build \
+exec uv run --project "$ROOT/android" --frozen --group build \
     python -m tools.android "$@"

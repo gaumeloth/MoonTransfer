@@ -1005,10 +1005,18 @@ Use the existing module boundaries when choosing where to make a change:
 - `tools/package_release.py`: host/target validation, bundled-`croc` version
   check, and creation of versioned release archives with license and
   documentation files.
+- `tools/prepare_android.py`: deterministic Android source generation and
+  embedded build identity.
+- `tools/android.py`: Android host diagnostics, source preparation, Buildozer
+  orchestration, APK validation, and versioned artifact staging.
 - `scripts/build.sh` and `scripts/build.ps1`: user-facing build wrappers and
   prerequisite checks.
+- `scripts/android.sh`: frozen, repository-root-independent wrapper for the
+  isolated Android environment.
 - `MoonTransfer.spec`: PyInstaller `onedir` packaging configuration, including
   the native macOS application bundle.
+- `.github/workflows/android-build.yml`: Android tests, toolchain diagnostics,
+  validated ARM64 debug APK builds, and CI artifact uploads.
 - `.github/workflows/release-builds.yml`: native test, build, artifact, checksum,
   and draft pre-release automation.
 - `.github/dependabot.yml`: monthly pull requests for pinned GitHub Action
@@ -1153,6 +1161,10 @@ when the behavior crosses module or platform boundaries.
 - Changes to build wrappers, PyInstaller configuration, or packaged resources:
   run the build script for the affected platform and start the generated bundle
   from `dist/MoonTransfer/`.
+- Changes to Android source preparation, Buildozer configuration, the native
+  `croc` recipe, or APK packaging: check `android/uv.lock`, run the Android test
+  subset and `./scripts/android.sh doctor`, then build and package a local APK
+  when the toolchain or final package is affected.
 - Changes to the main transfer flow or GUI coordination: run the full unit test
   suite, start MoonTransfer manually, and perform a manual transfer test.
 
@@ -1186,7 +1198,21 @@ git diff --check
 If you touch build scripts, packaging, or `MoonTransfer.spec`, also run the
 build script for the platform you changed.
 
-### Automated release artifacts
+For Android-specific changes, also run:
+
+```sh
+uv lock --check --project android
+PYTHONPATH="$PWD/src" uv run --project android --frozen --group build \
+  python -m unittest discover -s tests -p 'test_android*.py' -v
+./scripts/android.sh doctor
+```
+
+Build and package a local APK as well when changing the Android toolchain,
+generated source allowlist, native recipe, or final package validation.
+
+### Automated build artifacts
+
+#### Desktop release artifacts
 
 `.github/workflows/release-builds.yml` tests the same `onedir` packaging flow
 on native GitHub-hosted runners. It currently covers:
@@ -1201,6 +1227,12 @@ Every job installs the pinned workflow version of `uv` and Python 3.13, checks
 the checksum-verified `croc` binary, builds MoonTransfer, validates the bundled
 `croc` version, and creates a downloadable archive.
 
+On Linux, the runner installs Qt's complete XCB/XKB dependency set before
+building. Package validation rejects an incomplete native runtime, and an X11
+smoke test starts the packaged executable and injects keyboard input. This
+prevents artifacts from silently mixing bundled Qt keyboard libraries with
+incompatible versions from the destination system.
+
 Linux and macOS artifacts use `tar.gz` so executable permissions and symbolic
 links are preserved. Windows uses ZIP. The macOS archive contains a
 `MoonTransfer.app` bundle, while the other platforms retain the normal
@@ -1214,13 +1246,44 @@ workflow run summary for 14 days and can be downloaded for manual testing on
 the target systems. The same full version and commit are embedded in the
 application's diagnostic summary.
 
+#### Android test artifacts
+
+`.github/workflows/android-build.yml` provides a separate native Linux build for
+the Android prototype. It runs for pull requests, pushes to `main`, pre-release
+tags, and manual dispatches. The job uses pinned versions of `uv`, Python
+3.13.14, Java 17, Go 1.25.12, and Rust 1.97.1; checks the Android lock file;
+installs the locked Android build environment; runs the Android-specific tests
+and host diagnostics; and builds the ARM64 debug APK. Android SDK/NDK and Gradle
+downloads are cached, while the large python-for-android native build is
+deliberately not cached until the workflow has enough real timing and
+reliability data. A dedicated Buildozer `ci` profile accepts the configured SDK
+licenses non-interactively; normal local builds retain the interactive prompt.
+
+Before upload, MoonTransfer checks the APK archive for unsafe or duplicate
+entries, verifies the expected ARM64 native libraries and generated application
+files, rejects source-only assets, and compares the embedded build version,
+commit, `croc` version, and MoonTransfer protocol version with the current CI
+build. The workflow also uses Android's `aapt` to verify the application ID,
+version name and code, SDK bounds, debug status, and declared native
+architecture. The raw, versioned APK is available from the workflow run summary
+for 14 days, without an additional ZIP wrapper.
+
+This APK is a test artifact, not an Android release: it is not attached to the
+GitHub Releases page and it is not signed with a project-controlled release key.
+Buildozer uses a debug signing identity that can differ between a local build
+and GitHub-hosted runners. Android may therefore refuse to install one over the
+other; uninstalling the existing prototype first resolves that signature
+mismatch but also removes its private application data.
+
+#### Desktop release publication
+
 Release publication is deliberately more restrictive:
 
 - only tags such as `v0.1.0-alpha.1`, `v0.1.0-beta.1`, or `v0.1.0-rc.1`
   trigger the release job;
 - the numeric base of the tag must match `[project].version` in
   `pyproject.toml`;
-- every platform build must complete before the release job starts;
+- every desktop platform build must complete before the release job starts;
 - the workflow generates `SHA256SUMS`;
 - GitHub creates a draft marked as a pre-release, never an immediately
   published release;
@@ -1240,7 +1303,7 @@ To prepare an alpha or beta release:
 3. create an annotated pre-release tag, for example
    `git tag -a v0.1.0-alpha.1 -m "MoonTransfer 0.1.0 alpha 1"`;
 4. push that exact tag with `git push origin v0.1.0-alpha.1`;
-5. wait for every native build and the draft-release job to finish;
+5. wait for every native desktop build and the draft-release job to finish;
 6. download each archive from the draft and test it on the corresponding
    operating system;
 7. compare downloaded files with `SHA256SUMS` and inspect release notes and
@@ -1422,7 +1485,11 @@ applications does not abort `croc`; a private state-aware notification reports
 phase and available progress metrics and provides a session-bound stop action,
 then leaves a dismissible result. The service handles Android 15 `dataSync`
 timeouts and invalid sticky restarts, but interrupted sessions still cannot be
-resumed. Folders and release packaging are not implemented.
+resumed. Folders and signed Android release distribution are not implemented.
+The dedicated Android CI workflow nevertheless creates a structurally validated
+ARM64 debug APK for testing; it is deliberately kept separate from published
+GitHub Releases.
+
 Setup, diagnostics, build commands, design details, and manual compatibility
 tests are documented in [android/README.md](android/README.md).
 
@@ -1432,6 +1499,7 @@ tests are documented in [android/README.md](android/README.md).
 MoonTransfer/
 ├─ .github/
 │  ├─ workflows/
+│  │  ├─ android-build.yml
 │  │  └─ release-builds.yml
 │  └─ dependabot.yml
 ├─ android/
