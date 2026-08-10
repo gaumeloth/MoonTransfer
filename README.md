@@ -1227,6 +1227,12 @@ Every job installs the pinned workflow version of `uv` and Python 3.13, checks
 the checksum-verified `croc` binary, builds MoonTransfer, validates the bundled
 `croc` version, and creates a downloadable archive.
 
+On Linux, the runner installs Qt's complete XCB/XKB dependency set before
+building. Package validation rejects an incomplete native runtime, and an X11
+smoke test starts the packaged executable and injects keyboard input. This
+prevents artifacts from silently mixing bundled Qt keyboard libraries with
+incompatible versions from the destination system.
+
 Linux and macOS artifacts use `tar.gz` so executable permissions and symbolic
 links are preserved. Windows uses ZIP. The macOS archive contains a
 `MoonTransfer.app` bundle, while the other platforms retain the normal

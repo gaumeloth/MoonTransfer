@@ -1277,6 +1277,13 @@ test unitari, scarica il binario `croc` verificato tramite checksum, builda
 MoonTransfer, controlla la versione di `croc` inclusa e crea un archivio
 scaricabile.
 
+Su Linux il runner installa l'insieme completo delle dipendenze XCB/XKB di Qt
+prima della build. La validazione rifiuta un runtime nativo incompleto e uno
+smoke test X11 avvia l'eseguibile già impacchettato e genera input da tastiera.
+Questo evita che gli artefatti mescolino senza segnalarlo librerie Qt per la
+tastiera incluse nel bundle con versioni incompatibili del sistema di
+destinazione.
+
 Gli artefatti Linux e macOS usano `tar.gz` per conservare permessi eseguibili e
 link simbolici. Windows usa ZIP. L'archivio macOS contiene un bundle
 `MoonTransfer.app`, mentre le altre piattaforme mantengono la normale struttura
