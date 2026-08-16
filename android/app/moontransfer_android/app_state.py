@@ -122,6 +122,7 @@ class AndroidControlContext:
 @dataclass(frozen=True)
 class AndroidControlState:
     select_file: bool
+    manage_selection: bool
     start_send: bool
     cancel_send: bool
     copy_code: bool
@@ -153,13 +154,18 @@ def derive_android_control_state(
         context.receive_state is AndroidReceiveState.AWAITING_DECISION
     )
     awaiting_save = context.receive_state is AndroidReceiveState.AWAITING_SAVE
+    selection_editable = (
+        context.is_android
+        and not context.staging
+        and not transfer_owned
+        and not context.service_releasing
+        and not picker_pending
+    )
 
     return AndroidControlState(
-        select_file=(
-            context.is_android
-            and not context.staging
-            and not transfer_owned
-            and not picker_pending
+        select_file=selection_editable,
+        manage_selection=(
+            selection_editable and context.has_selected_document
         ),
         start_send=(
             context.has_selected_document

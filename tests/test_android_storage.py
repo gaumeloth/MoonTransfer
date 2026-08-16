@@ -360,6 +360,117 @@ class AndroidStorageTests(unittest.TestCase):
             storage.cleanup_staged_selection(selection)
             self.assertTrue(all(not path.exists() for path in staging_dirs))
 
+    def test_staged_selection_can_merge_and_remove_individual_documents(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first_source = root / "first-source.bin"
+            second_source = root / "second-source.bin"
+            first_source.write_bytes(b"first")
+            second_source.write_bytes(b"second")
+            first_uri = object()
+            second_uri = object()
+            resolver = _MultiResolver(
+                {
+                    first_uri: (first_source, "first.bin"),
+                    second_uri: (second_source, "second.bin"),
+                }
+            )
+
+            first = storage.stage_document_uris(
+                (first_uri,),
+                root / "staging",
+                resolver=resolver,
+            )
+            second = storage.stage_document_uris(
+                (second_uri,),
+                root / "staging",
+                existing_selection=first,
+                resolver=resolver,
+            )
+            merged = first.merged_with(second)
+
+            self.assertEqual(merged.filenames, ("first.bin", "second.bin"))
+            remaining, removed = merged.without_document(0)
+            self.assertIsNotNone(remaining)
+            assert remaining is not None
+            self.assertEqual(remaining.filenames, ("second.bin",))
+            self.assertEqual(removed.filename, "first.bin")
+
+            empty, last = remaining.without_document(0)
+            self.assertIsNone(empty)
+            self.assertEqual(last.filename, "second.bin")
+            storage.cleanup_staged_document(removed)
+            storage.cleanup_staged_document(last)
+
+    def test_appending_duplicate_name_preserves_existing_staging(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first_source = root / "first-source.bin"
+            duplicate_source = root / "duplicate-source.bin"
+            first_source.write_bytes(b"first")
+            duplicate_source.write_bytes(b"duplicate")
+            first_uri = object()
+            duplicate_uri = object()
+            staging_parent = root / "staging"
+            resolver = _MultiResolver(
+                {
+                    first_uri: (first_source, "File.bin"),
+                    duplicate_uri: (duplicate_source, "file.bin"),
+                }
+            )
+            existing = storage.stage_document_uris(
+                (first_uri,),
+                staging_parent,
+                resolver=resolver,
+            )
+            staging_dirs = tuple(staging_parent.iterdir())
+
+            with self.assertRaisesRegex(
+                storage.AndroidStorageError,
+                "selezione complessiva.*duplicati",
+            ):
+                storage.stage_document_uris(
+                    (duplicate_uri,),
+                    staging_parent,
+                    existing_selection=existing,
+                    resolver=resolver,
+                )
+
+            self.assertEqual(tuple(staging_parent.iterdir()), staging_dirs)
+            self.assertEqual(existing.root_paths[0].read_bytes(), b"first")
+            storage.cleanup_staged_selection(existing)
+
+    def test_appending_past_root_limit_is_rejected_before_staging(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            existing = storage.StagedSelection(
+                tuple(
+                    storage.StagedDocument(
+                        path=root / f"file-{index}.bin",
+                        staging_dir=root / f"stage-{index}",
+                        filename=f"file-{index}.bin",
+                        size=0,
+                    )
+                    for index in range(storage.MAX_PAYLOAD_ROOTS)
+                )
+            )
+            staging_parent = root / "staging"
+
+            with self.assertRaisesRegex(
+                storage.AndroidStorageError,
+                f"al massimo {storage.MAX_PAYLOAD_ROOTS} file",
+            ):
+                storage.stage_document_uris(
+                    (object(),),
+                    staging_parent,
+                    existing_selection=existing,
+                    resolver=object(),
+                )
+
+            self.assertFalse(staging_parent.exists())
+
     def test_stage_documents_rejects_portable_name_collisions(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

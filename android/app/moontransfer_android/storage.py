@@ -56,6 +56,14 @@ class StagedSelection:
             raise ValueError("La selezione staged non può essere vuota.")
         if len(self.documents) > MAX_PAYLOAD_ROOTS:
             raise ValueError("La selezione staged contiene troppi file.")
+        name_keys = tuple(
+            portable_name_key(document.filename)
+            for document in self.documents
+        )
+        if len(set(name_keys)) != len(name_keys):
+            raise ValueError(
+                "La selezione staged contiene nomi incompatibili o duplicati."
+            )
 
     @property
     def root_paths(self) -> tuple[Path, ...]:
@@ -72,6 +80,22 @@ class StagedSelection:
     @property
     def count(self) -> int:
         return len(self.documents)
+
+    def merged_with(self, other: StagedSelection) -> StagedSelection:
+        return StagedSelection(self.documents + other.documents)
+
+    def without_document(
+        self,
+        index: int,
+    ) -> tuple[StagedSelection | None, StagedDocument]:
+        if index < 0 or index >= self.count:
+            raise IndexError("Indice del file selezionato non valido.")
+        removed = self.documents[index]
+        remaining = self.documents[:index] + self.documents[index + 1 :]
+        return (
+            StagedSelection(remaining) if remaining else None,
+            removed,
+        )
 
 
 def android_content_resolver() -> Any:
@@ -145,6 +169,7 @@ def stage_document_uris(
     uris: Iterable[Any],
     staging_parent: Path,
     *,
+    existing_selection: StagedSelection | None = None,
     resolver: Any | None = None,
     cancel_requested: Callable[[], bool] | None = None,
     on_progress: Callable[[int, int | None], None] | None = None,
@@ -152,9 +177,12 @@ def stage_document_uris(
     selected_uris = tuple(uris)
     if not selected_uris:
         raise AndroidStorageError("Nessun file selezionato.")
-    if len(selected_uris) > MAX_PAYLOAD_ROOTS:
+    existing_count = (
+        existing_selection.count if existing_selection is not None else 0
+    )
+    if existing_count + len(selected_uris) > MAX_PAYLOAD_ROOTS:
         raise AndroidStorageError(
-            f"Puoi selezionare al massimo {MAX_PAYLOAD_ROOTS} file."
+            f"Puoi preparare al massimo {MAX_PAYLOAD_ROOTS} file."
         )
 
     content_resolver = resolver or android_content_resolver()
@@ -162,10 +190,18 @@ def stage_document_uris(
         query_document_metadata(content_resolver, uri)
         for uri in selected_uris
     )
-    name_keys = tuple(portable_name_key(item.filename) for item in metadata)
+    name_keys = (
+        tuple(
+            portable_name_key(filename)
+            for filename in existing_selection.filenames
+        )
+        if existing_selection is not None
+        else ()
+    ) + tuple(portable_name_key(item.filename) for item in metadata)
     if len(set(name_keys)) != len(name_keys):
         raise AndroidStorageError(
-            "La selezione contiene nomi file incompatibili o duplicati."
+            "La selezione complessiva contiene nomi file incompatibili o "
+            "duplicati."
         )
 
     reported_total = (

@@ -104,6 +104,29 @@ class AndroidKvLayoutTests(unittest.TestCase):
         self.assertIn("Invia uno o più file", layout)
         self.assertIn("Ricevi uno o più file", layout)
 
+    def test_send_selection_can_be_extended_and_managed(self) -> None:
+        tree = _application_tree()
+        application = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.ClassDef)
+            and node.name == "MoonTransferAndroidApp"
+        )
+        methods = {
+            node.name: node
+            for node in application.body
+            if isinstance(node, ast.FunctionDef)
+        }
+        staging_source = ast.unparse(methods["_run_staging"])
+        layout = KV_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("existing_selection=existing_selection", staging_source)
+        self.assertIn("_remove_selected_document", methods)
+        self.assertIn("_clear_selection", methods)
+        self.assertIn('text: "Aggiungi file"', layout)
+        self.assertIn('text: "Svuota"', layout)
+        self.assertIn("id: selection_list", layout)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -631,7 +631,8 @@ class AndroidApplicationLifecycleTests(unittest.TestCase):
         self.assertIn("self._update_controls", resume_calls)
 
     def test_controls_are_derived_from_the_connected_service(self) -> None:
-        controls_source = ast.unparse(self.method("_update_controls"))
+        controls_source = ast.unparse(self.method("_derive_controls"))
+        update_source = ast.unparse(self.method("_update_controls"))
 
         self.assertIn("derive_android_control_state", controls_source)
         self.assertIn("service_operation=service_operation", controls_source)
@@ -639,6 +640,7 @@ class AndroidApplicationLifecycleTests(unittest.TestCase):
             "service_releasing=self._service_is_releasing()",
             controls_source,
         )
+        self.assertIn("controls = self._derive_controls()", update_source)
 
     def test_unresponsive_service_is_stopped_cleaned_and_released(self) -> None:
         poll_source = ast.unparse(self.method("_poll_transfer_service"))

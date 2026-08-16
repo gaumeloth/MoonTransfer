@@ -99,13 +99,31 @@ MoonTransferRoot:
                         label_color: app.text_color
                         minimum_height: dp(40)
 
-                    MoonActionButton:
-                        id: select_button
-                        text: "Seleziona file"
+                    BoxLayout:
+                        orientation: "horizontal"
+                        spacing: dp(8)
+                        size_hint_y: None
+                        height: dp(48)
+
+                        MoonActionButton:
+                            id: select_button
+                            text: "Aggiungi file"
+
+                        MoonActionButton:
+                            id: clear_selection_button
+                            text: "Svuota"
+                            button_color: app.secondary_color
 
                     MoonWrappedLabel:
                         id: file_status
                         text: "Nessun file selezionato."
+
+                    BoxLayout:
+                        id: selection_list
+                        orientation: "vertical"
+                        spacing: dp(6)
+                        size_hint_y: None
+                        height: self.minimum_height
 
                     MoonActionButton:
                         id: send_button
