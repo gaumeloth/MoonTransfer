@@ -43,18 +43,19 @@ Il prototipo attualmente fornisce:
 - avanzamento, annullamento, timeout di inattività e decisione, verifica
   dell'integrità e pulizia dei file temporanei privati.
 
-Rimane un client sperimentale per file regolari. Può trasferire un singolo file
-o un gruppo di file scelti nella stessa operazione del selettore, ma non può
-trasferire cartelle o riprendere un trasferimento interrotto. Le build
-automatizzate producono attualmente solamente un APK ARM64 di debug; release
-Android firmate e altre architetture non sono implementate. L'app dichiara
-`INTERNET`, i permessi per foreground service richiesti da `dataSync` e il
-permesso di notifica usato per mostrare lo stato del trasferimento. La versione
-pubblica visibile sulla schermata bloccata è volutamente generica: codici di
-trasferimento, hash, percorsi, content URI ed errori tecnici non vengono mai
-mostrati lì. SAF fornisce accesso solo ai documenti o alle directory di
-destinazione scelti esplicitamente dall'utente; non viene richiesto alcun
-permesso di archiviazione esteso.
+Rimane un client sperimentale per file regolari. Può costruire una selezione di
+invio con più operazioni del selettore di sistema, mostrare ogni file preparato,
+rimuovere singoli elementi o svuotare la selezione. Non può trasferire cartelle
+né riprendere un trasferimento interrotto. Le build automatizzate producono
+attualmente solamente un APK ARM64 di debug; release Android firmate e altre
+architetture non sono implementate. L'app dichiara `INTERNET`, i permessi per
+foreground service richiesti da `dataSync` e il permesso di notifica usato per
+mostrare lo stato del trasferimento. La versione pubblica visibile sulla
+schermata bloccata è volutamente generica: codici di trasferimento, hash,
+percorsi, content URI ed errori tecnici non vengono mai mostrati lì. SAF
+fornisce accesso solo ai documenti o alle directory di destinazione scelti
+esplicitamente dall'utente; non viene richiesto alcun permesso di archiviazione
+esteso.
 
 ## Compatibilità del trasporto
 
@@ -236,25 +237,30 @@ procedura di release per l'utente finale.
 1. Avvia MoonTransfer sul desktop, apri **Ricevi** e scegli una cartella di
    destinazione.
 2. Avvia l'app Android e attendi lo stato verde del trasporto `croc`.
-3. In **Invia**, premi **Seleziona file** e scegli uno o più documenti piccoli e
+3. In **Invia**, premi **Aggiungi file** e scegli uno o più documenti piccoli e
    non sensibili nel selettore di sistema Android. Non selezionare una cartella.
-4. Controlla il nome del file oppure il numero di file e la dimensione totale,
-   quindi premi **Prepara e invia**.
-5. L'app calcola l'hash di ogni copia privata e mostra un codice di 32 caratteri.
+4. Facoltativamente premi di nuovo **Aggiungi file** e scegli altri documenti.
+   Controlla che la selezione precedente rimanga e che i nuovi file vengano
+   aggiunti.
+5. Controlla l'elenco dei file preparati, il numero di file e la dimensione
+   totale. Usa **Rimuovi** su un elemento oppure **Svuota** per verificare che la
+   selezione possa essere corretta, quindi prepara quella prevista per il test.
+6. Premi **Prepara e invia**. L'app calcola l'hash di ogni copia privata e mostra
+   un codice di 32 caratteri.
    Il codice viene anche copiato negli appunti Android.
-6. Passa all'applicazione di messaggistica usata per comunicare il codice. Lascia
+7. Passa all'applicazione di messaggistica usata per comunicare il codice. Lascia
    MoonTransfer in background mentre il destinatario lo inserisce; la notifica
    del trasferimento in corso deve restare visibile e indicare la fase corrente.
-7. Inserisci quel codice nella scheda **Ricevi** del desktop e avvia la
+8. Inserisci quel codice nella scheda **Ricevi** del desktop e avvia la
    ricezione.
-8. Controlla nomi, conteggi, dimensione totale e informazioni SHA-256 mostrate
+9. Controlla nomi, conteggi, dimensione totale e informazioni SHA-256 mostrate
    dall'app desktop, quindi accetta o rifiuta il trasferimento.
-9. Se accetti, entrambe le applicazioni dovrebbero mostrare avanzamento e
+10. Se accetti, entrambe le applicazioni dovrebbero mostrare avanzamento e
    completamento. Controlla che ogni file verificato appaia nella destinazione
    desktop scelta. Un payload multi-file viene inserito nel contenitore desktop
    `MoonTransfer`. Se rifiuti, Android dovrebbe comunicare la decisione senza
    inviare il payload principale.
-10. Torna in MoonTransfer e verifica che sia possibile effettuare una nuova
+11. Torna in MoonTransfer e verifica che sia possibile effettuare una nuova
     selezione e avviare un altro trasferimento senza chiudere o riavviare
     l'applicazione.
 
@@ -297,10 +303,11 @@ questi casi con un payload piccolo e non sensibile:
 3. Ruota il dispositivo durante lo scambio dei metadati, il trasferimento del
    payload e la decisione del destinatario. La ricreazione dell'Activity non
    deve duplicare `croc`, perdere la proposta o sbloccare controlli in conflitto.
-4. Annulla il selettore della sorgente prima di scegliere un file. Separatamente,
-   annulla il selettore di salvataggio dopo una ricezione verificata, quindi
-   riaprilo con **Scegli dove salvare**. Entrambi i percorsi devono restituire
-   controlli utilizzabili.
+4. Annulla il selettore della sorgente prima di scegliere un file. Ripeti dopo
+   aver preparato almeno un file e verifica che l'annullamento conservi la
+   selezione esistente. Separatamente, annulla il selettore di salvataggio dopo
+   una ricezione verificata, quindi riaprilo con **Scegli dove salvare**. Tutti i
+   percorsi devono restituire controlli utilizzabili.
 5. Annulla un trasferimento attivo con **Interrompi** nell'app e un altro con
    l'azione della notifica. Entrambe devono arrestare la stessa sessione corrente
    senza lasciare la GUI bloccata permanentemente.

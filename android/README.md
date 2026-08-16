@@ -41,17 +41,17 @@ The prototype currently provides:
 - transfer progress, cancellation, inactivity and decision timeouts, integrity
   verification and cleanup of private temporary files.
 
-This remains an experimental regular-file client. It can transfer one file or
-a group of files selected in one picker operation, but it cannot transfer
-folders or resume an interrupted transfer. Automated builds currently produce
-only an ARM64 debug APK; signed Android releases and other architectures are not
-implemented. The app declares `INTERNET`, the foreground-service permissions
-required for `dataSync`, and the notification permission used to show transfer
-status. The lock-screen public version of that notification is deliberately
-generic: transfer codes, hashes, paths, content URIs and technical errors are
-never displayed there. SAF grants access only to documents or destination
-directories explicitly chosen by the user; no broad storage permission is
-requested.
+This remains an experimental regular-file client. It can build a send selection
+over multiple system-picker operations, display every staged file, remove
+individual items, or clear the selection. It cannot transfer folders or resume
+an interrupted transfer. Automated builds currently produce only an ARM64
+debug APK; signed Android releases and other architectures are not implemented.
+The app declares `INTERNET`, the foreground-service permissions required for
+`dataSync`, and the notification permission used to show transfer status. The
+lock-screen public version of that notification is deliberately generic:
+transfer codes, hashes, paths, content URIs and technical errors are never
+displayed there. SAF grants access only to documents or destination directories
+explicitly chosen by the user; no broad storage permission is requested.
 
 ## Transport compatibility
 
@@ -220,25 +220,29 @@ release procedure.
 1. Start MoonTransfer on the desktop, open **Ricevi** (Receive), and choose a
    destination directory.
 2. Start the Android app and wait for the green `croc` transport status.
-3. In **Invia** (Send), press **Seleziona file** (Select file) and choose one or
+3. In **Invia** (Send), press **Aggiungi file** (Add files) and choose one or
    more small, non-sensitive documents in the Android system picker. Do not
    select a folder.
-4. Check the displayed filename or file count and total size, then press
-   **Prepara e invia** (Prepare and send).
-5. The app hashes every private staged copy and displays a 32-character code.
+4. Optionally press **Aggiungi file** again and choose more documents. Check
+   that the previous selection remains and the new files are appended.
+5. Review the staged-file list, file count and total size. Use **Rimuovi**
+   (Remove) on one item or **Svuota** (Clear) to verify that the selection can
+   be corrected, then prepare the intended test selection.
+6. Press **Prepara e invia** (Prepare and send). The app hashes every private
+   staged copy and displays a 32-character code.
    The code is also copied to the Android clipboard.
-6. Switch to the messaging application used to communicate the code. Leave
+7. Switch to the messaging application used to communicate the code. Leave
    MoonTransfer in the background while the receiver enters it; the ongoing
    transfer notification must remain visible and identify the current phase.
-7. Enter that code in the desktop **Ricevi** tab and start receiving.
-8. Check the names, counts, total size and SHA-256 information shown by the
+8. Enter that code in the desktop **Ricevi** tab and start receiving.
+9. Check the names, counts, total size and SHA-256 information shown by the
    desktop app, then accept or reject the transfer.
-9. If accepted, both applications should report progress and completion. Check
+10. If accepted, both applications should report progress and completion. Check
    that every verified file appears in the chosen desktop destination. A
    multi-file payload is placed in the desktop `MoonTransfer` container. If
    rejected, Android should report the receiver's decision without sending the
    main payload.
-10. Return to MoonTransfer and verify that another selection and transfer can
+11. Return to MoonTransfer and verify that another selection and transfer can
     be started without closing or restarting the application.
 
 ### Receive from desktop on Android
@@ -278,9 +282,11 @@ cases with a small, non-sensitive payload:
 3. Rotate the device during metadata exchange, payload transfer and the
    receiver decision. Activity recreation must not duplicate `croc`, lose the
    proposal or unlock conflicting controls.
-4. Cancel the source picker before choosing a file. Separately, cancel the save
-   picker after a verified receive, then reopen it with **Scegli dove salvare**
-   (Choose where to save). Both paths must return to usable controls.
+4. Cancel the source picker before choosing a file. Repeat after staging at
+   least one file and verify that cancellation preserves the existing
+   selection. Separately, cancel the save picker after a verified receive, then
+   reopen it with **Scegli dove salvare** (Choose where to save). All paths must
+   return to usable controls.
 5. Cancel one active transfer with the in-app **Interrompi** action and another
    with the notification action. Both must stop the same current session and
    leave no permanently blocked GUI state.
