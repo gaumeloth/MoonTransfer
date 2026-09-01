@@ -157,12 +157,22 @@ class AndroidControlStateTests(unittest.TestCase):
         controls = derive_android_control_state(_idle_context())
 
         self.assertTrue(controls.select_file)
+        self.assertTrue(controls.manage_selection)
         self.assertTrue(controls.start_send)
         self.assertTrue(controls.edit_receive_code)
         self.assertTrue(controls.start_receive)
         self.assertTrue(controls.probe_transport)
         self.assertFalse(controls.cancel_send)
         self.assertFalse(controls.cancel_receive)
+
+    def test_idle_empty_selection_can_add_but_not_remove_files(self) -> None:
+        controls = derive_android_control_state(
+            replace(_idle_context(), has_selected_document=False)
+        )
+
+        self.assertTrue(controls.select_file)
+        self.assertFalse(controls.manage_selection)
+        self.assertFalse(controls.start_send)
 
     def test_connected_service_blocks_new_work_even_before_first_snapshot(self) -> None:
         controls = derive_android_control_state(
@@ -173,6 +183,7 @@ class AndroidControlStateTests(unittest.TestCase):
         )
 
         self.assertFalse(controls.select_file)
+        self.assertFalse(controls.manage_selection)
         self.assertFalse(controls.start_send)
         self.assertFalse(controls.edit_receive_code)
         self.assertFalse(controls.start_receive)
@@ -224,9 +235,11 @@ class AndroidControlStateTests(unittest.TestCase):
         )
 
         self.assertFalse(picker.select_file)
+        self.assertFalse(picker.manage_selection)
         self.assertFalse(picker.start_send)
         self.assertFalse(picker.start_receive)
-        self.assertTrue(releasing.select_file)
+        self.assertFalse(releasing.select_file)
+        self.assertFalse(releasing.manage_selection)
         self.assertTrue(releasing.edit_receive_code)
         self.assertFalse(releasing.start_send)
         self.assertFalse(releasing.start_receive)

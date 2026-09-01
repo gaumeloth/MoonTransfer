@@ -316,7 +316,7 @@ class AndroidReceiveControllerTests(unittest.TestCase):
                 contents["second.txt"],
             )
 
-    def test_directory_payload_is_rejected_automatically(self) -> None:
+    def test_accepts_verifies_and_saves_directory_payload(self) -> None:
         content = b"nested"
         proposal = create_payload_proposal(
             roots=("folder",),
@@ -333,25 +333,56 @@ class AndroidReceiveControllerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             runner = _FakeRunner(proposal, contents={"folder/file.txt": content})
+            proposal_ready = Event()
+            save_ready = Event()
             finished = Event()
             terminal: list[AndroidReceiveState] = []
+            saved: list[tuple[tuple[Path, ...], object, str]] = []
+
+            def save_files(
+                sources: tuple[Path, ...],
+                uri: object,
+                *,
+                container_name: str,
+                cancel_requested: object,
+                on_progress: object,
+            ) -> int:
+                destination = root / "saved" / container_name
+                shutil.copytree(sources[0], destination)
+                on_progress(len(content), len(content))  # type: ignore[operator]
+                saved.append((sources, uri, container_name))
+                return len(content)
+
             controller = AndroidReceiveController(
                 runner=runner,  # type: ignore[arg-type]
                 sessions_parent=root / "sessions",
                 callbacks=AndroidReceiveCallbacks(
+                    on_proposal=lambda _proposal: proposal_ready.set(),
+                    on_save_ready=lambda _proposal: save_ready.set(),
                     on_finished=lambda state, _message: (
                         terminal.append(state),
                         finished.set(),
                     )
                 ),
                 main_receive_delay=0,
+                save_files=save_files,
             )
 
             controller.start("9" * 32)
-            _wait(finished, "directory transfer was not rejected")
+            _wait(proposal_ready, "directory proposal not received")
+            controller.accept()
+            _wait(save_ready, "directory payload not ready to save")
+            controller.save_to_uri("content://destination/tree")
+            _wait(finished, "directory receive did not finish")
 
-            self.assertEqual(terminal, [AndroidReceiveState.REJECTED])
-            self.assertEqual(runner.calls[1]["stdin_data"], b"n\n")
+            self.assertEqual(terminal, [AndroidReceiveState.COMPLETED])
+            self.assertEqual(runner.calls[1]["stdin_data"], b"y\n")
+            self.assertEqual(saved[0][1], "content://destination/tree")
+            self.assertEqual(saved[0][2], "folder")
+            self.assertEqual(
+                (root / "saved" / "folder" / "file.txt").read_bytes(),
+                content,
+            )
 
     def test_insufficient_private_space_rejects_after_user_accepts(self) -> None:
         proposal = create_proposal(

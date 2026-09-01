@@ -771,15 +771,15 @@ send/receive flow, bundles a pinned and checksum-verified `croc` binary during
 builds, includes unit tests for the non-GUI logic, and publishes native
 pre-built alpha archives for the main platforms. The current public line is
 `v0.1.0-alpha.3`. Android is a functional but experimental debug target for
-single or multiple regular files, not a supported end-user release.
+files, folders, and mixed selections, not a supported end-user release.
 
 Possible future improvements, in indicative order:
 
 - collect feedback from `alpha.3` and continue validating the automated
   `onedir` artifacts on their target systems;
 - continue hardening the Kivy Android target, especially lifecycle edge cases,
-  device and document-provider coverage, folder payloads, and release packaging,
-  before treating Android as a supported platform;
+  large or deeply nested payloads, device and document-provider coverage, and
+  release packaging, before treating Android as a supported platform;
 - add signing and notarization where appropriate, then evaluate more native
   distribution formats such as AppImage, a Windows installer, and a macOS disk
   image;
@@ -1478,14 +1478,14 @@ explicit allowlist of Qt-independent MoonTransfer modules, so the protocol is
 shared without adding Kivy to desktop runtime dependencies.
 
 The current prototype packages a verified ARM64 `croc` executable and can send
-or receive one or more regular files between Android and the desktop
+or receive files, folders, and mixed selections between Android and the desktop
 application using the shared protocol-v2 manifest and Android's Storage Access
 Framework. A `dataSync` foreground service owns active transfers, so switching
 applications does not abort `croc`; a private state-aware notification reports
 phase and available progress metrics and provides a session-bound stop action,
 then leaves a dismissible result. The service handles Android 15 `dataSync`
 timeouts and invalid sticky restarts, but interrupted sessions still cannot be
-resumed. Folders and signed Android release distribution are not implemented.
+resumed. Signed Android release distribution is not implemented.
 The dedicated Android CI workflow nevertheless creates a structurally validated
 ARM64 debug APK for testing; it is deliberately kept separate from published
 GitHub Releases.

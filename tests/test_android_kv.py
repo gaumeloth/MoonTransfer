@@ -81,7 +81,7 @@ class AndroidKvLayoutTests(unittest.TestCase):
         self.assertNotIn("_build_send_view", methods)
         self.assertNotIn("_build_receive_view", methods)
 
-    def test_multi_file_copy_and_save_flows_are_exposed_by_the_ui(self) -> None:
+    def test_file_and_directory_flows_are_exposed_by_the_ui(self) -> None:
         tree = _application_tree()
         application = next(
             node
@@ -101,8 +101,33 @@ class AndroidKvLayoutTests(unittest.TestCase):
             "select_directory=not proposal.is_single_file",
             picker_source,
         )
-        self.assertIn("Invia uno o più file", layout)
-        self.assertIn("Ricevi uno o più file", layout)
+        self.assertIn("Invia file e cartelle", layout)
+        self.assertIn("Ricevi file e cartelle", layout)
+
+    def test_send_selection_can_be_extended_and_managed(self) -> None:
+        tree = _application_tree()
+        application = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.ClassDef)
+            and node.name == "MoonTransferAndroidApp"
+        )
+        methods = {
+            node.name: node
+            for node in application.body
+            if isinstance(node, ast.FunctionDef)
+        }
+        staging_source = ast.unparse(methods["_run_staging"])
+        layout = KV_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("existing_selection=existing_selection", staging_source)
+        self.assertIn("stage_directory_uri", staging_source)
+        self.assertIn("_remove_selected_document", methods)
+        self.assertIn("_clear_selection", methods)
+        self.assertIn('text: "Aggiungi file"', layout)
+        self.assertIn('text: "Aggiungi cartella"', layout)
+        self.assertIn('text: "Svuota selezione"', layout)
+        self.assertIn("id: selection_list", layout)
 
 
 if __name__ == "__main__":

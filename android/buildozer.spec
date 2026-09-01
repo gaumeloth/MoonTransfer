@@ -12,7 +12,9 @@ version.regex = (?m)^__version__ = ["']([^"']+)["']
 version.filename = %(source.dir)s/main.py
 
 # Kivy 2.3.1 officially supports Python through 3.13.
-requirements = python3==3.13.14,hostpython3==3.13.14,kivy==2.3.1,chardet==5.2.0,croc
+# charset-normalizer 3.5 builds a native Android wheel that p4a cannot install.
+# tools/android.py restores this pin after p4a normalizes requirement versions.
+requirements = python3==3.13.14,hostpython3==3.13.14,kivy==2.3.1,chardet==5.2.0,charset_normalizer==3.4.9,croc
 
 icon.filename = %(source.dir)s/moontransfer/assets/icons/moontransfer-icon.png
 orientation = all

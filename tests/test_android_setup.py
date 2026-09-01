@@ -13,6 +13,7 @@ import unittest
 import zipfile
 from dataclasses import asdict
 from pathlib import Path
+from unittest import mock
 
 from tools import android as android_tool
 from tools import prepare_android
@@ -122,8 +123,9 @@ class AndroidBuildConfigurationTests(unittest.TestCase):
         self.assertEqual(
             self.app["requirements"],
             "python3==3.13.14,hostpython3==3.13.14,kivy==2.3.1,"
-            "chardet==5.2.0,croc",
+            "chardet==5.2.0,charset_normalizer==3.4.9,croc",
         )
+        self.assertEqual(android_tool.CHARSET_NORMALIZER_VERSION, "3.4.9")
         self.assertEqual(self.app["p4a.branch"], "v2026.05.09")
         self.assertEqual(self.app["android.ndk"], "28c")
         self.assertEqual(self.app["android.api"], "36")
@@ -631,7 +633,8 @@ class AndroidApplicationLifecycleTests(unittest.TestCase):
         self.assertIn("self._update_controls", resume_calls)
 
     def test_controls_are_derived_from_the_connected_service(self) -> None:
-        controls_source = ast.unparse(self.method("_update_controls"))
+        controls_source = ast.unparse(self.method("_derive_controls"))
+        update_source = ast.unparse(self.method("_update_controls"))
 
         self.assertIn("derive_android_control_state", controls_source)
         self.assertIn("service_operation=service_operation", controls_source)
@@ -639,6 +642,7 @@ class AndroidApplicationLifecycleTests(unittest.TestCase):
             "service_releasing=self._service_is_releasing()",
             controls_source,
         )
+        self.assertIn("controls = self._derive_controls()", update_source)
 
     def test_unresponsive_service_is_stopped_cleaned_and_released(self) -> None:
         poll_source = ast.unparse(self.method("_poll_transfer_service"))
@@ -726,6 +730,15 @@ class AndroidNotificationSourceTests(unittest.TestCase):
 
 
 class AndroidDoctorTests(unittest.TestCase):
+    def test_android_build_environment_pins_p4a_python_module(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {"VERSION_charset_normalizer": "unexpected"},
+        ):
+            environment = android_tool.android_build_environment()
+
+        self.assertEqual(environment["VERSION_charset_normalizer"], "3.4.9")
+
     def test_buildozer_debug_command_applies_the_ci_profile_before_target(self) -> None:
         self.assertEqual(
             android_tool.buildozer_debug_command(

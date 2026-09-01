@@ -36,6 +36,7 @@ from moontransfer.protocol import (
 from moontransfer.resources import APP_ICON_PATH
 from moontransfer_android.app_state import (
     AndroidControlContext,
+    AndroidControlState,
     ServiceSnapshotProjection,
     derive_android_control_state,
     project_service_snapshot,
@@ -59,8 +60,10 @@ from moontransfer_android.storage import (
     AndroidSavePicker,
     AndroidStorageError,
     StagedSelection,
+    cleanup_staged_document,
     cleanup_staged_selection,
     cleanup_staging_parent,
+    stage_directory_uri,
     stage_document_uris,
 )
 from moontransfer_android.transport import (
@@ -86,6 +89,9 @@ VIEW_IDS = (
     "transport_status",
     "probe_button",
     "select_button",
+    "select_directory_button",
+    "clear_selection_button",
+    "selection_list",
     "send_button",
     "cancel_button",
     "copy_button",
@@ -169,6 +175,9 @@ class MoonTransferAndroidApp(App):
         self.transport_status: Label | None = None
         self.probe_button: Button | None = None
         self.select_button: Button | None = None
+        self.select_directory_button: Button | None = None
+        self.clear_selection_button: Button | None = None
+        self.selection_list: BoxLayout | None = None
         self.send_button: Button | None = None
         self.cancel_button: Button | None = None
         self.copy_button: Button | None = None
@@ -195,6 +204,7 @@ class MoonTransferAndroidApp(App):
         self._picker: AndroidFilePicker | None = None
         self._save_picker: AndroidSavePicker | None = None
         self._selected_selection: StagedSelection | None = None
+        self._selection_remove_buttons: list[Button] = []
         self._service_client: TransferServiceClient | None = None
         self._service_heartbeat = TransferServiceHeartbeatMonitor()
         self._service_revision = -1
@@ -258,6 +268,9 @@ class MoonTransferAndroidApp(App):
         self.transport_status = ids["transport_status"]
         self.probe_button = ids["probe_button"]
         self.select_button = ids["select_button"]
+        self.select_directory_button = ids["select_directory_button"]
+        self.clear_selection_button = ids["clear_selection_button"]
+        self.selection_list = ids["selection_list"]
         self.send_button = ids["send_button"]
         self.cancel_button = ids["cancel_button"]
         self.copy_button = ids["copy_button"]
@@ -285,6 +298,10 @@ class MoonTransferAndroidApp(App):
             on_release=lambda _button: self._switch_mode("receive")
         )
         self.select_button.bind(on_release=self._open_file_picker)
+        self.select_directory_button.bind(
+            on_release=self._open_directory_picker
+        )
+        self.clear_selection_button.bind(on_release=self._clear_selection)
         self.send_button.bind(on_release=self._start_send)
         self.copy_button.bind(on_release=self._copy_code)
         self.cancel_button.bind(on_release=self._cancel_send)
@@ -297,6 +314,7 @@ class MoonTransferAndroidApp(App):
         self.receive_accept_button.bind(on_release=self._accept_receive)
         self.receive_save_button.bind(on_release=self._open_save_picker)
         self.receive_cancel_button.bind(on_release=self._cancel_receive)
+        self._refresh_selection_view()
 
     def _switch_mode(self, mode: str) -> None:
         manager = self._view_manager
@@ -433,23 +451,37 @@ class MoonTransferAndroidApp(App):
         self._update_controls()
 
     def _open_file_picker(self, *_args: object) -> None:
+        self._open_source_picker(select_directory=False)
+
+    def _open_directory_picker(self, *_args: object) -> None:
+        self._open_source_picker(select_directory=True)
+
+    def _open_source_picker(self, *, select_directory: bool) -> None:
         if self._picker is None:
             self._show_error(
-                "Selezione file non disponibile",
+                "Selezione non disponibile",
                 "Il selettore documenti Android non è disponibile.",
             )
             return
+        element_label = "cartella" if select_directory else "file"
         try:
             self._picker.open(
-                on_selected=self._stage_selected_uri,
+                select_directory=select_directory,
+                on_selected=lambda uris: self._stage_selected_uri(
+                    uris,
+                    is_directory=select_directory,
+                ),
                 on_cancelled=self._selection_cancelled,
                 on_error=lambda error: self._show_error(
-                    "Selezione file non riuscita", str(error)
+                    f"Selezione {element_label} non riuscita", str(error)
                 ),
             )
             self._update_controls()
         except Exception as error:
-            self._show_error("Selezione file non riuscita", str(error))
+            self._show_error(
+                f"Selezione {element_label} non riuscita",
+                str(error),
+            )
             self._update_controls()
 
     def _selection_cancelled(self) -> None:
@@ -457,31 +489,70 @@ class MoonTransferAndroidApp(App):
             self.send_status.text = "Selezione annullata."
         self._update_controls()
 
-    def _stage_selected_uri(self, uris: tuple[Any, ...]) -> None:
+    def _stage_selected_uri(
+        self,
+        uris: tuple[Any, ...],
+        *,
+        is_directory: bool,
+    ) -> None:
         self._staging_cancel.clear()
         self._staging = True
+        existing_selection = self._selected_selection
         if self.send_status is not None:
-            self.send_status.text = "Copia dei file nell'area privata dell'app..."
+            self.send_status.text = (
+                "Aggiunta del contenuto nell'area privata dell'app..."
+                if existing_selection is not None
+                else "Copia del contenuto nell'area privata dell'app..."
+            )
             self.send_status.color = TEXT_COLOR
         self._update_controls()
-        Thread(target=self._run_staging, args=(uris,), daemon=True).start()
+        Thread(
+            target=self._run_staging,
+            args=(uris, existing_selection, is_directory),
+            daemon=True,
+        ).start()
 
-    def _run_staging(self, uris: tuple[Any, ...]) -> None:
+    def _run_staging(
+        self,
+        uris: tuple[Any, ...],
+        existing_selection: StagedSelection | None,
+        is_directory: bool,
+    ) -> None:
         try:
-            selection = stage_document_uris(
-                uris,
-                self._staging_parent,
-                cancel_requested=self._staging_cancel.is_set,
-                on_progress=lambda copied, total: self._post(
-                    self._show_staging_progress, copied, total
-                ),
-            )
+            def progress(copied: int, total: int | None) -> None:
+                self._post(self._show_staging_progress, copied, total)
+
+            if is_directory:
+                if len(uris) != 1:
+                    raise AndroidStorageError(
+                        "Android non ha restituito una sola cartella."
+                    )
+                document = stage_directory_uri(
+                    uris[0],
+                    self._staging_parent,
+                    existing_selection=existing_selection,
+                    cancel_requested=self._staging_cancel.is_set,
+                    on_progress=progress,
+                )
+                selection = StagedSelection((document,))
+            else:
+                selection = stage_document_uris(
+                    uris,
+                    self._staging_parent,
+                    existing_selection=existing_selection,
+                    cancel_requested=self._staging_cancel.is_set,
+                    on_progress=progress,
+                )
         except OperationCancelled:
             self._post(self._finish_staging_cancelled)
         except Exception as error:
             self._post(self._finish_staging_error, str(error))
         else:
-            self._post(self._finish_staging, selection)
+            self._post(
+                self._finish_staging,
+                selection,
+                existing_selection,
+            )
 
     def _show_staging_progress(self, copied: int, total: int | None) -> None:
         if self.send_status is None:
@@ -496,39 +567,170 @@ class MoonTransferAndroidApp(App):
                 f"{format_file_size(copied)} / {format_file_size(total)}"
             )
 
-    def _finish_staging(self, selection: StagedSelection) -> None:
+    def _finish_staging(
+        self,
+        selection: StagedSelection,
+        existing_selection: StagedSelection | None,
+    ) -> None:
         self._staging = False
         if self._closing:
             cleanup_staged_selection(selection)
             return
-        cleanup_staged_selection(self._selected_selection)
-        self._selected_selection = selection
-        if self.file_status is not None:
-            if selection.count == 1:
-                summary = selection.filenames[0]
-            else:
-                summary = f"{selection.count} file selezionati"
-            self.file_status.text = (
-                f"{summary}\n{format_file_size(selection.total_size)}"
+        if self._selected_selection is not existing_selection:
+            cleanup_staged_selection(selection)
+            self._finish_staging_error(
+                "La selezione è cambiata durante la preparazione dei file."
             )
-            self.file_status.color = TEXT_COLOR
+            return
+        try:
+            self._selected_selection = (
+                selection
+                if existing_selection is None
+                else existing_selection.merged_with(selection)
+            )
+        except ValueError as error:
+            cleanup_staged_selection(selection)
+            self._finish_staging_error(str(error))
+            return
+        self._refresh_selection_view()
         if self.send_status is not None:
-            self.send_status.text = "File pronti per la preparazione."
+            self.send_status.text = "Contenuto pronto per la preparazione."
             self.send_status.color = SUCCESS_COLOR
         self._update_controls()
+
+    def _remove_selected_document(self, index: int) -> None:
+        selection = self._selected_selection
+        if selection is None or not self._selection_can_be_changed():
+            self._update_controls()
+            return
+        try:
+            remaining, removed = selection.without_document(index)
+        except IndexError:
+            self._refresh_selection_view()
+            self._update_controls()
+            return
+        self._selected_selection = remaining
+        cleanup_staged_document(removed)
+        self._refresh_selection_view()
+        if self.send_status is not None:
+            self.send_status.text = (
+                "Elemento rimosso dalla selezione."
+                if remaining is not None
+                else "Selezione svuotata."
+            )
+            self.send_status.color = MUTED_COLOR
+        self._update_controls()
+
+    def _clear_selection(self, *_args: object) -> None:
+        selection = self._selected_selection
+        if selection is None or not self._selection_can_be_changed():
+            self._update_controls()
+            return
+        self._selected_selection = None
+        cleanup_staged_selection(selection)
+        self._refresh_selection_view()
+        if self.send_status is not None:
+            self.send_status.text = "Selezione svuotata."
+            self.send_status.color = MUTED_COLOR
+        self._update_controls()
+
+    def _refresh_selection_view(self) -> None:
+        container = self.selection_list
+        if container is None:
+            return
+        container.clear_widgets()
+        self._selection_remove_buttons.clear()
+        selection = self._selected_selection
+        if selection is None:
+            if self.file_status is not None:
+                self.file_status.text = "Nessun elemento selezionato."
+                self.file_status.color = MUTED_COLOR
+            return
+
+        if self.file_status is not None:
+            counts: list[str] = []
+            if selection.file_root_count:
+                counts.append(
+                    "1 file"
+                    if selection.file_root_count == 1
+                    else f"{selection.file_root_count} file"
+                )
+            if selection.directory_root_count:
+                counts.append(
+                    "1 cartella"
+                    if selection.directory_root_count == 1
+                    else f"{selection.directory_root_count} cartelle"
+                )
+            self.file_status.text = (
+                f"Selezione: {', '.join(counts)}\n"
+                f"{format_file_size(selection.total_size)}"
+            )
+            self.file_status.color = TEXT_COLOR
+
+        for index, document in enumerate(selection.documents):
+            row = BoxLayout(
+                orientation="horizontal",
+                spacing=dp(8),
+                size_hint_y=None,
+                height=dp(56),
+            )
+            details = BoxLayout(orientation="vertical", spacing=dp(1))
+            filename = Label(
+                text=document.filename,
+                color=TEXT_COLOR,
+                font_size=sp(14),
+                halign="left",
+                valign="middle",
+                shorten=True,
+                shorten_from="center",
+            )
+            filename.bind(
+                size=lambda label, size: setattr(label, "text_size", size)
+            )
+            size_label = Label(
+                text=(
+                    "Cartella | " if document.is_directory else "File | "
+                )
+                + format_file_size(document.size),
+                color=MUTED_COLOR,
+                font_size=sp(12),
+                halign="left",
+                valign="middle",
+            )
+            size_label.bind(
+                size=lambda label, size: setattr(label, "text_size", size)
+            )
+            details.add_widget(filename)
+            details.add_widget(size_label)
+
+            remove_button = _button("Rimuovi", color=DESTRUCTIVE_COLOR)
+            remove_button.size_hint_x = None
+            remove_button.width = dp(96)
+            remove_button.bind(
+                on_release=lambda _button, item_index=index: (
+                    self._remove_selected_document(item_index)
+                )
+            )
+            self._selection_remove_buttons.append(remove_button)
+            row.add_widget(details)
+            row.add_widget(remove_button)
+            container.add_widget(row)
+
+    def _selection_can_be_changed(self) -> bool:
+        return self._derive_controls().manage_selection
 
     def _finish_staging_cancelled(self) -> None:
         self._staging = False
         if self.send_status is not None:
-            self.send_status.text = "Copia dei file interrotta."
+            self.send_status.text = "Copia del contenuto interrotta."
         self._update_controls()
 
     def _finish_staging_error(self, message: str) -> None:
         self._staging = False
         if self.send_status is not None:
-            self.send_status.text = "Impossibile preparare i file selezionati."
+            self.send_status.text = "Impossibile preparare il contenuto selezionato."
             self.send_status.color = ERROR_COLOR
-        self._show_error("Preparazione file non riuscita", message)
+        self._show_error("Preparazione contenuto non riuscita", message)
         self._update_controls()
 
     def _start_send(self, *_args: object) -> None:
@@ -560,6 +762,7 @@ class MoonTransferAndroidApp(App):
             self._show_error("Invio non avviato", str(error))
         else:
             self._selected_selection = None
+            self._refresh_selection_view()
             self._activate_service(client)
             self._poll_transfer_service()
         self._update_controls()
@@ -595,11 +798,18 @@ class MoonTransferAndroidApp(App):
         code_changed = self._code != code
         self._code = code
         if self.file_status is not None:
-            payload_label = (
-                proposal.filename
-                if proposal.is_single_file
-                else f"{proposal.file_count} file in invio"
-            )
+            if proposal.is_single_file:
+                payload_label = proposal.filename
+            else:
+                counts = [f"{proposal.file_count} file"]
+                if proposal.directory_count:
+                    directory_label = (
+                        "1 cartella"
+                        if proposal.directory_count == 1
+                        else f"{proposal.directory_count} cartelle"
+                    )
+                    counts.append(directory_label)
+                payload_label = " | ".join(counts) + " in invio"
             self.file_status.text = (
                 f"{payload_label}\n{format_file_size(proposal.size)}"
             )
@@ -650,9 +860,7 @@ class MoonTransferAndroidApp(App):
         self._send_state = state
         self._selected_selection = None
         self._code = None
-        if self.file_status is not None:
-            self.file_status.text = "Nessun file selezionato."
-            self.file_status.color = MUTED_COLOR
+        self._refresh_selection_view()
         if self.code_input is not None:
             self.code_input.text = ""
         if self.send_status is not None:
@@ -1216,7 +1424,7 @@ class MoonTransferAndroidApp(App):
         close_button.bind(on_release=lambda _button: popup.dismiss())
         popup.open()
 
-    def _update_controls(self) -> None:
+    def _derive_controls(self) -> AndroidControlState:
         picker_pending = bool(self._picker and self._picker.pending)
         save_picker_pending = bool(
             self._save_picker and self._save_picker.pending
@@ -1226,7 +1434,7 @@ class MoonTransferAndroidApp(App):
             if self._service_client is not None
             else None
         )
-        controls = derive_android_control_state(
+        return derive_android_control_state(
             AndroidControlContext(
                 is_android=platform == "android",
                 send_state=self._send_state,
@@ -1244,8 +1452,17 @@ class MoonTransferAndroidApp(App):
                 receive_code_valid=self._receive_code_is_valid(),
             )
         )
+
+    def _update_controls(self) -> None:
+        controls = self._derive_controls()
         if self.select_button is not None:
             self.select_button.disabled = not controls.select_file
+        if self.select_directory_button is not None:
+            self.select_directory_button.disabled = not controls.select_file
+        if self.clear_selection_button is not None:
+            self.clear_selection_button.disabled = not controls.manage_selection
+        for button in self._selection_remove_buttons:
+            button.disabled = not controls.manage_selection
         if self.send_button is not None:
             self.send_button.disabled = not controls.start_send
         if self.cancel_button is not None:

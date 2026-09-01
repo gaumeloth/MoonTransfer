@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,6 +43,48 @@ class _Cursor:
 
     def getLong(self, index: int) -> int:
         return int(self.values[self.columns[index]])
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _RowsCursor:
+    def __init__(self, rows: tuple[dict[str, object | None], ...]) -> None:
+        self.rows = rows
+        self.columns = storage.TREE_PROJECTION
+        self.index = -1
+        self.closed = False
+
+    @property
+    def current(self) -> dict[str, object | None]:
+        return self.rows[self.index]
+
+    def moveToFirst(self) -> bool:
+        if not self.rows:
+            return False
+        self.index = 0
+        return True
+
+    def moveToNext(self) -> bool:
+        if self.index + 1 >= len(self.rows):
+            return False
+        self.index += 1
+        return True
+
+    def getColumnIndex(self, name: str) -> int:
+        try:
+            return self.columns.index(name)
+        except ValueError:
+            return -1
+
+    def isNull(self, index: int) -> bool:
+        return self.current.get(self.columns[index]) is None
+
+    def getString(self, index: int) -> str:
+        return str(self.current[self.columns[index]])
+
+    def getLong(self, index: int) -> int:
+        return int(self.current[self.columns[index]])
 
     def close(self) -> None:
         self.closed = True
@@ -197,6 +240,65 @@ class _DocumentsContract:
             shutil.rmtree(path)
         else:
             path.unlink(missing_ok=True)
+
+
+class _SourceDocumentsContract:
+    def __init__(self, root_id: str = "root") -> None:
+        self.root_id = root_id
+
+    def getTreeDocumentId(self, _uri: object) -> str:
+        return self.root_id
+
+    def buildDocumentUriUsingTree(
+        self,
+        _tree_uri: object,
+        document_id: str,
+    ) -> str:
+        return f"document:{document_id}"
+
+    def buildChildDocumentsUriUsingTree(
+        self,
+        _tree_uri: object,
+        document_id: str,
+    ) -> str:
+        return f"children:{document_id}"
+
+
+class _SourceTreeResolver:
+    def __init__(
+        self,
+        rows: dict[str, tuple[dict[str, object | None], ...]],
+        sources: dict[str, Path],
+    ) -> None:
+        self.rows = rows
+        self.sources = sources
+
+    def query(self, uri: object, *_args: object) -> _RowsCursor:
+        return _RowsCursor(self.rows.get(str(uri), ()))
+
+    def openFileDescriptor(
+        self,
+        uri: object,
+        _mode: str,
+    ) -> _ParcelDescriptor:
+        return _ParcelDescriptor(self.sources[str(uri)])
+
+
+def _tree_row(
+    document_id: str,
+    name: str,
+    mime_type: str,
+    *,
+    size: int | None = None,
+    flags: int = 0,
+) -> dict[str, object | None]:
+    return {
+        storage.DOCUMENT_ID_COLUMN: document_id,
+        storage.DISPLAY_NAME_COLUMN: name,
+        storage.MIME_TYPE_COLUMN: mime_type,
+        storage.SIZE_COLUMN: size,
+        storage.FLAGS_COLUMN: flags,
+    }
 
 
 class _Uri:
@@ -360,6 +462,342 @@ class AndroidStorageTests(unittest.TestCase):
             storage.cleanup_staged_selection(selection)
             self.assertTrue(all(not path.exists() for path in staging_dirs))
 
+    def test_stage_directory_copies_nested_files_and_empty_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "first-source.txt"
+            nested = root / "nested-source.bin"
+            first.write_bytes(b"first")
+            nested.write_bytes(b"nested")
+            resolver = _SourceTreeResolver(
+                {
+                    "document:root": (
+                        _tree_row(
+                            "root",
+                            "Project",
+                            storage.DIRECTORY_MIME_TYPE,
+                        ),
+                    ),
+                    "children:root": (
+                        _tree_row("first", "first.txt", "text/plain", size=5),
+                        _tree_row(
+                            "nested-dir",
+                            "nested",
+                            storage.DIRECTORY_MIME_TYPE,
+                        ),
+                        _tree_row(
+                            "empty-dir",
+                            "empty",
+                            storage.DIRECTORY_MIME_TYPE,
+                        ),
+                    ),
+                    "children:nested-dir": (
+                        _tree_row(
+                            "nested-file",
+                            "data.bin",
+                            "application/octet-stream",
+                            size=6,
+                        ),
+                    ),
+                    "children:empty-dir": (),
+                },
+                {
+                    "document:first": first,
+                    "document:nested-file": nested,
+                },
+            )
+            progress: list[tuple[int, int | None]] = []
+
+            document = storage.stage_directory_uri(
+                "content://tree/root",
+                root / "staging",
+                resolver=resolver,
+                documents_contract=_SourceDocumentsContract(),
+                on_progress=lambda copied, total: progress.append(
+                    (copied, total)
+                ),
+            )
+
+            self.assertTrue(document.is_directory)
+            self.assertEqual(document.filename, "Project")
+            self.assertEqual(document.size, 11)
+            self.assertEqual(
+                (document.path / "first.txt").read_bytes(),
+                b"first",
+            )
+            self.assertEqual(
+                (document.path / "nested" / "data.bin").read_bytes(),
+                b"nested",
+            )
+            self.assertTrue((document.path / "empty").is_dir())
+            self.assertEqual(progress[-1], (11, 11))
+            storage.cleanup_staged_document(document)
+
+    def test_stage_directory_rejects_provider_cycles_before_copying(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            staging = root / "staging"
+            resolver = _SourceTreeResolver(
+                {
+                    "document:root": (
+                        _tree_row(
+                            "root",
+                            "Project",
+                            storage.DIRECTORY_MIME_TYPE,
+                        ),
+                    ),
+                    "children:root": (
+                        _tree_row(
+                            "root",
+                            "loop",
+                            storage.DIRECTORY_MIME_TYPE,
+                        ),
+                    ),
+                },
+                {},
+            )
+
+            with self.assertRaisesRegex(
+                storage.AndroidStorageError,
+                "ciclo o un documento duplicato",
+            ):
+                storage.stage_directory_uri(
+                    "content://tree/root",
+                    staging,
+                    resolver=resolver,
+                    documents_contract=_SourceDocumentsContract(),
+                )
+
+            self.assertFalse(staging.exists())
+
+    def test_stage_directory_rejects_virtual_documents(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            staging = root / "staging"
+            resolver = _SourceTreeResolver(
+                {
+                    "document:root": (
+                        _tree_row(
+                            "root",
+                            "Project",
+                            storage.DIRECTORY_MIME_TYPE,
+                        ),
+                    ),
+                    "children:root": (
+                        _tree_row(
+                            "virtual",
+                            "online.txt",
+                            "text/plain",
+                            flags=storage.VIRTUAL_DOCUMENT_FLAG,
+                        ),
+                    ),
+                },
+                {},
+            )
+
+            with self.assertRaisesRegex(
+                storage.AndroidStorageError,
+                "documento virtuale non è supportato",
+            ):
+                storage.stage_directory_uri(
+                    "content://tree/root",
+                    staging,
+                    resolver=resolver,
+                    documents_contract=_SourceDocumentsContract(),
+                )
+
+            self.assertFalse(staging.exists())
+
+    def test_stage_directory_can_be_cancelled_while_scanning_children(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            staging = root / "staging"
+            resolver = _SourceTreeResolver(
+                {
+                    "document:root": (
+                        _tree_row(
+                            "root",
+                            "Project",
+                            storage.DIRECTORY_MIME_TYPE,
+                        ),
+                    ),
+                    "children:root": (
+                        _tree_row("first", "first.txt", "text/plain"),
+                        _tree_row("second", "second.txt", "text/plain"),
+                    ),
+                },
+                {},
+            )
+            checks = 0
+
+            def cancel_requested() -> bool:
+                nonlocal checks
+                checks += 1
+                return checks >= 6
+
+            with self.assertRaises(OperationCancelled):
+                storage.stage_directory_uri(
+                    "content://tree/root",
+                    staging,
+                    resolver=resolver,
+                    documents_contract=_SourceDocumentsContract(),
+                    cancel_requested=cancel_requested,
+                )
+
+            self.assertFalse(staging.exists())
+
+    def test_stage_directory_bounds_rows_returned_by_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            staging = root / "staging"
+            resolver = _SourceTreeResolver(
+                {
+                    "document:root": (
+                        _tree_row(
+                            "root",
+                            "Project",
+                            storage.DIRECTORY_MIME_TYPE,
+                        ),
+                    ),
+                    "children:root": tuple(
+                        _tree_row(
+                            f"file-{index}",
+                            f"file-{index}.txt",
+                            "text/plain",
+                        )
+                        for index in range(3)
+                    ),
+                },
+                {},
+            )
+
+            with (
+                patch.object(storage, "MAX_PAYLOAD_ENTRIES", 3),
+                self.assertRaisesRegex(
+                    storage.AndroidStorageError,
+                    "limite di 3 elementi",
+                ),
+            ):
+                storage.stage_directory_uri(
+                    "content://tree/root",
+                    staging,
+                    resolver=resolver,
+                    documents_contract=_SourceDocumentsContract(),
+                )
+
+            self.assertFalse(staging.exists())
+
+    def test_staged_selection_can_merge_and_remove_individual_documents(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first_source = root / "first-source.bin"
+            second_source = root / "second-source.bin"
+            first_source.write_bytes(b"first")
+            second_source.write_bytes(b"second")
+            first_uri = object()
+            second_uri = object()
+            resolver = _MultiResolver(
+                {
+                    first_uri: (first_source, "first.bin"),
+                    second_uri: (second_source, "second.bin"),
+                }
+            )
+
+            first = storage.stage_document_uris(
+                (first_uri,),
+                root / "staging",
+                resolver=resolver,
+            )
+            second = storage.stage_document_uris(
+                (second_uri,),
+                root / "staging",
+                existing_selection=first,
+                resolver=resolver,
+            )
+            merged = first.merged_with(second)
+
+            self.assertEqual(merged.filenames, ("first.bin", "second.bin"))
+            remaining, removed = merged.without_document(0)
+            self.assertIsNotNone(remaining)
+            assert remaining is not None
+            self.assertEqual(remaining.filenames, ("second.bin",))
+            self.assertEqual(removed.filename, "first.bin")
+
+            empty, last = remaining.without_document(0)
+            self.assertIsNone(empty)
+            self.assertEqual(last.filename, "second.bin")
+            storage.cleanup_staged_document(removed)
+            storage.cleanup_staged_document(last)
+
+    def test_appending_duplicate_name_preserves_existing_staging(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first_source = root / "first-source.bin"
+            duplicate_source = root / "duplicate-source.bin"
+            first_source.write_bytes(b"first")
+            duplicate_source.write_bytes(b"duplicate")
+            first_uri = object()
+            duplicate_uri = object()
+            staging_parent = root / "staging"
+            resolver = _MultiResolver(
+                {
+                    first_uri: (first_source, "File.bin"),
+                    duplicate_uri: (duplicate_source, "file.bin"),
+                }
+            )
+            existing = storage.stage_document_uris(
+                (first_uri,),
+                staging_parent,
+                resolver=resolver,
+            )
+            staging_dirs = tuple(staging_parent.iterdir())
+
+            with self.assertRaisesRegex(
+                storage.AndroidStorageError,
+                "selezione complessiva.*duplicati",
+            ):
+                storage.stage_document_uris(
+                    (duplicate_uri,),
+                    staging_parent,
+                    existing_selection=existing,
+                    resolver=resolver,
+                )
+
+            self.assertEqual(tuple(staging_parent.iterdir()), staging_dirs)
+            self.assertEqual(existing.root_paths[0].read_bytes(), b"first")
+            storage.cleanup_staged_selection(existing)
+
+    def test_appending_past_root_limit_is_rejected_before_staging(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            existing = storage.StagedSelection(
+                tuple(
+                    storage.StagedDocument(
+                        path=root / f"file-{index}.bin",
+                        staging_dir=root / f"stage-{index}",
+                        filename=f"file-{index}.bin",
+                        size=0,
+                    )
+                    for index in range(storage.MAX_PAYLOAD_ROOTS)
+                )
+            )
+            staging_parent = root / "staging"
+
+            with self.assertRaisesRegex(
+                storage.AndroidStorageError,
+                f"al massimo {storage.MAX_PAYLOAD_ROOTS} elementi",
+            ):
+                storage.stage_document_uris(
+                    (object(),),
+                    staging_parent,
+                    existing_selection=existing,
+                    resolver=object(),
+                )
+
+            self.assertFalse(staging_parent.exists())
+
     def test_stage_documents_rejects_portable_name_collisions(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -511,6 +949,68 @@ class AndroidStorageTests(unittest.TestCase):
             self.assertEqual(progress[-1], (11, 11))
             self.assertEqual(contract.deleted, [])
 
+    def test_save_directory_recreates_nested_tree_without_duplicate_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "Project"
+            nested = source / "nested"
+            empty = source / "empty"
+            destination = root / "destination"
+            nested.mkdir(parents=True)
+            empty.mkdir()
+            destination.mkdir()
+            (source / "README.txt").write_bytes(b"readme")
+            (nested / "data.bin").write_bytes(b"data")
+            resolver = _TreeResolver()
+            contract = _DocumentsContract(destination)
+
+            copied = storage.save_files_to_tree(
+                (source,),
+                "content://tree/root",
+                container_name="Project",
+                resolver=resolver,
+                documents_contract=contract,
+            )
+
+            saved = destination / "Project"
+            self.assertEqual(copied, 10)
+            self.assertEqual((saved / "README.txt").read_bytes(), b"readme")
+            self.assertEqual((saved / "nested" / "data.bin").read_bytes(), b"data")
+            self.assertTrue((saved / "empty").is_dir())
+            self.assertFalse((saved / "Project").exists())
+
+    def test_save_mixed_roots_recreates_files_and_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            loose_file = root / "loose.txt"
+            source_directory = root / "Project"
+            nested = source_directory / "nested"
+            empty = source_directory / "empty"
+            destination = root / "destination"
+            loose_file.write_bytes(b"loose")
+            nested.mkdir(parents=True)
+            empty.mkdir()
+            destination.mkdir()
+            (nested / "data.bin").write_bytes(b"data")
+            resolver = _TreeResolver()
+            contract = _DocumentsContract(destination)
+
+            copied = storage.save_files_to_tree(
+                (loose_file, source_directory),
+                "content://tree/root",
+                resolver=resolver,
+                documents_contract=contract,
+            )
+
+            saved = destination / "MoonTransfer"
+            self.assertEqual(copied, 9)
+            self.assertEqual((saved / "loose.txt").read_bytes(), b"loose")
+            self.assertEqual(
+                (saved / "Project" / "nested" / "data.bin").read_bytes(),
+                b"data",
+            )
+            self.assertTrue((saved / "Project" / "empty").is_dir())
+
     def test_save_files_removes_container_when_cancelled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -565,6 +1065,7 @@ class AndroidStorageTests(unittest.TestCase):
         picker._on_selected = None
         picker._on_cancelled = None
         picker._on_error = None
+        picker._request_code = None
 
         picker.open(
             on_selected=lambda _uris: None,
@@ -581,6 +1082,37 @@ class AndroidStorageTests(unittest.TestCase):
             intent.extras[_PickerIntent.EXTRA_ALLOW_MULTIPLE],
             True,
         )
+
+    def test_file_picker_can_request_one_document_tree(self) -> None:
+        picker = object.__new__(storage.AndroidFilePicker)
+        picker._activity = _PickerActivity()
+        picker._intent_class = _PickerIntent
+        picker._activity_class = _ActivityClass
+        picker._on_selected = None
+        picker._on_cancelled = None
+        picker._on_error = None
+        picker._request_code = None
+        selected: list[tuple[object, ...]] = []
+
+        picker.open(
+            select_directory=True,
+            on_selected=selected.append,
+            on_cancelled=lambda: None,
+            on_error=lambda _error: None,
+        )
+
+        intent, request_code = picker._activity.calls[0]
+        self.assertEqual(intent.action, _PickerIntent.ACTION_OPEN_DOCUMENT_TREE)
+        self.assertEqual(request_code, storage.PICK_DIRECTORY_REQUEST_CODE)
+        self.assertEqual(intent.categories, [])
+        self.assertIsNone(intent.mime_type)
+        directory = _Uri("content://documents/tree")
+        picker._on_activity_result(
+            request_code,
+            _ActivityClass.RESULT_OK,
+            _Intent(data=directory),
+        )
+        self.assertEqual(selected, [(directory,)])
 
     def test_save_picker_uses_document_tree_only_for_multiple_files(self) -> None:
         picker = object.__new__(storage.AndroidSavePicker)

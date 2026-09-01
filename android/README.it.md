@@ -11,8 +11,8 @@ parte degli artefatti delle release desktop.
 Il prototipo attualmente fornisce:
 
 - un ambiente di sviluppo Python 3.13 e Kivy 2.3.1;
-- un'interfaccia Kivy con viste separate per inviare e ricevere uno o più file
-  regolari;
+- un'interfaccia Kivy con viste separate per inviare e ricevere file, cartelle e
+  selezioni miste;
 - sorgenti di build Android generati contenenti solamente moduli MoonTransfer
   esplicitamente approvati e indipendenti da Qt;
 - una configurazione Buildozer e python-for-android con versioni fissate;
@@ -27,12 +27,13 @@ Il prototipo attualmente fornisce:
   informativo copiabile, con commit sorgente, `croc` incluso, protocollo,
   runtime Python e piattaforma ma senza codici di trasferimento o percorsi
   locali;
-- selezione di uno o più file sorgente e salvataggio verificato della
-  destinazione tramite lo Storage Access Framework (SAF) di Android;
+- selezione di file e cartelle sorgente, staging privato ricorsivo e salvataggio
+  verificato della destinazione tramite lo Storage Access Framework (SAF) di
+  Android;
 - invio da Android a desktop e ricezione da desktop ad Android compatibili con
   il protocollo v2 di MoonTransfer;
-- visualizzazione di nomi principali, numero di file, dimensione totale e
-  informazioni SHA-256 prima del download;
+- visualizzazione di nomi principali, numero di file e cartelle, dimensione
+  totale e informazioni SHA-256 prima del download;
 - accettazione e rifiuto tramite la connessione principale `croc` con prompt;
 - un foreground service `dataSync` che possiede il processo `croc` attivo e
   mantiene il trasferimento mentre l'utente passa a un'altra applicazione;
@@ -43,18 +44,19 @@ Il prototipo attualmente fornisce:
 - avanzamento, annullamento, timeout di inattività e decisione, verifica
   dell'integrità e pulizia dei file temporanei privati.
 
-Rimane un client sperimentale per file regolari. Può trasferire un singolo file
-o un gruppo di file scelti nella stessa operazione del selettore, ma non può
-trasferire cartelle o riprendere un trasferimento interrotto. Le build
-automatizzate producono attualmente solamente un APK ARM64 di debug; release
-Android firmate e altre architetture non sono implementate. L'app dichiara
-`INTERNET`, i permessi per foreground service richiesti da `dataSync` e il
-permesso di notifica usato per mostrare lo stato del trasferimento. La versione
-pubblica visibile sulla schermata bloccata è volutamente generica: codici di
-trasferimento, hash, percorsi, content URI ed errori tecnici non vengono mai
-mostrati lì. SAF fornisce accesso solo ai documenti o alle directory di
-destinazione scelti esplicitamente dall'utente; non viene richiesto alcun
-permesso di archiviazione esteso.
+Rimane un client di trasferimento sperimentale. Può costruire una selezione
+mista con più operazioni del selettore di sistema, mostrare ogni file o cartella
+principale preparata, rimuovere singoli elementi o svuotare la selezione. Non può
+riprendere un trasferimento interrotto. Le build automatizzate producono
+attualmente solamente un APK ARM64 di debug; release Android firmate e altre
+architetture non sono implementate. L'app dichiara `INTERNET`, i permessi per
+foreground service richiesti da `dataSync` e il permesso di notifica usato per
+mostrare lo stato del trasferimento. La versione pubblica visibile sulla
+schermata bloccata è volutamente generica: codici di trasferimento, hash,
+percorsi, content URI ed errori tecnici non vengono mai mostrati lì. SAF
+fornisce accesso solo ai documenti sorgente, alle cartelle sorgente o alle
+directory di destinazione scelte esplicitamente dall'utente; non viene richiesto
+alcun permesso di archiviazione esteso.
 
 ## Compatibilità del trasporto
 
@@ -236,48 +238,58 @@ procedura di release per l'utente finale.
 1. Avvia MoonTransfer sul desktop, apri **Ricevi** e scegli una cartella di
    destinazione.
 2. Avvia l'app Android e attendi lo stato verde del trasporto `croc`.
-3. In **Invia**, premi **Seleziona file** e scegli uno o più documenti piccoli e
-   non sensibili nel selettore di sistema Android. Non selezionare una cartella.
-4. Controlla il nome del file oppure il numero di file e la dimensione totale,
-   quindi premi **Prepara e invia**.
-5. L'app calcola l'hash di ogni copia privata e mostra un codice di 32 caratteri.
+3. In **Invia**, premi **Aggiungi file** e scegli uno o più documenti piccoli e
+   non sensibili. Premi **Aggiungi cartella** per scegliere una cartella piccola
+   contenente file annidati e una sottocartella vuota.
+4. Ripeti una delle due azioni per creare una selezione con più radici o mista.
+   Controlla che le radici precedenti rimangano e che i nuovi file o cartelle
+   vengano aggiunti.
+5. Controlla ogni radice preparata, il tipo, la dimensione aggregata e il
+   riepilogo della selezione. Usa **Rimuovi** su un elemento oppure **Svuota
+   selezione** per verificare che la selezione possa essere corretta, quindi
+   prepara quella prevista per il test.
+6. Premi **Prepara e invia**. L'app calcola l'hash di ogni copia privata e mostra
+   un codice di 32 caratteri.
    Il codice viene anche copiato negli appunti Android.
-6. Passa all'applicazione di messaggistica usata per comunicare il codice. Lascia
+7. Passa all'applicazione di messaggistica usata per comunicare il codice. Lascia
    MoonTransfer in background mentre il destinatario lo inserisce; la notifica
    del trasferimento in corso deve restare visibile e indicare la fase corrente.
-7. Inserisci quel codice nella scheda **Ricevi** del desktop e avvia la
+8. Inserisci quel codice nella scheda **Ricevi** del desktop e avvia la
    ricezione.
-8. Controlla nomi, conteggi, dimensione totale e informazioni SHA-256 mostrate
+9. Controlla nomi, conteggi, dimensione totale e informazioni SHA-256 mostrate
    dall'app desktop, quindi accetta o rifiuta il trasferimento.
-9. Se accetti, entrambe le applicazioni dovrebbero mostrare avanzamento e
-   completamento. Controlla che ogni file verificato appaia nella destinazione
-   desktop scelta. Un payload multi-file viene inserito nel contenitore desktop
-   `MoonTransfer`. Se rifiuti, Android dovrebbe comunicare la decisione senza
-   inviare il payload principale.
-10. Torna in MoonTransfer e verifica che sia possibile effettuare una nuova
+10. Se accetti, entrambe le applicazioni dovrebbero mostrare avanzamento e
+   completamento. Controlla che file, percorsi annidati e cartelle vuote appaiano
+   nella destinazione desktop scelta. Una cartella singola mantiene il proprio
+   nome radice; più radici usano il contenitore desktop `MoonTransfer`. Se
+   rifiuti, Android dovrebbe comunicare la decisione senza inviare il payload
+   principale.
+11. Torna in MoonTransfer e verifica che sia possibile effettuare una nuova
     selezione e avviare un altro trasferimento senza chiudere o riavviare
     l'applicazione.
 
 ### Ricevere da desktop su Android
 
-1. Avvia MoonTransfer sul desktop, apri **Invia** e scegli uno o più file piccoli
-   e non sensibili. Non includere cartelle in questo test di compatibilità
-   Android.
+1. Avvia MoonTransfer sul desktop, apri **Invia** e scegli un file, una cartella
+   o una selezione mista piccola e non sensibile. Includi un file annidato e una
+   cartella vuota quando verifichi la conservazione delle directory.
 2. Avvia l'app Android, apri **Ricevi**, inserisci il codice mostrato
    dall'applicazione desktop e premi **Ricevi informazioni**.
-3. Per un solo file controlla nome, dimensione e SHA-256. Per più file controlla
-   numero, dimensione totale, nomi principali elencati e l'indicazione che ogni
-   file include un SHA-256.
+3. Per un solo file controlla nome, dimensione e SHA-256. Per una cartella o un
+   payload con più radici controlla numero di file e cartelle, dimensione totale,
+   nomi principali elencati e l'indicazione che ogni file include un SHA-256.
 4. Premi **Rifiuta** per avvisare il mittente desktop senza scaricare il payload,
    oppure **Accetta** per continuare.
 5. Dopo aver scaricato il payload accettato nell'area privata e verificato il
    manifest, Android apre il selettore di sistema per il salvataggio.
-6. Per un file scegli nome e posizione finali. Per più file scegli una directory
-   di destinazione: MoonTransfer crea al suo interno una directory dedicata
-   `MoonTransfer` e vi scrive i file verificati. MoonTransfer non apre né crea
-   la destinazione prima che la verifica sia riuscita.
+6. Per un file scegli nome e posizione finali. Per una cartella o un payload con
+   più radici scegli una directory di destinazione. Una cartella singola viene
+   ricreata con il proprio nome radice; più radici vengono ricreate dentro una
+   directory figlia dedicata `MoonTransfer`. MoonTransfer non crea la
+   destinazione prima che la verifica sia riuscita.
 7. Controlla che entrambe le applicazioni segnalino il completamento e che ogni
-   file salvato sia disponibile tramite il provider di documenti Android scelto.
+   file, percorso annidato e cartella vuota salvati siano disponibili tramite il
+   provider di documenti Android scelto.
 8. Verifica che il campo del codice e i controlli di trasferimento siano di nuovo
    utilizzabili senza chiudere o riavviare MoonTransfer.
 
@@ -297,10 +309,12 @@ questi casi con un payload piccolo e non sensibile:
 3. Ruota il dispositivo durante lo scambio dei metadati, il trasferimento del
    payload e la decisione del destinatario. La ricreazione dell'Activity non
    deve duplicare `croc`, perdere la proposta o sbloccare controlli in conflitto.
-4. Annulla il selettore della sorgente prima di scegliere un file. Separatamente,
-   annulla il selettore di salvataggio dopo una ricezione verificata, quindi
-   riaprilo con **Scegli dove salvare**. Entrambi i percorsi devono restituire
-   controlli utilizzabili.
+4. Annulla il selettore della sorgente prima di scegliere un file o una cartella.
+   Ripeti dopo aver preparato almeno una radice e verifica che l'annullamento
+   conservi la selezione esistente. Separatamente, annulla il selettore di
+   salvataggio dopo
+   una ricezione verificata, quindi riaprilo con **Scegli dove salvare**. Tutti i
+   percorsi devono restituire controlli utilizzabili.
 5. Annulla un trasferimento attivo con **Interrompi** nell'app e un altro con
    l'azione della notifica. Entrambe devono arrestare la stessa sessione corrente
    senza lasciare la GUI bloccata permanentemente.
@@ -351,16 +365,21 @@ richiesto dall'utente non lascia una notifica di risultato.
 
 ## Progettazione del trasferimento Android
 
-Il selettore di sistema restituisce uno o più content URI invece di normali
-percorsi del filesystem. MoonTransfer legge per ciascuno il nome portabile e la
-dimensione opzionale, rifiuta collisioni tra nomi portabili, apre ogni URI
-tramite `ContentResolver` e copia ogni documento in una directory privata
-separata dell'app con modalità `0600`. Le copie private sono le sorgenti
-controllate usate per gli hash e da `croc`; i loro fingerprint vengono verificati
-nuovamente prima di avviare il mittente principale. Vengono eliminate dopo
-completamento, rifiuto, errore o annullamento. Le directory di staging e sessione
-residue, ma appartenenti all'app, vengono eliminate all'avvio successivo solo
-quando non è attivo alcun trasferimento foreground.
+Il selettore di sistema restituisce content URI invece di normali percorsi del
+filesystem. Per i file MoonTransfer legge ogni nome portabile e la dimensione
+opzionale, rifiuta collisioni tra nomi portabili, apre ogni URI tramite
+`ContentResolver` e copia ogni documento in una directory privata separata
+dell'app con modalità `0600`. Per una cartella, `ACTION_OPEN_DOCUMENT_TREE`
+restituisce un solo URI ad albero; MoonTransfer lo enumera ricorsivamente tramite
+`DocumentsContract`, valida identificatori dei documenti, percorsi portabili,
+collisioni, cicli e limite di elementi del protocollo, rifiuta i documenti
+virtuali e ricrea lo snapshot nell'area privata con directory `0700` e file
+`0600`. Le copie private sono le sorgenti controllate usate per gli hash e da
+`croc`; fingerprint e albero esatto vengono verificati nuovamente prima di
+avviare il mittente principale. Vengono eliminate dopo completamento, rifiuto,
+errore o annullamento. Le directory di staging e sessione residue, ma
+appartenenti all'app, vengono eliminate all'avvio successivo solo quando non è
+attivo alcun trasferimento foreground.
 
 L'Activity Kivy non possiede il controller del trasferimento né il processo
 figlio `croc`. Dopo aver validato l'azione dell'utente crea una sessione privata
@@ -411,7 +430,7 @@ permessi restrittivi usato dalla GUI.
 Il mittente riutilizza quindi il protocollo desktop invece di inviare un payload
 `croc` grezzo:
 
-1. analizza il file o i file in staging e calcola uno SHA-256 per ciascuno;
+1. analizza le radici in staging e calcola uno SHA-256 per ogni file regolare;
 2. crea una proposta del protocollo v2 contenente un codice separato per il
    payload principale;
 3. avvia il processo `croc send` principale e attende che `croc` abbia raccolto
@@ -426,10 +445,10 @@ Il mittente riutilizza quindi il protocollo desktop invece di inviare un payload
 Il ricevitore Android segue il flusso inverso:
 
 1. riceve il manifest con limiti espliciti in una directory privata e isolata;
-2. valida ogni campo del protocollo e rifiuta i payload che contengono directory;
+2. valida ogni campo del protocollo e l'albero limitato di file e directory;
 3. prima del download mostra nome, dimensione e SHA-256 del singolo file oppure
-   nomi principali, numero di file, dimensione totale e disponibilità degli hash
-   per ciascun file;
+   nomi principali, numero di file e cartelle, dimensione totale e disponibilità
+   degli hash per ciascun file;
 4. avvia il ricevitore principale con prompt e scrive `y` oppure `n` a `croc`,
    così il mittente desktop riceve un'accettazione o un rifiuto a livello di
    protocollo;
@@ -438,8 +457,9 @@ Il ricevitore Android segue il flusso inverso:
 6. verifica albero ricevuto, dimensione e SHA-256 rispetto al manifest;
 7. soltanto dopo la verifica avvia il selettore Android
    `ACTION_CREATE_DOCUMENT` per un file oppure `ACTION_OPEN_DOCUMENT_TREE` per
-   più file; nel secondo caso crea una directory figlia dedicata `MoonTransfer`
-   e vi copia ogni file verificato;
+   una cartella o più radici; una cartella singola viene ricreata con il proprio
+   nome radice, mentre più radici usano una directory figlia dedicata
+   `MoonTransfer`;
 8. elimina manifest e payload privato dopo completamento, rifiuto, annullamento
    o errore.
 
@@ -448,9 +468,10 @@ l'utente può riaprirlo mentre il servizio resta attivo oppure annullare il
 trasferimento per eliminarla. Questo ordine evita di modificare una destinazione
 esistente prima del superamento dei controlli di integrità. Per un file il
 provider di documenti di sistema rimane responsabile dei conflitti sul nome
-finale e della conferma di sovrascrittura. Per un salvataggio multi-file,
-MoonTransfer chiede al provider di creare contenitore e file e tenta di
-rimuovere il nuovo contenitore se il salvataggio viene annullato o fallisce.
+finale e della conferma di sovrascrittura. Per un salvataggio ad albero,
+MoonTransfer chiede al provider di creare contenitore radice, directory e file e
+tenta di rimuovere il nuovo contenitore se il salvataggio viene annullato o
+fallisce.
 
 Entrambi i segreti vengono passati in `CROC_SECRET`, mai come argomenti della
 riga di comando. Ogni processo attivo contemporaneamente riceve una directory
@@ -512,14 +533,14 @@ invece di riutilizzare silenziosamente un vecchio eseguibile.
 
 ## Limitazioni note
 
-- su Android sono implementati invio e ricezione di file singoli o multipli,
-  fino al limite di protocollo di 256 radici principali;
-- payload con cartelle o misti file/cartelle non sono implementati su Android e
-  vengono rifiutati prima di scaricare il payload principale;
-- i file selezionati insieme devono avere nomi portabili distinti, perché
-  vengono trasferiti come radici principali separate;
+- su Android sono implementati invio e ricezione di file, cartelle e selezioni
+  miste, fino ai limiti di protocollo di 256 radici principali e 10.000 elementi
+  totali;
+- radici principali ed elementi di ogni cartella devono avere nomi portabili
+  distinti; i documenti SAF virtuali vengono rifiutati perché non forniscono la
+  semantica stabile dei file descriptor richiesta dallo staging privato;
 - la copia SAF finale non può essere atomica con ogni provider di documenti di
-  terze parti; MoonTransfer tenta di eliminare un contenitore multi-file
+  terze parti; MoonTransfer tenta di eliminare un contenitore ad albero
   parziale, ma un errore o un'interruzione del provider può comunque lasciare
   una destinazione incompleta;
 - l'esecuzione in background è protetta quando l'app viene coperta, l'utente

@@ -94,18 +94,41 @@ MoonTransferRoot:
                     height: self.minimum_height
 
                     MoonWrappedLabel:
-                        text: "Invia uno o più file a MoonTransfer su un altro dispositivo."
+                        text: "Invia file e cartelle a MoonTransfer su un altro dispositivo."
                         font_size: sp(16)
                         label_color: app.text_color
                         minimum_height: dp(40)
 
-                    MoonActionButton:
-                        id: select_button
-                        text: "Seleziona file"
+                    BoxLayout:
+                        orientation: "horizontal"
+                        spacing: dp(8)
+                        size_hint_y: None
+                        height: dp(48)
+
+                        MoonActionButton:
+                            id: select_button
+                            text: "Aggiungi file"
+
+                        MoonActionButton:
+                            id: select_directory_button
+                            text: "Aggiungi cartella"
+                            button_color: app.secondary_color
 
                     MoonWrappedLabel:
                         id: file_status
-                        text: "Nessun file selezionato."
+                        text: "Nessun elemento selezionato."
+
+                    BoxLayout:
+                        id: selection_list
+                        orientation: "vertical"
+                        spacing: dp(6)
+                        size_hint_y: None
+                        height: self.minimum_height
+
+                    MoonActionButton:
+                        id: clear_selection_button
+                        text: "Svuota selezione"
+                        button_color: app.secondary_color
 
                     MoonActionButton:
                         id: send_button
@@ -152,7 +175,7 @@ MoonTransferRoot:
 
                     MoonWrappedLabel:
                         id: send_status
-                        text: "Seleziona uno o più file per iniziare."
+                        text: "Seleziona file o cartelle per iniziare."
                         label_color: app.text_color
                         minimum_height: dp(44)
 
@@ -185,7 +208,7 @@ MoonTransferRoot:
                     height: self.minimum_height
 
                     MoonWrappedLabel:
-                        text: "Ricevi uno o più file inviati da MoonTransfer."
+                        text: "Ricevi file e cartelle inviati da MoonTransfer."
                         font_size: sp(16)
                         label_color: app.text_color
                         minimum_height: dp(40)

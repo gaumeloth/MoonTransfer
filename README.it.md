@@ -789,17 +789,17 @@ grafico di invio/ricezione, include nella build un binario `croc` fissato e
 verificato tramite checksum, contiene test unitari per la logica non-GUI e
 pubblica archivi alpha nativi pre-buildati per le piattaforme principali. La
 linea pubblica attuale è `v0.1.0-alpha.3`. Android è un target di debug
-funzionante ma sperimentale per file regolari singoli o multipli, non una
-release supportata per l'utente finale.
+funzionante ma sperimentale per file, cartelle e selezioni miste, non una release
+supportata per l'utente finale.
 
 Possibili miglioramenti futuri, in ordine indicativo:
 
 - raccogliere feedback su `alpha.3` e continuare a validare gli artefatti
   `onedir` automatizzati sui rispettivi sistemi;
 - continuare a consolidare il target Android basato su Kivy, in particolare
-  casi limite del ciclo di vita, copertura di dispositivi e provider di
-  documenti, payload con cartelle e packaging di release, prima di considerare
-  Android una piattaforma supportata;
+  casi limite del ciclo di vita, payload grandi o molto annidati, copertura di
+  dispositivi e provider di documenti e packaging di release, prima di
+  considerare Android una piattaforma supportata;
 - aggiungere firma e notarizzazione dove opportuno, quindi valutare formati di
   distribuzione più nativi come AppImage, un installer Windows e un'immagine
   disco macOS;
@@ -1551,16 +1551,16 @@ così il protocollo viene condiviso senza aggiungere Kivy alle dipendenze runtim
 desktop.
 
 Il prototipo attuale include un eseguibile `croc` ARM64 verificato e può inviare
-o ricevere uno o più file regolari tra Android e l'applicazione desktop usando
-il manifest condiviso del protocollo v2 e lo Storage Access Framework di
+o ricevere file, cartelle e selezioni miste tra Android e l'applicazione desktop
+usando il manifest condiviso del protocollo v2 e lo Storage Access Framework di
 Android. Un foreground service `dataSync` possiede i trasferimenti attivi,
 quindi passare a un'altra applicazione non interrompe `croc`; una notifica
 privata legata allo stato mostra fase e metriche di avanzamento disponibili e
 fornisce un'azione di arresto legata alla sessione, quindi lascia un risultato
 dismissibile. Il servizio gestisce i timeout `dataSync` di Android 15 e i
 riavvii sticky non validi, ma le sessioni interrotte non possono ancora essere
-riprese. Cartelle e distribuzione di release Android firmate non sono
-implementati. Il workflow CI Android dedicato crea comunque un APK ARM64 di
+riprese. La distribuzione di release Android firmate non è implementata. Il
+workflow CI Android dedicato crea comunque un APK ARM64 di
 debug validato strutturalmente per i test; viene mantenuto intenzionalmente
 separato dalle GitHub Release pubblicate.
 
