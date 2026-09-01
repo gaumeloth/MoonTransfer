@@ -42,6 +42,7 @@ from moontransfer_android.service_protocol import (  # noqa: E402
     TransferServiceError,
     TransferServiceOperation,
     TransferServiceStateStore,
+    _read_json_object,
     _read_summary,
     _replace_file_atomic,
     consume_service_commands,
@@ -201,6 +202,85 @@ class _RejectableReceiveRunner:
 
 
 class AndroidServiceProtocolTests(unittest.TestCase):
+    def test_ipc_read_retries_windows_writer_contention(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.json"
+            path.write_text('{"state":"ready"}', encoding="utf-8")
+
+            with (
+                mock.patch.object(
+                    Path,
+                    "read_text",
+                    autospec=True,
+                    side_effect=(
+                        PermissionError("state is being replaced"),
+                        '{"state":"ready"}',
+                    ),
+                ) as read_text,
+                mock.patch(
+                    "moontransfer_android.service_protocol.time.sleep"
+                ) as sleep,
+            ):
+                data = _read_json_object(path, windows=True)
+
+            self.assertEqual(data, {"state": "ready"})
+            self.assertEqual(read_text.call_count, 2)
+            sleep.assert_called_once_with(0.01)
+
+    def test_ipc_read_does_not_retry_other_platforms(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.json"
+            path.write_text("{}", encoding="utf-8")
+
+            with (
+                mock.patch.object(
+                    Path,
+                    "read_text",
+                    autospec=True,
+                    side_effect=PermissionError("access denied"),
+                ) as read_text,
+                mock.patch(
+                    "moontransfer_android.service_protocol.time.sleep"
+                ) as sleep,
+            ):
+                with self.assertRaisesRegex(
+                    TransferServiceError,
+                    "File IPC del servizio non leggibile",
+                ):
+                    _read_json_object(path, windows=False)
+
+            self.assertEqual(read_text.call_count, 1)
+            sleep.assert_not_called()
+
+    def test_ipc_read_stops_at_windows_retry_deadline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.json"
+            path.write_text("{}", encoding="utf-8")
+
+            with (
+                mock.patch.object(
+                    Path,
+                    "read_text",
+                    autospec=True,
+                    side_effect=PermissionError("access denied"),
+                ) as read_text,
+                mock.patch(
+                    "moontransfer_android.service_protocol.time.monotonic",
+                    side_effect=(10.0, 11.0),
+                ),
+                mock.patch(
+                    "moontransfer_android.service_protocol.time.sleep"
+                ) as sleep,
+            ):
+                with self.assertRaisesRegex(
+                    TransferServiceError,
+                    "File IPC del servizio non leggibile",
+                ):
+                    _read_json_object(path, windows=True)
+
+            self.assertEqual(read_text.call_count, 1)
+            sleep.assert_not_called()
+
     def test_atomic_replace_retries_windows_reader_contention(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

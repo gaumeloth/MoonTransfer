@@ -36,8 +36,8 @@ RUNTIME_DIRECTORY_NAME = "runtime"
 MAX_SERVICE_JSON_BYTES = 128 * 1024
 MAX_DESTINATION_URI_CHARS = 8192
 MIN_PROGRESS_WRITE_INTERVAL_SECONDS = 0.2
-ATOMIC_REPLACE_RETRY_SECONDS = 0.01
-ATOMIC_REPLACE_TIMEOUT_SECONDS = 1.0
+WINDOWS_FILE_RETRY_SECONDS = 0.01
+WINDOWS_FILE_TIMEOUT_SECONDS = 1.0
 SESSION_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
 
@@ -860,20 +860,36 @@ def _optional_string(value: Any, message: str) -> str | None:
     return value
 
 
-def _read_json_object(path: Path) -> dict[str, Any]:
-    try:
-        stat_result = path.lstat()
-        if is_link_or_reparse(stat_result) or not path.is_file():
-            raise TransferServiceError("File IPC del servizio non valido.")
-        if stat_result.st_size > MAX_SERVICE_JSON_BYTES:
-            raise TransferServiceError("File IPC del servizio troppo grande.")
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except TransferServiceError:
-        raise
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
-        raise TransferServiceError(
-            f"File IPC del servizio non leggibile: {error}"
-        ) from error
+def _read_json_object(
+    path: Path,
+    *,
+    windows: bool | None = None,
+) -> dict[str, Any]:
+    if windows is None:
+        windows = os.name == "nt"
+    deadline = time.monotonic() + WINDOWS_FILE_TIMEOUT_SECONDS
+    while True:
+        try:
+            stat_result = path.lstat()
+            if is_link_or_reparse(stat_result) or not path.is_file():
+                raise TransferServiceError("File IPC del servizio non valido.")
+            if stat_result.st_size > MAX_SERVICE_JSON_BYTES:
+                raise TransferServiceError("File IPC del servizio troppo grande.")
+            data = json.loads(path.read_text(encoding="utf-8"))
+            break
+        except TransferServiceError:
+            raise
+        except PermissionError as error:
+            if windows and time.monotonic() < deadline:
+                time.sleep(WINDOWS_FILE_RETRY_SECONDS)
+                continue
+            raise TransferServiceError(
+                f"File IPC del servizio non leggibile: {error}"
+            ) from error
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            raise TransferServiceError(
+                f"File IPC del servizio non leggibile: {error}"
+            ) from error
     if not isinstance(data, dict):
         raise TransferServiceError("Il file IPC del servizio non è un oggetto JSON.")
     return data
@@ -916,7 +932,7 @@ def _replace_file_atomic(
 ) -> None:
     if windows is None:
         windows = os.name == "nt"
-    deadline = time.monotonic() + ATOMIC_REPLACE_TIMEOUT_SECONDS
+    deadline = time.monotonic() + WINDOWS_FILE_TIMEOUT_SECONDS
     while True:
         try:
             os.replace(source, destination)
@@ -926,4 +942,4 @@ def _replace_file_atomic(
             # concurrent JSON read can briefly block replacement of the file.
             if not windows or time.monotonic() >= deadline:
                 raise
-            time.sleep(ATOMIC_REPLACE_RETRY_SECONDS)
+            time.sleep(WINDOWS_FILE_RETRY_SECONDS)
