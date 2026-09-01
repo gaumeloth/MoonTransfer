@@ -6,6 +6,7 @@ import io
 import importlib.metadata
 import importlib.util
 import json
+import os
 import platform
 import re
 import shutil
@@ -44,6 +45,7 @@ CROC_BUILD_CACHE_PATHS = (
 ANDROID_DIST_DIR = ROOT / "dist" / "android"
 ANDROID_RELEASE_DIR = ROOT / "release"
 ANDROID_ARCHITECTURE = "arm64-v8a"
+CHARSET_NORMALIZER_VERSION = "3.4.9"
 MAX_PRIVATE_ARCHIVE_BYTES = 64 * 1024 * 1024
 REQUIRED_APK_MEMBERS = frozenset(
     {
@@ -292,6 +294,13 @@ def buildozer_debug_command(
     return command
 
 
+def android_build_environment() -> dict[str, str]:
+    environment = os.environ.copy()
+    # p4a strips inline versions from pure-Python requirements before install.
+    environment["VERSION_charset_normalizer"] = CHARSET_NORMALIZER_VERSION
+    return environment
+
+
 def build_debug_apk(
     *,
     version: str | None = None,
@@ -309,6 +318,7 @@ def build_debug_apk(
     result = subprocess.run(
         buildozer_debug_command(buildozer, profile=buildozer_profile),
         cwd=ANDROID_DIR,
+        env=android_build_environment(),
         check=False,
     )
     if result.returncode == 0:
