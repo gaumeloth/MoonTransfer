@@ -63,6 +63,7 @@ from moontransfer_android.storage import (
     cleanup_staged_document,
     cleanup_staged_selection,
     cleanup_staging_parent,
+    stage_directory_uri,
     stage_document_uris,
 )
 from moontransfer_android.transport import (
@@ -88,6 +89,7 @@ VIEW_IDS = (
     "transport_status",
     "probe_button",
     "select_button",
+    "select_directory_button",
     "clear_selection_button",
     "selection_list",
     "send_button",
@@ -173,6 +175,7 @@ class MoonTransferAndroidApp(App):
         self.transport_status: Label | None = None
         self.probe_button: Button | None = None
         self.select_button: Button | None = None
+        self.select_directory_button: Button | None = None
         self.clear_selection_button: Button | None = None
         self.selection_list: BoxLayout | None = None
         self.send_button: Button | None = None
@@ -265,6 +268,7 @@ class MoonTransferAndroidApp(App):
         self.transport_status = ids["transport_status"]
         self.probe_button = ids["probe_button"]
         self.select_button = ids["select_button"]
+        self.select_directory_button = ids["select_directory_button"]
         self.clear_selection_button = ids["clear_selection_button"]
         self.selection_list = ids["selection_list"]
         self.send_button = ids["send_button"]
@@ -294,6 +298,9 @@ class MoonTransferAndroidApp(App):
             on_release=lambda _button: self._switch_mode("receive")
         )
         self.select_button.bind(on_release=self._open_file_picker)
+        self.select_directory_button.bind(
+            on_release=self._open_directory_picker
+        )
         self.clear_selection_button.bind(on_release=self._clear_selection)
         self.send_button.bind(on_release=self._start_send)
         self.copy_button.bind(on_release=self._copy_code)
@@ -444,23 +451,37 @@ class MoonTransferAndroidApp(App):
         self._update_controls()
 
     def _open_file_picker(self, *_args: object) -> None:
+        self._open_source_picker(select_directory=False)
+
+    def _open_directory_picker(self, *_args: object) -> None:
+        self._open_source_picker(select_directory=True)
+
+    def _open_source_picker(self, *, select_directory: bool) -> None:
         if self._picker is None:
             self._show_error(
-                "Selezione file non disponibile",
+                "Selezione non disponibile",
                 "Il selettore documenti Android non è disponibile.",
             )
             return
+        element_label = "cartella" if select_directory else "file"
         try:
             self._picker.open(
-                on_selected=self._stage_selected_uri,
+                select_directory=select_directory,
+                on_selected=lambda uris: self._stage_selected_uri(
+                    uris,
+                    is_directory=select_directory,
+                ),
                 on_cancelled=self._selection_cancelled,
                 on_error=lambda error: self._show_error(
-                    "Selezione file non riuscita", str(error)
+                    f"Selezione {element_label} non riuscita", str(error)
                 ),
             )
             self._update_controls()
         except Exception as error:
-            self._show_error("Selezione file non riuscita", str(error))
+            self._show_error(
+                f"Selezione {element_label} non riuscita",
+                str(error),
+            )
             self._update_controls()
 
     def _selection_cancelled(self) -> None:
@@ -468,21 +489,26 @@ class MoonTransferAndroidApp(App):
             self.send_status.text = "Selezione annullata."
         self._update_controls()
 
-    def _stage_selected_uri(self, uris: tuple[Any, ...]) -> None:
+    def _stage_selected_uri(
+        self,
+        uris: tuple[Any, ...],
+        *,
+        is_directory: bool,
+    ) -> None:
         self._staging_cancel.clear()
         self._staging = True
         existing_selection = self._selected_selection
         if self.send_status is not None:
             self.send_status.text = (
-                "Aggiunta dei file nell'area privata dell'app..."
+                "Aggiunta del contenuto nell'area privata dell'app..."
                 if existing_selection is not None
-                else "Copia dei file nell'area privata dell'app..."
+                else "Copia del contenuto nell'area privata dell'app..."
             )
             self.send_status.color = TEXT_COLOR
         self._update_controls()
         Thread(
             target=self._run_staging,
-            args=(uris, existing_selection),
+            args=(uris, existing_selection, is_directory),
             daemon=True,
         ).start()
 
@@ -490,17 +516,33 @@ class MoonTransferAndroidApp(App):
         self,
         uris: tuple[Any, ...],
         existing_selection: StagedSelection | None,
+        is_directory: bool,
     ) -> None:
         try:
-            selection = stage_document_uris(
-                uris,
-                self._staging_parent,
-                existing_selection=existing_selection,
-                cancel_requested=self._staging_cancel.is_set,
-                on_progress=lambda copied, total: self._post(
-                    self._show_staging_progress, copied, total
-                ),
-            )
+            def progress(copied: int, total: int | None) -> None:
+                self._post(self._show_staging_progress, copied, total)
+
+            if is_directory:
+                if len(uris) != 1:
+                    raise AndroidStorageError(
+                        "Android non ha restituito una sola cartella."
+                    )
+                document = stage_directory_uri(
+                    uris[0],
+                    self._staging_parent,
+                    existing_selection=existing_selection,
+                    cancel_requested=self._staging_cancel.is_set,
+                    on_progress=progress,
+                )
+                selection = StagedSelection((document,))
+            else:
+                selection = stage_document_uris(
+                    uris,
+                    self._staging_parent,
+                    existing_selection=existing_selection,
+                    cancel_requested=self._staging_cancel.is_set,
+                    on_progress=progress,
+                )
         except OperationCancelled:
             self._post(self._finish_staging_cancelled)
         except Exception as error:
@@ -552,7 +594,7 @@ class MoonTransferAndroidApp(App):
             return
         self._refresh_selection_view()
         if self.send_status is not None:
-            self.send_status.text = "File pronti per la preparazione."
+            self.send_status.text = "Contenuto pronto per la preparazione."
             self.send_status.color = SUCCESS_COLOR
         self._update_controls()
 
@@ -572,7 +614,7 @@ class MoonTransferAndroidApp(App):
         self._refresh_selection_view()
         if self.send_status is not None:
             self.send_status.text = (
-                "File rimosso dalla selezione."
+                "Elemento rimosso dalla selezione."
                 if remaining is not None
                 else "Selezione svuotata."
             )
@@ -601,16 +643,27 @@ class MoonTransferAndroidApp(App):
         selection = self._selected_selection
         if selection is None:
             if self.file_status is not None:
-                self.file_status.text = "Nessun file selezionato."
+                self.file_status.text = "Nessun elemento selezionato."
                 self.file_status.color = MUTED_COLOR
             return
 
         if self.file_status is not None:
-            count_label = "1 file selezionato" if selection.count == 1 else (
-                f"{selection.count} file selezionati"
-            )
+            counts: list[str] = []
+            if selection.file_root_count:
+                counts.append(
+                    "1 file"
+                    if selection.file_root_count == 1
+                    else f"{selection.file_root_count} file"
+                )
+            if selection.directory_root_count:
+                counts.append(
+                    "1 cartella"
+                    if selection.directory_root_count == 1
+                    else f"{selection.directory_root_count} cartelle"
+                )
             self.file_status.text = (
-                f"{count_label}\n{format_file_size(selection.total_size)}"
+                f"Selezione: {', '.join(counts)}\n"
+                f"{format_file_size(selection.total_size)}"
             )
             self.file_status.color = TEXT_COLOR
 
@@ -635,7 +688,10 @@ class MoonTransferAndroidApp(App):
                 size=lambda label, size: setattr(label, "text_size", size)
             )
             size_label = Label(
-                text=format_file_size(document.size),
+                text=(
+                    "Cartella | " if document.is_directory else "File | "
+                )
+                + format_file_size(document.size),
                 color=MUTED_COLOR,
                 font_size=sp(12),
                 halign="left",
@@ -666,15 +722,15 @@ class MoonTransferAndroidApp(App):
     def _finish_staging_cancelled(self) -> None:
         self._staging = False
         if self.send_status is not None:
-            self.send_status.text = "Copia dei file interrotta."
+            self.send_status.text = "Copia del contenuto interrotta."
         self._update_controls()
 
     def _finish_staging_error(self, message: str) -> None:
         self._staging = False
         if self.send_status is not None:
-            self.send_status.text = "Impossibile preparare i file selezionati."
+            self.send_status.text = "Impossibile preparare il contenuto selezionato."
             self.send_status.color = ERROR_COLOR
-        self._show_error("Preparazione file non riuscita", message)
+        self._show_error("Preparazione contenuto non riuscita", message)
         self._update_controls()
 
     def _start_send(self, *_args: object) -> None:
@@ -742,11 +798,18 @@ class MoonTransferAndroidApp(App):
         code_changed = self._code != code
         self._code = code
         if self.file_status is not None:
-            payload_label = (
-                proposal.filename
-                if proposal.is_single_file
-                else f"{proposal.file_count} file in invio"
-            )
+            if proposal.is_single_file:
+                payload_label = proposal.filename
+            else:
+                counts = [f"{proposal.file_count} file"]
+                if proposal.directory_count:
+                    directory_label = (
+                        "1 cartella"
+                        if proposal.directory_count == 1
+                        else f"{proposal.directory_count} cartelle"
+                    )
+                    counts.append(directory_label)
+                payload_label = " | ".join(counts) + " in invio"
             self.file_status.text = (
                 f"{payload_label}\n{format_file_size(proposal.size)}"
             )
@@ -1394,6 +1457,8 @@ class MoonTransferAndroidApp(App):
         controls = self._derive_controls()
         if self.select_button is not None:
             self.select_button.disabled = not controls.select_file
+        if self.select_directory_button is not None:
+            self.select_directory_button.disabled = not controls.select_file
         if self.clear_selection_button is not None:
             self.clear_selection_button.disabled = not controls.manage_selection
         for button in self._selection_remove_buttons:

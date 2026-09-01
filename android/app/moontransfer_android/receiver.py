@@ -152,7 +152,7 @@ class AndroidReceiveController:
     def save_to_uri(self, uri: Any) -> None:
         with self._lock:
             if self.state != AndroidReceiveState.AWAITING_SAVE:
-                raise RuntimeError("Nessun file verificato da salvare.")
+                raise RuntimeError("Nessun contenuto verificato da salvare.")
             session = self.session
             if session is None:
                 raise RuntimeError("Sessione di ricezione non disponibile.")
@@ -192,55 +192,41 @@ class AndroidReceiveController:
             self._prepare_session(session)
             self._receive_metadata(session)
             proposal = self._require_proposal(session)
-
-            if proposal.directory_count:
-                self.callbacks.on_proposal(proposal)
-                self.callbacks.on_status(
-                    "Il mittente ha proposto cartelle non ancora supportate "
-                    "su Android. Comunico il rifiuto."
-                )
+            self._set_state(AndroidReceiveState.AWAITING_DECISION)
+            self.callbacks.on_proposal(proposal)
+            self.callbacks.on_status(
+                "Controlla le informazioni e scegli se ricevere il contenuto."
+            )
+            accepted = self._wait_for_decision(session)
+            if not accepted:
                 self._receive_main_response(session, accepted=False)
                 terminal_state = AndroidReceiveState.REJECTED
                 terminal_message = (
-                    "Trasferimento rifiutato: le cartelle non sono ancora "
-                    "supportate su Android."
+                    "Trasferimento rifiutato automaticamente per timeout."
+                    if session.decision_expired
+                    else "Trasferimento rifiutato."
                 )
             else:
-                self._set_state(AndroidReceiveState.AWAITING_DECISION)
-                self.callbacks.on_proposal(proposal)
-                self.callbacks.on_status(
-                    "Controlla le informazioni e scegli se ricevere i file."
-                )
-                accepted = self._wait_for_decision(session)
-                if not accepted:
+                try:
+                    self._ensure_private_capacity(session)
+                except OSError as error:
+                    self.callbacks.on_status(
+                        "Spazio privato insufficiente. Comunico il "
+                        "rifiuto al mittente."
+                    )
                     self._receive_main_response(session, accepted=False)
                     terminal_state = AndroidReceiveState.REJECTED
                     terminal_message = (
-                        "Trasferimento rifiutato automaticamente per timeout."
-                        if session.decision_expired
-                        else "Trasferimento rifiutato."
+                        "Trasferimento rifiutato: spazio insufficiente "
+                        f"sul dispositivo ({error})."
                     )
                 else:
-                    try:
-                        self._ensure_private_capacity(session)
-                    except OSError as error:
-                        self.callbacks.on_status(
-                            "Spazio privato insufficiente. Comunico il "
-                            "rifiuto al mittente."
-                        )
-                        self._receive_main_response(session, accepted=False)
-                        terminal_state = AndroidReceiveState.REJECTED
-                        terminal_message = (
-                            "Trasferimento rifiutato: spazio insufficiente "
-                            f"sul dispositivo ({error})."
-                        )
-                    else:
-                        self._receive_main_response(session, accepted=True)
-                        self._verify_received_payload(session)
-                        self._wait_for_save_destination(session)
-                        self._save_received_payload(session)
-                        terminal_state = AndroidReceiveState.COMPLETED
-                        terminal_message = "Ricezione e salvataggio completati."
+                    self._receive_main_response(session, accepted=True)
+                    self._verify_received_payload(session)
+                    self._wait_for_save_destination(session)
+                    self._save_received_payload(session)
+                    terminal_state = AndroidReceiveState.COMPLETED
+                    terminal_message = "Ricezione e salvataggio completati."
         except OperationCancelled:
             terminal_state = AndroidReceiveState.CANCELLED
             terminal_message = "Ricezione interrotta."

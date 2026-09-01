@@ -264,6 +264,50 @@ class AndroidSendControllerTests(unittest.TestCase):
             self.assertFalse(first_dir.exists())
             self.assertFalse(second_dir.exists())
 
+    def test_successful_send_publishes_staged_directory_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            staging_dir = root / "staging" / "directory"
+            directory = staging_dir / "Project"
+            nested = directory / "nested"
+            empty = directory / "empty"
+            nested.mkdir(parents=True)
+            empty.mkdir()
+            (directory / "README.txt").write_bytes(b"readme")
+            (nested / "data.bin").write_bytes(b"data")
+            document = StagedDocument(
+                path=directory,
+                staging_dir=staging_dir,
+                filename=directory.name,
+                size=10,
+                is_directory=True,
+            )
+            runner = _FakeRunner()
+            finished: list[AndroidSendState] = []
+            controller = AndroidSendController(
+                metadata_runner=runner,  # type: ignore[arg-type]
+                main_runner=runner,  # type: ignore[arg-type]
+                sessions_parent=root / "sessions",
+                callbacks=AndroidSendCallbacks(
+                    on_finished=lambda state, _message: finished.append(state)
+                ),
+            )
+
+            controller.start(document)
+            self.assertTrue(controller.wait(5))
+
+            self.assertEqual(finished, [AndroidSendState.COMPLETED])
+            assert runner.metadata is not None
+            self.assertEqual(runner.metadata["roots"], ["Project"])
+            self.assertEqual(runner.metadata["file_count"], 2)
+            self.assertEqual(runner.metadata["directory_count"], 3)
+            self.assertEqual(runner.metadata["total_size"], 10)
+            self.assertEqual(
+                runner.calls[0]["args"][-1],
+                str(directory.resolve(strict=False)),
+            )
+            self.assertFalse(staging_dir.exists())
+
     def test_receiver_rejection_is_reported_as_terminal_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

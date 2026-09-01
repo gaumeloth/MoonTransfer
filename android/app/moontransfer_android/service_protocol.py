@@ -13,7 +13,7 @@ from pathlib import Path, PurePosixPath
 from threading import Lock
 from typing import Any
 
-from moontransfer.files import is_link_or_reparse
+from moontransfer.files import directory_payload_size, is_link_or_reparse
 from moontransfer.progress import TransferProgressSample
 from moontransfer.protocol import (
     MAX_PAYLOAD_ROOTS,
@@ -63,6 +63,7 @@ class StagedFileReference:
     staging_dir: str
     filename: str
     size: int
+    is_directory: bool = False
 
 
 @dataclass(frozen=True)
@@ -145,6 +146,7 @@ def create_send_service_request(
             ),
             filename=validate_filename(document.filename),
             size=_validate_size(document.size),
+            is_directory=document.is_directory,
         )
         for document in selection.documents
     )
@@ -207,9 +209,9 @@ def read_service_request(
     filename = data.get("filename")
     size = data.get("size")
     if not isinstance(filename, str):
-        raise TransferServiceError("Nome del file da inviare mancante.")
+        raise TransferServiceError("Nome del contenuto da inviare mancante.")
     if not isinstance(size, int) or isinstance(size, bool):
-        raise TransferServiceError("Dimensione del file da inviare non valida.")
+        raise TransferServiceError("Dimensione del contenuto da inviare non valida.")
 
     validated_filename = validate_filename(filename)
     validated_size = _validate_size(size)
@@ -223,6 +225,7 @@ def read_service_request(
                 staging_dir=staging_dir,
                 filename=validated_filename,
                 size=validated_size,
+                is_directory=False,
             ),
         )
     else:
@@ -232,11 +235,11 @@ def read_service_request(
         )
         if validated_filename != expected_filename:
             raise TransferServiceError(
-                "Riepilogo dei file staged non coerente."
+                "Riepilogo degli elementi staged non coerente."
             )
         if validated_size != sum(document.size for document in documents):
             raise TransferServiceError(
-                "Dimensione totale dei file staged non coerente."
+                "Dimensione totale degli elementi staged non coerente."
             )
         document_path = (
             documents[0].document_path if len(documents) == 1 else None
@@ -264,7 +267,7 @@ def staged_document_from_request(
     selection = staged_selection_from_request(cache_root, request)
     if selection.count != 1:
         raise TransferServiceError(
-            "La richiesta contiene più di un file staged."
+            "La richiesta contiene più di un elemento staged."
         )
     return selection.documents[0]
 
@@ -274,7 +277,7 @@ def staged_selection_from_request(
     request: TransferServiceRequest,
 ) -> StagedSelection:
     if request.operation is not TransferServiceOperation.SEND:
-        raise TransferServiceError("La richiesta non contiene file da inviare.")
+        raise TransferServiceError("La richiesta non contiene elementi da inviare.")
     references = request.documents
     if not references:
         if (
@@ -290,6 +293,7 @@ def staged_selection_from_request(
                 staging_dir=request.staging_dir,
                 filename=request.filename,
                 size=request.size,
+                is_directory=False,
             ),
         )
     documents = tuple(
@@ -301,7 +305,7 @@ def staged_selection_from_request(
     )
     if len(set(name_keys)) != len(name_keys):
         raise TransferServiceError(
-            "I file staged hanno nomi incompatibili o duplicati."
+            "Gli elementi staged hanno nomi incompatibili o duplicati."
         )
     return StagedSelection(documents)
 
@@ -317,22 +321,31 @@ def _staged_document_from_reference(
     document = _resolve_private_path(cache_root, reference.document_path)
     staging = _resolve_private_path(cache_root, reference.staging_dir)
     if document.parent != staging:
-        raise TransferServiceError("Percorso di staging del file non coerente.")
+        raise TransferServiceError("Percorso di staging dell'elemento non coerente.")
     if document.name != filename:
         raise TransferServiceError("Nome del file in staging non coerente.")
     staging_stat = staging.lstat()
     if is_link_or_reparse(staging_stat) or not staging.is_dir():
         raise TransferServiceError("Directory di staging non valida.")
     document_stat = document.lstat()
-    if is_link_or_reparse(document_stat) or not document.is_file():
-        raise TransferServiceError("Il file in staging non è regolare.")
-    if document_stat.st_size != size:
-        raise TransferServiceError("Il file in staging è cambiato.")
+    if is_link_or_reparse(document_stat):
+        raise TransferServiceError("L'elemento in staging non è regolare.")
+    if reference.is_directory:
+        if not document.is_dir():
+            raise TransferServiceError("La cartella in staging non è regolare.")
+        actual_size = directory_payload_size(document)
+    else:
+        if not document.is_file():
+            raise TransferServiceError("Il file in staging non è regolare.")
+        actual_size = document_stat.st_size
+    if actual_size != size:
+        raise TransferServiceError("L'elemento in staging è cambiato.")
     return StagedDocument(
         path=document,
         staging_dir=staging,
         filename=filename,
         size=size,
+        is_directory=reference.is_directory,
     )
 
 
@@ -623,7 +636,7 @@ def _relative_private_path(cache_root: Path, path: Path) -> str:
         )
     except (OSError, ValueError) as error:
         raise TransferServiceError(
-            "Il file selezionato non appartiene alla cache privata."
+            "L'elemento selezionato non appartiene alla cache privata."
         ) from error
     return _read_relative_private_path(relative.as_posix())
 
@@ -667,18 +680,23 @@ def _read_staged_file_references(
         or not value
         or len(value) > MAX_PAYLOAD_ROOTS
     ):
-        raise TransferServiceError("Elenco dei file staged non valido.")
+        raise TransferServiceError("Elenco degli elementi staged non valido.")
     references: list[StagedFileReference] = []
     for item in value:
         if not isinstance(item, dict):
-            raise TransferServiceError("Riferimento a file staged non valido.")
+            raise TransferServiceError("Riferimento a elemento staged non valido.")
         filename = item.get("filename")
         size = item.get("size")
+        is_directory = item.get("is_directory", False)
         if not isinstance(filename, str):
-            raise TransferServiceError("Nome del file staged non valido.")
+            raise TransferServiceError("Nome dell'elemento staged non valido.")
         if not isinstance(size, int) or isinstance(size, bool):
             raise TransferServiceError(
-                "Dimensione del file staged non valida."
+                "Dimensione dell'elemento staged non valida."
+            )
+        if not isinstance(is_directory, bool):
+            raise TransferServiceError(
+                "Tipo dell'elemento staged non valido."
             )
         references.append(
             StagedFileReference(
@@ -690,6 +708,7 @@ def _read_staged_file_references(
                 ),
                 filename=validate_filename(filename),
                 size=_validate_size(size),
+                is_directory=is_directory,
             )
         )
     name_keys = tuple(

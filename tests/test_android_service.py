@@ -370,6 +370,36 @@ class AndroidServiceProtocolTests(unittest.TestCase):
                 tuple(path.resolve(strict=True) for path in selection.root_paths),
             )
 
+    def test_send_request_round_trips_private_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_root = Path(tmp) / "cache"
+            staging_dir = cache_root / "staging" / "directory"
+            directory = staging_dir / "Project"
+            nested = directory / "nested"
+            nested.mkdir(parents=True)
+            (directory / "README.txt").write_bytes(b"readme")
+            (nested / "data.bin").write_bytes(b"data")
+            document = StagedDocument(
+                path=directory,
+                staging_dir=staging_dir,
+                filename="Project",
+                size=10,
+                is_directory=True,
+            )
+
+            created = create_send_service_request(cache_root, document)
+            restored = read_service_request(cache_root, created.session_id)
+            restored_document = staged_document_from_request(cache_root, restored)
+
+            self.assertEqual(len(restored.documents), 1)
+            self.assertTrue(restored.documents[0].is_directory)
+            self.assertTrue(restored_document.is_directory)
+            self.assertEqual(
+                restored_document.path,
+                directory.resolve(strict=True),
+            )
+            self.assertEqual(restored_document.size, 10)
+
     def test_multi_file_proposal_summary_survives_service_state_round_trip(
         self,
     ) -> None:
