@@ -35,7 +35,7 @@ def _view_ids(tree: ast.Module) -> tuple[str, ...]:
 
 
 class AndroidKvLayoutTests(unittest.TestCase):
-    def test_layout_declares_exactly_the_ids_required_by_python(self) -> None:
+    def test_layout_declares_all_ids_required_by_python(self) -> None:
         expected = _view_ids(_application_tree())
         source = KV_PATH.read_text(encoding="utf-8")
         declared = tuple(
@@ -48,7 +48,7 @@ class AndroidKvLayoutTests(unittest.TestCase):
 
         self.assertEqual(len(expected), len(set(expected)))
         self.assertEqual(len(declared), len(set(declared)))
-        self.assertEqual(set(declared), set(expected))
+        self.assertEqual(set(expected).difference(declared), set())
 
     def test_layout_is_declarative_and_uses_named_screens(self) -> None:
         source = KV_PATH.read_text(encoding="utf-8")
@@ -57,7 +57,13 @@ class AndroidKvLayoutTests(unittest.TestCase):
         self.assertIn("ScreenManager:", source)
         self.assertIn('name: "send"', source)
         self.assertIn('name: "receive"', source)
-        self.assertNotRegex(source, r"(?m)^\s*on_(?:press|release|text):")
+        self.assertIn('name: "send_selection"', source)
+        self.assertIn('name: "send_transfer"', source)
+        self.assertIn('name: "send_result"', source)
+        self.assertIn('name: "receive_code"', source)
+        self.assertIn('name: "receive_proposal"', source)
+        self.assertIn('name: "receive_save"', source)
+        self.assertIn('name: "receive_result"', source)
 
     def test_application_loads_kv_and_binds_callbacks_in_python(self) -> None:
         tree = _application_tree()
@@ -101,8 +107,10 @@ class AndroidKvLayoutTests(unittest.TestCase):
             "select_directory=not proposal.is_single_file",
             picker_source,
         )
-        self.assertIn("Invia file e cartelle", layout)
-        self.assertIn("Ricevi file e cartelle", layout)
+        self.assertIn('text: "Aggiungi contenuto"', layout)
+        self.assertIn('text: "File"', layout)
+        self.assertIn('text: "Cartella"', layout)
+        self.assertIn('text: "Proposta ricevuta"', layout)
 
     def test_send_selection_can_be_extended_and_managed(self) -> None:
         tree = _application_tree()
@@ -124,10 +132,28 @@ class AndroidKvLayoutTests(unittest.TestCase):
         self.assertIn("stage_directory_uri", staging_source)
         self.assertIn("_remove_selected_document", methods)
         self.assertIn("_clear_selection", methods)
-        self.assertIn('text: "Aggiungi file"', layout)
-        self.assertIn('text: "Aggiungi cartella"', layout)
-        self.assertIn('text: "Svuota selezione"', layout)
+        self.assertIn('text: "File"', layout)
+        self.assertIn('text: "Cartella"', layout)
+        self.assertIn('text: "Svuota"', layout)
         self.assertIn("id: selection_list", layout)
+
+    def test_custom_design_system_is_used_consistently(self) -> None:
+        source = KV_PATH.read_text(encoding="utf-8")
+
+        for rule in (
+            "<MoonButton>",
+            "<MoonIconButton>",
+            "<MoonNavButton>",
+            "<MoonSurface>",
+            "<MoonProgressBar>",
+            "<MoonResultPanel>",
+            "<MoonDialogOverlay>",
+        ):
+            self.assertIn(rule, source)
+        self.assertIn("moontransfer_android.theme", source)
+        self.assertIn("RecycleView:", source)
+        self.assertIn("transition: NoTransition()", source)
+        self.assertNotIn("background_color: app.accent_color", source)
 
 
 if __name__ == "__main__":

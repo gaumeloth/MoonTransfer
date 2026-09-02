@@ -5,20 +5,15 @@ from pathlib import Path
 from threading import Event, Thread
 from typing import Any
 
+from kivy.animation import Animation
 from kivy.app import App
 from kivy.clock import Clock
 from kivy.core.clipboard import Clipboard
 from kivy.core.window import Window
 from kivy.lang import Builder
-from kivy.metrics import dp, sp
-from kivy.properties import ListProperty, NumericProperty
-from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.button import Button
-from kivy.uix.label import Label
-from kivy.uix.popup import Popup
-from kivy.uix.progressbar import ProgressBar
+from kivy.metrics import dp
+from kivy.uix.recycleview import RecycleView
 from kivy.uix.screenmanager import ScreenManager
-from kivy.uix.textinput import TextInput
 from kivy.utils import platform
 
 from moontransfer.cancellation import OperationCancelled
@@ -70,24 +65,46 @@ from moontransfer_android.transport import (
     CrocProbeError,
     probe_croc,
 )
+from moontransfer_android import theme
+from moontransfer_android.ui_state import (
+    receive_result_tone,
+    receive_view_stage,
+    send_result_tone,
+    send_view_stage,
+)
+from moontransfer_android.widgets import (
+    MoonButton,
+    MoonDialogOverlay,
+    MoonIconButton,
+    MoonMetric,
+    MoonNavButton,
+    MoonProgressBar,
+    MoonResultPanel,
+    MoonSnackbar,
+    MoonTextInput,
+    MoonTransferRoot,
+    MoonWrappedLabel,
+)
 
 
-TEXT_COLOR = (0.96, 0.96, 0.97, 1)
-MUTED_COLOR = (0.71, 0.73, 0.78, 1)
-SUCCESS_COLOR = (0.40, 0.82, 0.57, 1)
-ERROR_COLOR = (0.95, 0.45, 0.45, 1)
-ACCENT_COLOR = (0.20, 0.52, 0.88, 1)
-SECONDARY_COLOR = (0.20, 0.22, 0.27, 1)
-DESTRUCTIVE_COLOR = (0.67, 0.20, 0.24, 1)
-CONFIRM_COLOR = (0.18, 0.50, 0.31, 1)
+TEXT_COLOR = theme.TEXT
+MUTED_COLOR = theme.TEXT_MUTED
+SUCCESS_COLOR = theme.SUCCESS
+ERROR_COLOR = theme.ERROR
+ACCENT_COLOR = theme.PRIMARY
+SECONDARY_COLOR = theme.SURFACE_STRONG
+DESTRUCTIVE_COLOR = theme.ERROR_SOFT
+CONFIRM_COLOR = theme.SUCCESS_SOFT
 KV_PATH = Path(__file__).with_name("moontransfer.kv")
 VIEW_IDS = (
     "build_info_button",
     "send_mode_button",
     "receive_mode_button",
     "view_manager",
+    "transport_panel",
     "transport_status",
     "probe_button",
+    "send_stage_manager",
     "select_button",
     "select_directory_button",
     "clear_selection_button",
@@ -100,8 +117,22 @@ VIEW_IDS = (
     "code_input",
     "progress_bar",
     "progress_details",
+    "send_waiting_title",
+    "send_payload_summary",
+    "send_transfer_summary",
+    "send_percent",
+    "send_speed_metric",
+    "send_remaining_metric",
+    "send_elapsed_metric",
+    "send_transferred_metric",
+    "transfer_cancel_button",
+    "send_result_panel",
+    "send_reset_button",
+    "receive_stage_manager",
     "receive_code_input",
+    "receive_paste_button",
     "receive_start_button",
+    "receive_loading_cancel_button",
     "receive_proposal",
     "receive_accept_button",
     "receive_reject_button",
@@ -109,47 +140,21 @@ VIEW_IDS = (
     "receive_cancel_button",
     "receive_progress_bar",
     "receive_progress_details",
+    "receive_transfer_summary",
+    "receive_percent",
+    "receive_speed_metric",
+    "receive_remaining_metric",
+    "receive_elapsed_metric",
+    "receive_transferred_metric",
+    "receive_save_summary",
+    "receive_save_progress_bar",
+    "receive_save_progress_details",
+    "receive_save_cancel_button",
+    "receive_result_panel",
+    "receive_reset_button",
     "receive_status",
+    "snackbar",
 )
-
-
-class MoonWrappedLabel(Label):
-    minimum_height = NumericProperty(dp(34))
-    label_color = ListProperty(MUTED_COLOR)
-
-
-class MoonActionButton(Button):
-    button_color = ListProperty(ACCENT_COLOR)
-
-
-class MoonTransferRoot(BoxLayout):
-    pass
-
-
-def _wrapped_label(
-    text: str,
-    *,
-    font_size: float = 14,
-    color: tuple[float, float, float, float] = MUTED_COLOR,
-    minimum_height: float = 34,
-) -> Label:
-    return MoonWrappedLabel(
-        text=text,
-        label_color=color,
-        font_size=sp(font_size),
-        minimum_height=dp(minimum_height),
-    )
-
-
-def _button(
-    text: str,
-    *,
-    color: tuple[float, float, float, float] = ACCENT_COLOR,
-) -> Button:
-    return MoonActionButton(
-        text=text,
-        button_color=color,
-    )
 
 
 class MoonTransferAndroidApp(App):
@@ -172,39 +177,65 @@ class MoonTransferAndroidApp(App):
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
-        self.transport_status: Label | None = None
-        self.probe_button: Button | None = None
-        self.select_button: Button | None = None
-        self.select_directory_button: Button | None = None
-        self.clear_selection_button: Button | None = None
-        self.selection_list: BoxLayout | None = None
-        self.send_button: Button | None = None
-        self.cancel_button: Button | None = None
-        self.copy_button: Button | None = None
-        self.file_status: Label | None = None
-        self.send_status: Label | None = None
-        self.code_input: TextInput | None = None
-        self.progress_bar: ProgressBar | None = None
-        self.progress_details: Label | None = None
+        self.transport_panel: Any = None
+        self.transport_status: MoonWrappedLabel | None = None
+        self.probe_button: MoonButton | None = None
+        self.select_button: MoonButton | None = None
+        self.select_directory_button: MoonButton | None = None
+        self.clear_selection_button: MoonButton | None = None
+        self.selection_list: RecycleView | None = None
+        self.send_button: MoonButton | None = None
+        self.cancel_button: MoonButton | None = None
+        self.transfer_cancel_button: MoonButton | None = None
+        self.copy_button: MoonIconButton | None = None
+        self.file_status: MoonWrappedLabel | None = None
+        self.send_status: MoonWrappedLabel | None = None
+        self.code_input: MoonTextInput | None = None
+        self.progress_bar: MoonProgressBar | None = None
+        self.progress_details: MoonWrappedLabel | None = None
+        self.send_waiting_title: MoonWrappedLabel | None = None
+        self.send_payload_summary: MoonWrappedLabel | None = None
+        self.send_transfer_summary: MoonWrappedLabel | None = None
+        self.send_percent: MoonWrappedLabel | None = None
+        self.send_speed_metric: MoonMetric | None = None
+        self.send_remaining_metric: MoonMetric | None = None
+        self.send_elapsed_metric: MoonMetric | None = None
+        self.send_transferred_metric: MoonMetric | None = None
+        self.send_result_panel: MoonResultPanel | None = None
+        self.send_reset_button: MoonButton | None = None
 
-        self.receive_code_input: TextInput | None = None
-        self.receive_start_button: Button | None = None
-        self.receive_proposal: Label | None = None
-        self.receive_accept_button: Button | None = None
-        self.receive_reject_button: Button | None = None
-        self.receive_save_button: Button | None = None
-        self.receive_cancel_button: Button | None = None
-        self.receive_progress_bar: ProgressBar | None = None
-        self.receive_progress_details: Label | None = None
-        self.receive_status: Label | None = None
-        self.send_mode_button: Button | None = None
-        self.receive_mode_button: Button | None = None
-        self.build_info_button: Button | None = None
+        self.receive_code_input: MoonTextInput | None = None
+        self.receive_paste_button: MoonIconButton | None = None
+        self.receive_start_button: MoonButton | None = None
+        self.receive_loading_cancel_button: MoonButton | None = None
+        self.receive_proposal: MoonWrappedLabel | None = None
+        self.receive_accept_button: MoonButton | None = None
+        self.receive_reject_button: MoonButton | None = None
+        self.receive_save_button: MoonButton | None = None
+        self.receive_cancel_button: MoonButton | None = None
+        self.receive_progress_bar: MoonProgressBar | None = None
+        self.receive_progress_details: MoonWrappedLabel | None = None
+        self.receive_transfer_summary: MoonWrappedLabel | None = None
+        self.receive_percent: MoonWrappedLabel | None = None
+        self.receive_speed_metric: MoonMetric | None = None
+        self.receive_remaining_metric: MoonMetric | None = None
+        self.receive_elapsed_metric: MoonMetric | None = None
+        self.receive_transferred_metric: MoonMetric | None = None
+        self.receive_save_summary: MoonWrappedLabel | None = None
+        self.receive_save_progress_bar: MoonProgressBar | None = None
+        self.receive_save_progress_details: MoonWrappedLabel | None = None
+        self.receive_save_cancel_button: MoonButton | None = None
+        self.receive_result_panel: MoonResultPanel | None = None
+        self.receive_reset_button: MoonButton | None = None
+        self.receive_status: MoonWrappedLabel | None = None
+        self.send_mode_button: MoonNavButton | None = None
+        self.receive_mode_button: MoonNavButton | None = None
+        self.build_info_button: MoonIconButton | None = None
+        self.snackbar: MoonSnackbar | None = None
 
         self._picker: AndroidFilePicker | None = None
         self._save_picker: AndroidSavePicker | None = None
         self._selected_selection: StagedSelection | None = None
-        self._selection_remove_buttons: list[Button] = []
         self._service_client: TransferServiceClient | None = None
         self._service_heartbeat = TransferServiceHeartbeatMonitor()
         self._service_revision = -1
@@ -226,7 +257,11 @@ class MoonTransferAndroidApp(App):
         self._transfer_started_at: float | None = None
         self._receive_started_at: float | None = None
         self._view_manager: ScreenManager | None = None
+        self._send_stage_manager: ScreenManager | None = None
+        self._receive_stage_manager: ScreenManager | None = None
         self._service_poll_event: Any = None
+        self._snackbar_event: Any = None
+        self._dialog_overlay: MoonDialogOverlay | None = None
 
     @property
     def _cache_root(self) -> Path:
@@ -241,7 +276,7 @@ class MoonTransferAndroidApp(App):
         return self._cache_root / "sessions"
 
     def build(self) -> MoonTransferRoot:
-        Window.clearcolor = (0.055, 0.059, 0.071, 1)
+        Window.clearcolor = theme.BACKGROUND
         root = Builder.load_file(str(KV_PATH))
         if not isinstance(root, MoonTransferRoot):
             raise RuntimeError(
@@ -249,6 +284,7 @@ class MoonTransferAndroidApp(App):
             )
         self._bind_view(root)
         self._switch_mode("send")
+        self._update_stage_views()
         self._update_controls()
         return root
 
@@ -265,8 +301,10 @@ class MoonTransferAndroidApp(App):
         self.send_mode_button = ids["send_mode_button"]
         self.receive_mode_button = ids["receive_mode_button"]
         self._view_manager = ids["view_manager"]
+        self.transport_panel = ids["transport_panel"]
         self.transport_status = ids["transport_status"]
         self.probe_button = ids["probe_button"]
+        self._send_stage_manager = ids["send_stage_manager"]
         self.select_button = ids["select_button"]
         self.select_directory_button = ids["select_directory_button"]
         self.clear_selection_button = ids["clear_selection_button"]
@@ -279,8 +317,22 @@ class MoonTransferAndroidApp(App):
         self.code_input = ids["code_input"]
         self.progress_bar = ids["progress_bar"]
         self.progress_details = ids["progress_details"]
+        self.send_waiting_title = ids["send_waiting_title"]
+        self.send_payload_summary = ids["send_payload_summary"]
+        self.send_transfer_summary = ids["send_transfer_summary"]
+        self.send_percent = ids["send_percent"]
+        self.send_speed_metric = ids["send_speed_metric"]
+        self.send_remaining_metric = ids["send_remaining_metric"]
+        self.send_elapsed_metric = ids["send_elapsed_metric"]
+        self.send_transferred_metric = ids["send_transferred_metric"]
+        self.transfer_cancel_button = ids["transfer_cancel_button"]
+        self.send_result_panel = ids["send_result_panel"]
+        self.send_reset_button = ids["send_reset_button"]
+        self._receive_stage_manager = ids["receive_stage_manager"]
         self.receive_code_input = ids["receive_code_input"]
+        self.receive_paste_button = ids["receive_paste_button"]
         self.receive_start_button = ids["receive_start_button"]
+        self.receive_loading_cancel_button = ids["receive_loading_cancel_button"]
         self.receive_proposal = ids["receive_proposal"]
         self.receive_accept_button = ids["receive_accept_button"]
         self.receive_reject_button = ids["receive_reject_button"]
@@ -288,7 +340,20 @@ class MoonTransferAndroidApp(App):
         self.receive_cancel_button = ids["receive_cancel_button"]
         self.receive_progress_bar = ids["receive_progress_bar"]
         self.receive_progress_details = ids["receive_progress_details"]
+        self.receive_transfer_summary = ids["receive_transfer_summary"]
+        self.receive_percent = ids["receive_percent"]
+        self.receive_speed_metric = ids["receive_speed_metric"]
+        self.receive_remaining_metric = ids["receive_remaining_metric"]
+        self.receive_elapsed_metric = ids["receive_elapsed_metric"]
+        self.receive_transferred_metric = ids["receive_transferred_metric"]
+        self.receive_save_summary = ids["receive_save_summary"]
+        self.receive_save_progress_bar = ids["receive_save_progress_bar"]
+        self.receive_save_progress_details = ids["receive_save_progress_details"]
+        self.receive_save_cancel_button = ids["receive_save_cancel_button"]
+        self.receive_result_panel = ids["receive_result_panel"]
+        self.receive_reset_button = ids["receive_reset_button"]
         self.receive_status = ids["receive_status"]
+        self.snackbar = ids["snackbar"]
 
         self.build_info_button.bind(on_release=self._show_build_info)
         self.send_mode_button.bind(
@@ -305,15 +370,21 @@ class MoonTransferAndroidApp(App):
         self.send_button.bind(on_release=self._start_send)
         self.copy_button.bind(on_release=self._copy_code)
         self.cancel_button.bind(on_release=self._cancel_send)
+        self.transfer_cancel_button.bind(on_release=self._cancel_send)
+        self.send_reset_button.bind(on_release=self._reset_send_view)
         self.probe_button.bind(on_release=self._start_transport_probe)
         self.receive_code_input.bind(
             text=lambda _widget, _value: self._update_controls()
         )
+        self.receive_paste_button.bind(on_release=self._paste_receive_code)
         self.receive_start_button.bind(on_release=self._start_receive)
+        self.receive_loading_cancel_button.bind(on_release=self._cancel_receive)
         self.receive_reject_button.bind(on_release=self._reject_receive)
         self.receive_accept_button.bind(on_release=self._accept_receive)
         self.receive_save_button.bind(on_release=self._open_save_picker)
         self.receive_cancel_button.bind(on_release=self._cancel_receive)
+        self.receive_save_cancel_button.bind(on_release=self._cancel_receive)
+        self.receive_reset_button.bind(on_release=self._reset_receive_view)
         self._refresh_selection_view()
 
     def _switch_mode(self, mode: str) -> None:
@@ -322,13 +393,19 @@ class MoonTransferAndroidApp(App):
             return
         manager.current = mode
         if self.send_mode_button is not None:
-            self.send_mode_button.button_color = (
-                ACCENT_COLOR if mode == "send" else SECONDARY_COLOR
-            )
+            self.send_mode_button.selected = mode == "send"
         if self.receive_mode_button is not None:
-            self.receive_mode_button.button_color = (
-                ACCENT_COLOR if mode == "receive" else SECONDARY_COLOR
-            )
+            self.receive_mode_button.selected = mode == "receive"
+
+    def _update_stage_views(self) -> None:
+        if self._send_stage_manager is not None:
+            self._send_stage_manager.current = send_view_stage(
+                self._send_state
+            ).value
+        if self._receive_stage_manager is not None:
+            self._receive_stage_manager.current = receive_view_stage(
+                self._receive_state
+            ).value
 
     def on_start(self) -> None:
         if platform != "android":
@@ -408,9 +485,10 @@ class MoonTransferAndroidApp(App):
             return
         self._probing = True
         self._transport_executable = None
+        self._set_transport_panel_visible(True)
         if self.transport_status is not None:
             self.transport_status.text = "Trasporto croc: verifica in corso..."
-            self.transport_status.color = MUTED_COLOR
+            self.transport_status.label_color = theme.WARNING
         self._update_controls()
         Thread(target=self._run_transport_probe, daemon=True).start()
 
@@ -436,7 +514,12 @@ class MoonTransferAndroidApp(App):
         self._transport_executable = executable
         if self.transport_status is not None:
             self.transport_status.text = message
-            self.transport_status.color = SUCCESS_COLOR if success else ERROR_COLOR
+            self.transport_status.label_color = (
+                SUCCESS_COLOR if success else ERROR_COLOR
+            )
+        self._set_transport_panel_visible(not success)
+        if success:
+            self._show_snackbar("Trasporto croc pronto")
         if (
             self.receive_status is not None
             and self._service_client is None
@@ -447,8 +530,22 @@ class MoonTransferAndroidApp(App):
                 if success
                 else message
             )
-            self.receive_status.color = SUCCESS_COLOR if success else ERROR_COLOR
+            self.receive_status.label_color = (
+                SUCCESS_COLOR if success else ERROR_COLOR
+            )
         self._update_controls()
+
+    def _set_transport_panel_visible(self, visible: bool) -> None:
+        panel = self.transport_panel
+        if panel is None:
+            return
+        Animation.cancel_all(panel, "height", "opacity")
+        panel.disabled = not visible
+        Animation(
+            height=dp(58) if visible else 0,
+            opacity=1 if visible else 0,
+            duration=0.16,
+        ).start(panel)
 
     def _open_file_picker(self, *_args: object) -> None:
         self._open_source_picker(select_directory=False)
@@ -504,7 +601,7 @@ class MoonTransferAndroidApp(App):
                 if existing_selection is not None
                 else "Copia del contenuto nell'area privata dell'app..."
             )
-            self.send_status.color = TEXT_COLOR
+            self.send_status.label_color = TEXT_COLOR
         self._update_controls()
         Thread(
             target=self._run_staging,
@@ -595,7 +692,7 @@ class MoonTransferAndroidApp(App):
         self._refresh_selection_view()
         if self.send_status is not None:
             self.send_status.text = "Contenuto pronto per la preparazione."
-            self.send_status.color = SUCCESS_COLOR
+            self.send_status.label_color = SUCCESS_COLOR
         self._update_controls()
 
     def _remove_selected_document(self, index: int) -> None:
@@ -618,7 +715,7 @@ class MoonTransferAndroidApp(App):
                 if remaining is not None
                 else "Selezione svuotata."
             )
-            self.send_status.color = MUTED_COLOR
+            self.send_status.label_color = MUTED_COLOR
         self._update_controls()
 
     def _clear_selection(self, *_args: object) -> None:
@@ -631,20 +728,19 @@ class MoonTransferAndroidApp(App):
         self._refresh_selection_view()
         if self.send_status is not None:
             self.send_status.text = "Selezione svuotata."
-            self.send_status.color = MUTED_COLOR
+            self.send_status.label_color = MUTED_COLOR
         self._update_controls()
 
     def _refresh_selection_view(self) -> None:
         container = self.selection_list
         if container is None:
             return
-        container.clear_widgets()
-        self._selection_remove_buttons.clear()
+        container.data = []
         selection = self._selected_selection
         if selection is None:
             if self.file_status is not None:
                 self.file_status.text = "Nessun elemento selezionato."
-                self.file_status.color = MUTED_COLOR
+                self.file_status.label_color = MUTED_COLOR
             return
 
         if self.file_status is not None:
@@ -665,56 +761,23 @@ class MoonTransferAndroidApp(App):
                 f"Selezione: {', '.join(counts)}\n"
                 f"{format_file_size(selection.total_size)}"
             )
-            self.file_status.color = TEXT_COLOR
+            self.file_status.label_color = TEXT_COLOR
 
-        for index, document in enumerate(selection.documents):
-            row = BoxLayout(
-                orientation="horizontal",
-                spacing=dp(8),
-                size_hint_y=None,
-                height=dp(56),
-            )
-            details = BoxLayout(orientation="vertical", spacing=dp(1))
-            filename = Label(
-                text=document.filename,
-                color=TEXT_COLOR,
-                font_size=sp(14),
-                halign="left",
-                valign="middle",
-                shorten=True,
-                shorten_from="center",
-            )
-            filename.bind(
-                size=lambda label, size: setattr(label, "text_size", size)
-            )
-            size_label = Label(
-                text=(
+        container.data = [
+            {
+                "item_index": index,
+                "title": document.filename,
+                "detail": (
                     "Cartella | " if document.is_directory else "File | "
                 )
                 + format_file_size(document.size),
-                color=MUTED_COLOR,
-                font_size=sp(12),
-                halign="left",
-                valign="middle",
-            )
-            size_label.bind(
-                size=lambda label, size: setattr(label, "text_size", size)
-            )
-            details.add_widget(filename)
-            details.add_widget(size_label)
-
-            remove_button = _button("Rimuovi", color=DESTRUCTIVE_COLOR)
-            remove_button.size_hint_x = None
-            remove_button.width = dp(96)
-            remove_button.bind(
-                on_release=lambda _button, item_index=index: (
-                    self._remove_selected_document(item_index)
-                )
-            )
-            self._selection_remove_buttons.append(remove_button)
-            row.add_widget(details)
-            row.add_widget(remove_button)
-            container.add_widget(row)
+                "icon_source": theme.icon_path(
+                    "folder" if document.is_directory else "file"
+                ),
+                "remove_callback": self._remove_selected_document,
+            }
+            for index, document in enumerate(selection.documents)
+        ]
 
     def _selection_can_be_changed(self) -> bool:
         return self._derive_controls().manage_selection
@@ -729,7 +792,7 @@ class MoonTransferAndroidApp(App):
         self._staging = False
         if self.send_status is not None:
             self.send_status.text = "Impossibile preparare il contenuto selezionato."
-            self.send_status.color = ERROR_COLOR
+            self.send_status.label_color = ERROR_COLOR
         self._show_error("Preparazione contenuto non riuscita", message)
         self._update_controls()
 
@@ -751,9 +814,19 @@ class MoonTransferAndroidApp(App):
             self.progress_bar.value = 0
         if self.progress_details is not None:
             self.progress_details.text = (
-                f"0 B / {format_file_size(selection.total_size)} | Velocità - | "
-                "Trascorso - | Rimanente -"
+                f"0 B / {format_file_size(selection.total_size)}"
             )
+        self._set_send_metrics(
+            speed=None,
+            remaining=None,
+            elapsed=None,
+            transferred=0,
+            total=selection.total_size,
+        )
+        if self.send_waiting_title is not None:
+            self.send_waiting_title.text = "Preparazione invio"
+        if self.send_payload_summary is not None:
+            self.send_payload_summary.text = "Analisi del contenuto in corso..."
 
         try:
             client = TransferServiceClient.for_send(self._cache_root, selection)
@@ -783,12 +856,18 @@ class MoonTransferAndroidApp(App):
         if state == AndroidSendState.SENDING_FILE:
             if previous != state or self._transfer_started_at is None:
                 self._transfer_started_at = time.monotonic()
+        if self.send_waiting_title is not None:
+            self.send_waiting_title.text = {
+                AndroidSendState.PREPARING: "Preparazione invio",
+                AndroidSendState.SENDING_METADATA: "Invio informazioni",
+                AndroidSendState.AWAITING_DECISION: "In attesa del destinatario",
+            }.get(state, self.send_waiting_title.text)
         self._update_controls()
 
     def _on_send_status(self, message: str) -> None:
         if self.send_status is not None:
             self.send_status.text = message
-            self.send_status.color = TEXT_COLOR
+            self.send_status.label_color = TEXT_COLOR
 
     def _on_send_prepared(
         self,
@@ -797,32 +876,34 @@ class MoonTransferAndroidApp(App):
     ) -> None:
         code_changed = self._code != code
         self._code = code
+        payload_label = self._proposal_payload_label(proposal)
         if self.file_status is not None:
-            if proposal.is_single_file:
-                payload_label = proposal.filename
-            else:
-                counts = [f"{proposal.file_count} file"]
-                if proposal.directory_count:
-                    directory_label = (
-                        "1 cartella"
-                        if proposal.directory_count == 1
-                        else f"{proposal.directory_count} cartelle"
-                    )
-                    counts.append(directory_label)
-                payload_label = " | ".join(counts) + " in invio"
             self.file_status.text = (
                 f"{payload_label}\n{format_file_size(proposal.size)}"
             )
-            self.file_status.color = TEXT_COLOR
+            self.file_status.label_color = TEXT_COLOR
         if self.code_input is not None:
-            self.code_input.text = code
+            self.code_input.text = self._format_display_code(code)
+        if self.send_payload_summary is not None:
+            self.send_payload_summary.text = (
+                f"{payload_label}\n{format_file_size(proposal.size)}"
+            )
+        if self.send_transfer_summary is not None:
+            self.send_transfer_summary.text = payload_label
         if self.progress_details is not None:
             self.progress_details.text = (
-                f"0 B / {format_file_size(proposal.size)} | Velocità - | "
-                "Trascorso - | Rimanente -"
+                f"0 B / {format_file_size(proposal.size)}"
             )
+        self._set_send_metrics(
+            speed=None,
+            remaining=None,
+            elapsed=None,
+            transferred=0,
+            total=proposal.size,
+        )
         if code_changed:
             Clipboard.copy(code)
+            self._show_snackbar("Codice copiato negli appunti")
         self._update_controls()
 
     def _on_send_progress(self, sample: TransferProgressSample) -> None:
@@ -831,6 +912,8 @@ class MoonTransferAndroidApp(App):
         total = sample.total_bytes
         if self.progress_bar is not None:
             self.progress_bar.value = percent
+        if self.send_percent is not None:
+            self.send_percent.text = f"{percent:.0f}%"
 
         elapsed = None
         if self._transfer_started_at is not None:
@@ -846,11 +929,15 @@ class MoonTransferAndroidApp(App):
         if self.progress_details is not None:
             total_text = format_file_size(total) if total is not None else "-"
             self.progress_details.text = (
-                f"{format_file_size(transferred)} / {total_text} | "
-                f"Velocità {format_transfer_rate(sample.speed_bps)} | "
-                f"Trascorso {format_duration(elapsed)} | "
-                f"Rimanente {format_duration(remaining)}"
+                f"{format_file_size(transferred)} / {total_text}"
             )
+        self._set_send_metrics(
+            speed=sample.speed_bps,
+            remaining=remaining,
+            elapsed=elapsed,
+            transferred=transferred,
+            total=total,
+        )
 
     def _on_send_finished(
         self,
@@ -865,7 +952,7 @@ class MoonTransferAndroidApp(App):
             self.code_input.text = ""
         if self.send_status is not None:
             self.send_status.text = message
-            self.send_status.color = (
+            self.send_status.label_color = (
                 SUCCESS_COLOR
                 if state == AndroidSendState.COMPLETED
                 else MUTED_COLOR
@@ -874,8 +961,78 @@ class MoonTransferAndroidApp(App):
             )
         if state == AndroidSendState.COMPLETED and self.progress_bar is not None:
             self.progress_bar.value = 100
-        if state == AndroidSendState.FAILED:
-            self._show_error("Invio non riuscito", message)
+        self._configure_send_result(state, message)
+        self._update_controls()
+
+    def _set_send_metrics(
+        self,
+        *,
+        speed: float | None,
+        remaining: float | None,
+        elapsed: float | None,
+        transferred: int,
+        total: int | None,
+    ) -> None:
+        if self.send_speed_metric is not None:
+            self.send_speed_metric.value = format_transfer_rate(speed)
+        if self.send_remaining_metric is not None:
+            self.send_remaining_metric.value = format_duration(remaining)
+        if self.send_elapsed_metric is not None:
+            self.send_elapsed_metric.value = format_duration(elapsed)
+        if self.send_transferred_metric is not None:
+            total_text = format_file_size(total) if total is not None else "-"
+            self.send_transferred_metric.value = (
+                f"{format_file_size(transferred)} / {total_text}"
+            )
+
+    def _configure_send_result(
+        self,
+        state: AndroidSendState,
+        message: str,
+    ) -> None:
+        panel = self.send_result_panel
+        if panel is None:
+            return
+        title, icon = {
+            AndroidSendState.COMPLETED: (
+                "Invio completato",
+                "circle-check",
+            ),
+            AndroidSendState.REJECTED: (
+                "Trasferimento rifiutato",
+                "circle-alert",
+            ),
+            AndroidSendState.CANCELLED: (
+                "Invio interrotto",
+                "x",
+            ),
+            AndroidSendState.FAILED: (
+                "Invio non riuscito",
+                "circle-alert",
+            ),
+        }.get(state, ("Invio terminato", "info"))
+        panel.title = title
+        panel.message = message
+        panel.icon_source = theme.icon_path(icon)
+        panel.tone = send_result_tone(state).value
+
+    def _reset_send_view(self, *_args: object) -> None:
+        if self._service_client is not None or self._service_is_releasing():
+            return
+        self._send_state = AndroidSendState.IDLE
+        self._code = None
+        self._transfer_started_at = None
+        if self.code_input is not None:
+            self.code_input.text = ""
+        if self.progress_bar is not None:
+            self.progress_bar.value = 0
+        if self.send_percent is not None:
+            self.send_percent.text = "0%"
+        if self.send_status is not None:
+            self.send_status.text = "Seleziona file o cartelle per iniziare."
+            self.send_status.label_color = MUTED_COLOR
+        self._refresh_selection_view()
+        self._switch_mode("send")
         self._update_controls()
 
     def _start_receive(self, *_args: object) -> None:
@@ -899,13 +1056,22 @@ class MoonTransferAndroidApp(App):
         self._receive_started_at = None
         if self.receive_proposal is not None:
             self.receive_proposal.text = "Attendo le informazioni sul contenuto..."
-            self.receive_proposal.color = MUTED_COLOR
+            self.receive_proposal.label_color = MUTED_COLOR
         if self.receive_progress_bar is not None:
             self.receive_progress_bar.value = 0
         if self.receive_progress_details is not None:
-            self.receive_progress_details.text = (
-                "0 B / - | Velocità - | Trascorso - | Rimanente -"
-            )
+            self.receive_progress_details.text = "0 B / -"
+        if self.receive_save_progress_bar is not None:
+            self.receive_save_progress_bar.value = 0
+        if self.receive_save_progress_details is not None:
+            self.receive_save_progress_details.text = "0 B / -"
+        self._set_receive_metrics(
+            speed=None,
+            remaining=None,
+            elapsed=None,
+            transferred=0,
+            total=None,
+        )
 
         try:
             client = TransferServiceClient.for_receive(self._cache_root, code)
@@ -966,10 +1132,11 @@ class MoonTransferAndroidApp(App):
     def _on_receive_status(self, message: str) -> None:
         if self.receive_status is not None:
             self.receive_status.text = message
-            self.receive_status.color = TEXT_COLOR
+            self.receive_status.label_color = TEXT_COLOR
 
     def _on_receive_proposal(self, proposal: TransferSummary) -> None:
         self._receive_proposal = proposal
+        payload_label = self._proposal_payload_label(proposal)
         if self.receive_proposal is not None:
             if proposal.is_single_file:
                 hash_text = proposal.sha256 or "non disponibile"
@@ -993,12 +1160,24 @@ class MoonTransferAndroidApp(App):
                     "SHA-256: incluso per ogni file"
                 )
             self.receive_proposal.text = summary
-            self.receive_proposal.color = TEXT_COLOR
+            self.receive_proposal.label_color = TEXT_COLOR
+        if self.receive_transfer_summary is not None:
+            self.receive_transfer_summary.text = payload_label
+        if self.receive_save_summary is not None:
+            self.receive_save_summary.text = (
+                f"{payload_label}\n{format_file_size(proposal.size)}"
+            )
         if self.receive_progress_details is not None:
             self.receive_progress_details.text = (
-                f"0 B / {format_file_size(proposal.size)} | Velocità - | "
-                "Trascorso - | Rimanente -"
+                f"0 B / {format_file_size(proposal.size)}"
             )
+        self._set_receive_metrics(
+            speed=None,
+            remaining=None,
+            elapsed=None,
+            transferred=0,
+            total=proposal.size,
+        )
         self._update_controls()
 
     def _on_receive_progress(self, sample: TransferProgressSample) -> None:
@@ -1007,6 +1186,8 @@ class MoonTransferAndroidApp(App):
         total = sample.total_bytes
         if self.receive_progress_bar is not None:
             self.receive_progress_bar.value = percent
+        if self.receive_percent is not None:
+            self.receive_percent.text = f"{percent:.0f}%"
 
         elapsed = None
         if self._receive_started_at is not None:
@@ -1022,16 +1203,27 @@ class MoonTransferAndroidApp(App):
         if self.receive_progress_details is not None:
             total_text = format_file_size(total) if total is not None else "-"
             self.receive_progress_details.text = (
-                f"{format_file_size(transferred)} / {total_text} | "
-                f"Velocità {format_transfer_rate(sample.speed_bps)} | "
-                f"Trascorso {format_duration(elapsed)} | "
-                f"Rimanente {format_duration(remaining)}"
+                f"{format_file_size(transferred)} / {total_text}"
             )
+        self._set_receive_metrics(
+            speed=sample.speed_bps,
+            remaining=remaining,
+            elapsed=elapsed,
+            transferred=transferred,
+            total=total,
+        )
 
     def _on_receive_save_ready(self, proposal: TransferSummary) -> None:
         self._receive_proposal = proposal
         if self.receive_progress_bar is not None:
             self.receive_progress_bar.value = 100
+        if self.receive_percent is not None:
+            self.receive_percent.text = "100%"
+        if self.receive_save_summary is not None:
+            self.receive_save_summary.text = (
+                f"{self._proposal_payload_label(proposal)}\n"
+                f"{format_file_size(proposal.size)}"
+            )
         self._update_controls()
         if self._save_picker is not None and not self._closing:
             self._open_save_picker()
@@ -1080,7 +1272,7 @@ class MoonTransferAndroidApp(App):
                 "Salvataggio annullato. Il contenuto verificato resta disponibile "
                 "finché il trasferimento non viene interrotto."
             )
-            self.receive_status.color = MUTED_COLOR
+            self.receive_status.label_color = MUTED_COLOR
         self._update_controls()
 
     def _save_destination_error(self, error: Exception) -> None:
@@ -1089,12 +1281,11 @@ class MoonTransferAndroidApp(App):
 
     def _on_receive_save_progress(self, copied: int, total: int) -> None:
         percent = (copied * 100 / total) if total else 100
-        if self.receive_progress_bar is not None:
-            self.receive_progress_bar.value = percent
-        if self.receive_progress_details is not None:
-            self.receive_progress_details.text = (
-                f"Salvataggio: {format_file_size(copied)} / "
-                f"{format_file_size(total)}"
+        if self.receive_save_progress_bar is not None:
+            self.receive_save_progress_bar.value = percent
+        if self.receive_save_progress_details is not None:
+            self.receive_save_progress_details.text = (
+                f"{format_file_size(copied)} / {format_file_size(total)}"
             )
 
     def _on_receive_finished(
@@ -1107,7 +1298,7 @@ class MoonTransferAndroidApp(App):
             self.receive_code_input.text = ""
         if self.receive_status is not None:
             self.receive_status.text = message
-            self.receive_status.color = (
+            self.receive_status.label_color = (
                 SUCCESS_COLOR
                 if state == AndroidReceiveState.COMPLETED
                 else MUTED_COLOR
@@ -1120,8 +1311,86 @@ class MoonTransferAndroidApp(App):
             and self.receive_progress_bar is not None
         ):
             self.receive_progress_bar.value = 100
-        if state == AndroidReceiveState.FAILED:
-            self._show_error("Ricezione non riuscita", message)
+        if (
+            state == AndroidReceiveState.COMPLETED
+            and self.receive_save_progress_bar is not None
+        ):
+            self.receive_save_progress_bar.value = 100
+        self._configure_receive_result(state, message)
+        self._update_controls()
+
+    def _set_receive_metrics(
+        self,
+        *,
+        speed: float | None,
+        remaining: float | None,
+        elapsed: float | None,
+        transferred: int,
+        total: int | None,
+    ) -> None:
+        if self.receive_speed_metric is not None:
+            self.receive_speed_metric.value = format_transfer_rate(speed)
+        if self.receive_remaining_metric is not None:
+            self.receive_remaining_metric.value = format_duration(remaining)
+        if self.receive_elapsed_metric is not None:
+            self.receive_elapsed_metric.value = format_duration(elapsed)
+        if self.receive_transferred_metric is not None:
+            total_text = format_file_size(total) if total is not None else "-"
+            self.receive_transferred_metric.value = (
+                f"{format_file_size(transferred)} / {total_text}"
+            )
+
+    def _configure_receive_result(
+        self,
+        state: AndroidReceiveState,
+        message: str,
+    ) -> None:
+        panel = self.receive_result_panel
+        if panel is None:
+            return
+        title, icon = {
+            AndroidReceiveState.COMPLETED: (
+                "Ricezione completata",
+                "circle-check",
+            ),
+            AndroidReceiveState.REJECTED: (
+                "Trasferimento rifiutato",
+                "circle-alert",
+            ),
+            AndroidReceiveState.CANCELLED: (
+                "Ricezione interrotta",
+                "x",
+            ),
+            AndroidReceiveState.FAILED: (
+                "Ricezione non riuscita",
+                "circle-alert",
+            ),
+        }.get(state, ("Ricezione terminata", "info"))
+        panel.title = title
+        panel.message = message
+        panel.icon_source = theme.icon_path(icon)
+        panel.tone = receive_result_tone(state).value
+
+    def _reset_receive_view(self, *_args: object) -> None:
+        if self._service_client is not None or self._service_is_releasing():
+            return
+        self._receive_state = AndroidReceiveState.IDLE
+        self._receive_proposal = None
+        self._receive_started_at = None
+        if self.receive_code_input is not None:
+            self.receive_code_input.text = ""
+        if self.receive_progress_bar is not None:
+            self.receive_progress_bar.value = 0
+        if self.receive_save_progress_bar is not None:
+            self.receive_save_progress_bar.value = 0
+        if self.receive_percent is not None:
+            self.receive_percent.text = "0%"
+        if self.receive_status is not None:
+            self.receive_status.text = (
+                "Inserisci il codice comunicato dal mittente."
+            )
+            self.receive_status.label_color = MUTED_COLOR
+        self._switch_mode("receive")
         self._update_controls()
 
     def _activate_service(self, client: TransferServiceClient) -> None:
@@ -1383,46 +1652,49 @@ class MoonTransferAndroidApp(App):
         Clipboard.copy(self._code)
         if self.send_status is not None:
             self.send_status.text = "Codice copiato negli appunti."
+        self._show_snackbar("Codice copiato negli appunti")
+
+    def _paste_receive_code(self, *_args: object) -> None:
+        if self.receive_code_input is None or self.receive_code_input.disabled:
+            return
+        value = Clipboard.paste()
+        if value is None:
+            return
+        self.receive_code_input.text = "".join(str(value).split())
+        self._show_snackbar("Codice incollato")
+
+    @staticmethod
+    def _format_display_code(code: str) -> str:
+        return " ".join(code[index : index + 8] for index in range(0, len(code), 8))
+
+    @staticmethod
+    def _proposal_payload_label(proposal: TransferSummary) -> str:
+        if proposal.is_single_file:
+            return proposal.filename
+        counts = [f"{proposal.file_count} file"]
+        if proposal.directory_count:
+            counts.append(
+                "1 cartella"
+                if proposal.directory_count == 1
+                else f"{proposal.directory_count} cartelle"
+            )
+        return " | ".join(counts)
 
     def _show_build_info(self, *_args: object) -> None:
-        content = BoxLayout(
-            orientation="vertical",
-            spacing=dp(10),
-            padding=dp(10),
-        )
         diagnostics = CURRENT_BUILD.diagnostics()
-        details = TextInput(
-            text=diagnostics,
-            readonly=True,
-            multiline=True,
-            font_size=sp(13),
-        )
-        content.add_widget(details)
-
-        actions = BoxLayout(
-            orientation="horizontal",
-            spacing=dp(8),
-            size_hint_y=None,
-            height=dp(48),
-        )
-        copy_button = _button("Copia diagnostica", color=SECONDARY_COLOR)
-        close_button = _button("Chiudi")
-        actions.add_widget(copy_button)
-        actions.add_widget(close_button)
-        content.add_widget(actions)
-
-        popup = Popup(
+        self._open_dialog(
             title="Informazioni su MoonTransfer",
-            content=content,
-            size_hint=(0.92, None),
-            height=dp(390),
-            auto_dismiss=True,
+            message=(
+                "Versione, protocollo e componenti inclusi in questa build."
+            ),
+            details=diagnostics,
+            secondary_text="Copia diagnostica",
+            secondary_callback=lambda: self._copy_diagnostics(diagnostics),
         )
-        copy_button.bind(
-            on_release=lambda _button: Clipboard.copy(diagnostics)
-        )
-        close_button.bind(on_release=lambda _button: popup.dismiss())
-        popup.open()
+
+    def _copy_diagnostics(self, diagnostics: str) -> None:
+        Clipboard.copy(diagnostics)
+        self._show_snackbar("Diagnostica copiata")
 
     def _derive_controls(self) -> AndroidControlState:
         picker_pending = bool(self._picker and self._picker.pending)
@@ -1454,6 +1726,7 @@ class MoonTransferAndroidApp(App):
         )
 
     def _update_controls(self) -> None:
+        self._update_stage_views()
         controls = self._derive_controls()
         if self.select_button is not None:
             self.select_button.disabled = not controls.select_file
@@ -1461,18 +1734,26 @@ class MoonTransferAndroidApp(App):
             self.select_directory_button.disabled = not controls.select_file
         if self.clear_selection_button is not None:
             self.clear_selection_button.disabled = not controls.manage_selection
-        for button in self._selection_remove_buttons:
-            button.disabled = not controls.manage_selection
+        if self.selection_list is not None:
+            self.selection_list.disabled = not controls.manage_selection
         if self.send_button is not None:
             self.send_button.disabled = not controls.start_send
         if self.cancel_button is not None:
             self.cancel_button.disabled = not controls.cancel_send
+        if self.transfer_cancel_button is not None:
+            self.transfer_cancel_button.disabled = not controls.cancel_send
         if self.copy_button is not None:
             self.copy_button.disabled = not controls.copy_code
         if self.receive_code_input is not None:
             self.receive_code_input.disabled = not controls.edit_receive_code
+        if self.receive_paste_button is not None:
+            self.receive_paste_button.disabled = not controls.edit_receive_code
         if self.receive_start_button is not None:
             self.receive_start_button.disabled = not controls.start_receive
+        if self.receive_loading_cancel_button is not None:
+            self.receive_loading_cancel_button.disabled = (
+                not controls.cancel_receive
+            )
         if self.receive_accept_button is not None:
             self.receive_accept_button.disabled = not controls.accept_receive
         if self.receive_reject_button is not None:
@@ -1481,8 +1762,32 @@ class MoonTransferAndroidApp(App):
             self.receive_save_button.disabled = not controls.save_receive
         if self.receive_cancel_button is not None:
             self.receive_cancel_button.disabled = not controls.cancel_receive
+        if self.receive_save_cancel_button is not None:
+            self.receive_save_cancel_button.disabled = (
+                not controls.cancel_receive
+            )
         if self.probe_button is not None:
             self.probe_button.disabled = not controls.probe_transport
+        service_operation = (
+            self._service_client.operation
+            if self._service_client is not None
+            else None
+        )
+        if self.send_mode_button is not None:
+            self.send_mode_button.disabled = (
+                service_operation is TransferServiceOperation.RECEIVE
+            )
+        if self.receive_mode_button is not None:
+            self.receive_mode_button.disabled = (
+                service_operation is TransferServiceOperation.SEND
+            )
+        reset_disabled = (
+            self._service_client is not None or self._service_is_releasing()
+        )
+        if self.send_reset_button is not None:
+            self.send_reset_button.disabled = reset_disabled
+        if self.receive_reset_button is not None:
+            self.receive_reset_button.disabled = reset_disabled
 
     def _receive_code_is_valid(self) -> bool:
         if self.receive_code_input is None:
@@ -1494,18 +1799,73 @@ class MoonTransferAndroidApp(App):
         return True
 
     def _show_error(self, title: str, message: str) -> None:
-        content = _wrapped_label(
-            message,
-            color=TEXT_COLOR,
-            minimum_height=80,
-        )
-        Popup(
+        self._open_dialog(
             title=title,
-            content=content,
-            size_hint=(0.9, None),
-            height=dp(250),
-            auto_dismiss=True,
-        ).open()
+            message=message,
+        )
+
+    def _open_dialog(
+        self,
+        *,
+        title: str,
+        message: str,
+        details: str = "",
+        secondary_text: str = "",
+        secondary_callback: Any = None,
+    ) -> None:
+        root = self.root
+        if not isinstance(root, MoonTransferRoot):
+            print(f"[dialog] {title}: {message}", flush=True)
+            return
+        if self._dialog_overlay is not None:
+            self._close_dialog(self._dialog_overlay)
+        overlay = MoonDialogOverlay(
+            title=title,
+            message=message,
+            details=details,
+            secondary_text=secondary_text,
+        )
+        overlay.primary_callback = lambda: self._close_dialog(overlay)
+        overlay.secondary_callback = secondary_callback
+        self._dialog_overlay = overlay
+        root.add_widget(overlay)
+
+    def _close_dialog(self, overlay: MoonDialogOverlay) -> None:
+        root = self.root
+        if isinstance(root, MoonTransferRoot) and overlay.parent is root:
+            root.remove_widget(overlay)
+        if self._dialog_overlay is overlay:
+            self._dialog_overlay = None
+
+    def _show_snackbar(self, message: str) -> None:
+        snackbar = self.snackbar
+        if snackbar is None:
+            return
+        if self._snackbar_event is not None:
+            self._snackbar_event.cancel()
+        Animation.cancel_all(snackbar, "opacity")
+        snackbar.text = message
+        snackbar.disabled = False
+        Animation(opacity=1, duration=0.12).start(snackbar)
+        self._snackbar_event = Clock.schedule_once(
+            self._hide_snackbar,
+            2.4,
+        )
+
+    def _hide_snackbar(self, *_args: object) -> None:
+        self._snackbar_event = None
+        snackbar = self.snackbar
+        if snackbar is None:
+            return
+        animation = Animation(opacity=0, duration=0.16)
+        animation.bind(
+            on_complete=lambda *_animation_args: setattr(
+                snackbar,
+                "disabled",
+                True,
+            )
+        )
+        animation.start(snackbar)
 
     @staticmethod
     def _post(callback: Any, *args: object) -> None:

@@ -32,6 +32,16 @@ Project: <https://github.com/kivy/kivy>
 
 License: MIT License
 
+## Lucide
+
+The Android interface uses selected Lucide icons, converted to PNG assets for
+Kivy and bundled in the APK.
+
+Project: <https://github.com/lucide-icons/lucide>
+
+License: ISC License, with MIT-licensed Feather-derived icons as documented in
+the bundled `android/app/moontransfer_android/assets/icons/LICENSE-lucide.txt`.
+
 ## Buildozer / python-for-android
 
 The experimental Android build uses Buildozer and python-for-android as

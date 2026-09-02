@@ -452,6 +452,11 @@ class AndroidSourcePreparationTests(unittest.TestCase):
             self.assertTrue(
                 (prepared / "moontransfer_android" / "moontransfer.kv").is_file()
             )
+            for filename in ("theme.py", "ui_state.py", "widgets.py"):
+                self.assertTrue(
+                    (prepared / "moontransfer_android" / filename).is_file(),
+                    filename,
+                )
             self.assertTrue(
                 (prepared / "moontransfer_android" / "transport.py").is_file()
             )
@@ -484,6 +489,30 @@ class AndroidSourcePreparationTests(unittest.TestCase):
                     / "croc.txt"
                 ).is_file()
             )
+            icon_root = (
+                prepared / "moontransfer_android" / "assets" / "icons"
+            )
+            for filename in (
+                "LICENSE-lucide.txt",
+                "circle-alert.png",
+                "circle-check.png",
+                "clipboard-paste.png",
+                "clock-3.png",
+                "copy.png",
+                "download.png",
+                "file.png",
+                "folder.png",
+                "info.png",
+                "plus.png",
+                "rotate-cw.png",
+                "save.png",
+                "send.png",
+                "shield-check.png",
+                "trash-2.png",
+                "upload.png",
+                "x.png",
+            ):
+                self.assertTrue((icon_root / filename).is_file(), filename)
             for filename in prepare_android.SHARED_MODULES:
                 self.assertTrue((package / filename).is_file(), filename)
             for filename in (
