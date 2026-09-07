@@ -17,6 +17,7 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.label import Label
 from kivy.uix.progressbar import ProgressBar
+from kivy.uix.recycleview import RecycleView
 from kivy.uix.recycleview.views import RecycleDataViewBehavior
 from kivy.uix.textinput import TextInput
 
@@ -183,6 +184,21 @@ class MoonProgressBar(ProgressBar):
     )
 
 
+class MoonSelectionList(RecycleView):
+    def on_touch_down(self, touch):
+        if not self.collide_point(*touch.pos):
+            return False
+        if not self.disabled and self.viewport_size[1] <= self.height:
+            return self.simulate_touch_down(touch)
+        return super().on_touch_down(touch)
+
+    def on_scroll_start(self, touch, check_children=True):
+        # A nested list must not capture page swipes when all rows fit.
+        if self.disabled or self.viewport_size[1] <= self.height:
+            return False
+        return super().on_scroll_start(touch, check_children)
+
+
 class MoonSelectionRow(RecycleDataViewBehavior, BoxLayout):
     item_index = NumericProperty(-1)
     title = StringProperty("")
@@ -217,6 +233,16 @@ class MoonResultPanel(MoonSurface):
 
 class MoonSnackbar(MoonSurface):
     text = StringProperty("")
+
+    # This informational overlay has no controls and must not intercept gestures.
+    def on_touch_down(self, touch):
+        return False
+
+    def on_touch_move(self, touch):
+        return False
+
+    def on_touch_up(self, touch):
+        return False
 
 
 class MoonDialogOverlay(FloatLayout):

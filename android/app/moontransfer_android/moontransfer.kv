@@ -57,6 +57,7 @@
         source: root.icon_source
         size_hint: None, None
         size: (dp(20), dp(20)) if root.icon_source else (0, 0)
+        pos_hint: {"center_y": 0.5}
         opacity: 1 if root.icon_source else 0
         color: root.resolved_foreground
         fit_mode: "contain"
@@ -532,8 +533,10 @@ MoonTransferRoot:
                                                             width: dp(112)
                                                             height: dp(42)
 
-                                                    RecycleView:
+                                                    MoonSelectionList:
                                                         id: selection_list
+                                                        do_scroll_x: False
+                                                        always_overscroll: False
                                                         viewclass: "MoonSelectionRow"
                                                         bar_width: dp(3)
                                                         scroll_type: ["bars", "content"]

@@ -151,9 +151,17 @@ class AndroidKvLayoutTests(unittest.TestCase):
         ):
             self.assertIn(rule, source)
         self.assertIn("moontransfer_android.theme", source)
-        self.assertIn("RecycleView:", source)
+        self.assertIn("MoonSelectionList:", source)
         self.assertIn("transition: NoTransition()", source)
         self.assertNotIn("background_color: app.accent_color", source)
+
+    def test_button_icons_are_explicitly_centered(self) -> None:
+        source = KV_PATH.read_text(encoding="utf-8")
+        button_rule = source.split("<MoonButton>:", 1)[1].split(
+            "<MoonIconButton>:", 1
+        )[0]
+
+        self.assertIn('pos_hint: {"center_y": 0.5}', button_rule)
 
 
 if __name__ == "__main__":
