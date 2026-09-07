@@ -316,6 +316,7 @@ def stage_directory_uri(
     existing_selection: StagedSelection | None = None,
     resolver: Any | None = None,
     documents_contract: Any | None = None,
+    root_document_id: str | None = None,
     cancel_requested: Callable[[], bool] | None = None,
     on_progress: Callable[[int, int | None], None] | None = None,
 ) -> StagedDocument:
@@ -333,6 +334,7 @@ def stage_directory_uri(
         tree_uri,
         resolver=content_resolver,
         documents_contract=contract,
+        root_document_id=root_document_id,
         cancel_requested=cancel_requested,
     )
     root_name = PurePosixPath(entries[0].relative_path).name
@@ -464,9 +466,10 @@ def _scan_document_tree(
     resolver: Any,
     documents_contract: Any,
     cancel_requested: Callable[[], bool] | None,
+    root_document_id: str | None = None,
 ) -> tuple[_TreeDocument, ...]:
     try:
-        root_id = str(documents_contract.getTreeDocumentId(tree_uri))
+        root_id = root_document_id or str(documents_contract.getTreeDocumentId(tree_uri))
         if not root_id:
             raise AndroidStorageError("La cartella selezionata non ha un ID valido.")
         root_uri = documents_contract.buildDocumentUriUsingTree(tree_uri, root_id)

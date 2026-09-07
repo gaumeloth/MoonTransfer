@@ -28,6 +28,9 @@ android.permissions = android.permission.INTERNET,
     android.permission.POST_NOTIFICATIONS
 services = Transfer:moontransfer_android/service.py:foreground:sticky:foregroundServiceType=dataSync
 android.add_src = java
+android.entrypoint = io.github.gaumeloth.moontransfer.MoonTransferActivity
+android.manifest.launch_mode = singleTask
+android.manifest.intent_filters = share_intent_filters.xml
 android.service_class_name = io.github.gaumeloth.moontransfer.MoonTransferPythonService
 android.api = 36
 android.minapi = 24

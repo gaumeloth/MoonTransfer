@@ -12,7 +12,6 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 
-import org.kivy.android.PythonActivity;
 import org.kivy.android.PythonService;
 
 public class MoonTransferPythonService extends PythonService {
@@ -81,7 +80,7 @@ public class MoonTransferPythonService extends PythonService {
         channel.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
         manager.createNotificationChannel(channel);
 
-        Intent activityIntent = new Intent(context, PythonActivity.class);
+        Intent activityIntent = new Intent(context, MoonTransferActivity.class);
         PendingIntent pendingIntent = PendingIntent.getActivity(
                 context,
                 0,
