@@ -1,7 +1,10 @@
 #:kivy 2.3.1
 #:import dp kivy.metrics.dp
 #:import sp kivy.metrics.sp
+#:import Window kivy.core.window.Window
+#:import FadeTransition kivy.uix.screenmanager.FadeTransition
 #:import NoTransition kivy.uix.screenmanager.NoTransition
+#:import theme moontransfer_android.theme
 
 <MoonWrappedLabel>:
     color: self.label_color
@@ -10,270 +13,1144 @@
     valign: "middle"
     size_hint_y: None
     text_size: self.width, None
-    height: max(self.minimum_height, self.texture_size[1] + dp(8))
+    height: max(self.minimum_height, self.texture_size[1] + dp(4))
 
-<MoonActionButton>:
+<MoonTitleLabel>:
+    font_size: sp(22)
+    bold: True
+    label_color: theme.TEXT
+    minimum_height: dp(38)
+
+<MoonSurface>:
+    canvas.before:
+        Color:
+            rgba: self.surface_color
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [self.radius]
+        Color:
+            rgba: self.border_color
+        Line:
+            rounded_rectangle: (self.x, self.y, self.width, self.height, self.radius)
+            width: 1
+
+<MoonButton>:
+    orientation: "horizontal"
+    spacing: dp(8) if self.icon_source else 0
+    padding: dp(14), 0
     size_hint_y: None
-    height: dp(48)
-    background_normal: ""
-    background_down: ""
-    background_color: self.button_color
-    color: app.text_color
-    font_size: sp(15)
+    height: dp(50)
+    canvas.before:
+        Color:
+            rgba: self.resolved_background
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [self.radius]
+        Color:
+            rgba: self.resolved_border
+        Line:
+            rounded_rectangle: (self.x, self.y, self.width, self.height, self.radius)
+            width: 1
+    Image:
+        source: root.icon_source
+        size_hint: None, None
+        size: (dp(20), dp(20)) if root.icon_source else (0, 0)
+        pos_hint: {"center_y": 0.5}
+        opacity: 1 if root.icon_source else 0
+        color: root.resolved_foreground
+        fit_mode: "contain"
+    Label:
+        text: root.text
+        color: root.resolved_foreground
+        font_size: sp(14)
+        bold: True
+        halign: "center"
+        valign: "middle"
+        text_size: self.size
 
-MoonTransferRoot:
+<MoonIconButton>:
+    size_hint: None, None
+    size: dp(44), dp(44)
+    canvas.before:
+        Color:
+            rgba: self.resolved_background
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [self.radius]
+        Color:
+            rgba: self.resolved_border
+        Line:
+            rounded_rectangle: (self.x, self.y, self.width, self.height, self.radius)
+            width: 1
+    Image:
+        source: root.icon_source
+        size_hint: None, None
+        size: dp(20), dp(20)
+        pos_hint: {"center_x": 0.5, "center_y": 0.5}
+        color: root.resolved_foreground
+        fit_mode: "contain"
+
+<MoonNavButton>:
+    orientation: "vertical"
+    spacing: dp(3)
+    padding: dp(6), dp(8), dp(6), dp(6)
+    canvas.before:
+        Color:
+            rgba: theme.PRIMARY_SOFT if self.selected else theme.TRANSPARENT
+        RoundedRectangle:
+            pos: self.x + dp(8), self.y + dp(5)
+            size: self.width - dp(16), self.height - dp(10)
+            radius: [dp(8)]
+    Image:
+        source: root.icon_source
+        size_hint: None, None
+        size: dp(22), dp(22)
+        pos_hint: {"center_x": 0.5}
+        color: theme.PRIMARY if root.selected else theme.TEXT_MUTED
+        fit_mode: "contain"
+    Label:
+        text: root.text
+        size_hint_y: None
+        height: dp(18)
+        color: theme.TEXT if root.selected else theme.TEXT_MUTED
+        font_size: sp(12)
+        bold: root.selected
+
+<MoonTextInput>:
+    size_hint_y: None
+    height: dp(52)
+    multiline: False
+    background_normal: ""
+    background_active: ""
+    background_disabled_normal: ""
+    background_color: theme.TRANSPARENT
+    foreground_color: theme.TEXT
+    disabled_foreground_color: theme.TEXT_DISABLED
+    hint_text_color: theme.TEXT_SUBTLE
+    cursor_color: theme.PRIMARY
+    selection_color: theme.PRIMARY_SOFT
+    font_size: sp(15)
+    padding: dp(14), dp(14)
+    canvas.before:
+        Color:
+            rgba: theme.SURFACE_DISABLED if self.disabled else theme.SURFACE_ALT
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [self.radius]
+        Color:
+            rgba: self.resolved_border
+        Line:
+            rounded_rectangle: (self.x, self.y, self.width, self.height, self.radius)
+            width: 1.2
+
+<MoonProgressBar>:
+    size_hint_y: None
+    height: dp(8)
+    canvas:
+        Color:
+            rgba: self.track_color
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [self.radius]
+        Color:
+            rgba: self.progress_color
+        RoundedRectangle:
+            pos: self.pos
+            size: self.width * self.normalized_value, self.height
+            radius: [self.radius]
+
+<MoonMetric>:
+    orientation: "vertical"
+    spacing: dp(2)
+    size_hint_y: None
+    height: dp(52)
+    MoonWrappedLabel:
+        text: root.title
+        font_size: sp(12)
+        minimum_height: dp(20)
+        label_color: theme.TEXT_SUBTLE
+    MoonWrappedLabel:
+        text: root.value
+        font_size: sp(14)
+        minimum_height: dp(24)
+        label_color: theme.TEXT
+
+<MoonActionBar>:
+    orientation: "horizontal"
+    spacing: dp(10)
+    padding: dp(16), dp(10)
+    size_hint_y: None
+    height: dp(72)
+    radius: 0
+    surface_color: theme.SURFACE
+    border_color: theme.BORDER
+
+<MoonSelectionRow>:
+    orientation: "horizontal"
+    spacing: dp(10)
+    padding: 0, dp(7)
+    size_hint_y: None
+    height: dp(64)
+    canvas.after:
+        Color:
+            rgba: theme.BORDER
+        Rectangle:
+            pos: self.x, self.y
+            size: self.width, dp(1)
+    Image:
+        source: root.icon_source
+        size_hint: None, None
+        size: dp(22), dp(22)
+        pos_hint: {"center_y": 0.5}
+        color: theme.TEXT_MUTED
+        fit_mode: "contain"
+    BoxLayout:
+        orientation: "vertical"
+        spacing: dp(1)
+        MoonWrappedLabel:
+            text: root.title
+            font_size: sp(14)
+            label_color: theme.TEXT
+            shorten: True
+            shorten_from: "center"
+            minimum_height: dp(25)
+        MoonWrappedLabel:
+            text: root.detail
+            font_size: sp(12)
+            label_color: theme.TEXT_SUBTLE
+            minimum_height: dp(21)
+    MoonIconButton:
+        icon_source: theme.icon_path("trash-2")
+        variant: "quiet"
+        size: dp(42), dp(42)
+        pos_hint: {"center_y": 0.5}
+        on_release: root.request_remove()
+
+<MoonResultPanel>:
     orientation: "vertical"
     spacing: dp(12)
-    padding: dp(20), dp(18), dp(20), dp(12)
+    padding: dp(22)
+    size_hint_y: None
+    height: self.minimum_height
+    Image:
+        source: root.icon_source
+        size_hint: None, None
+        size: dp(54), dp(54)
+        pos_hint: {"center_x": 0.5}
+        color: root.tone_color
+        fit_mode: "contain"
+    MoonWrappedLabel:
+        text: root.title
+        font_size: sp(21)
+        bold: True
+        halign: "center"
+        label_color: theme.TEXT
+        minimum_height: dp(36)
+    MoonWrappedLabel:
+        text: root.message
+        halign: "center"
+        label_color: theme.TEXT_MUTED
+        minimum_height: dp(52)
 
-    BoxLayout:
-        orientation: "horizontal"
-        spacing: dp(12)
-        size_hint_y: None
-        height: dp(82)
+<MoonSnackbar>:
+    orientation: "horizontal"
+    padding: dp(16), dp(10)
+    size_hint: None, None
+    width: min(Window.width - dp(32), dp(480))
+    height: max(dp(48), snackbar_text.texture_size[1] + dp(20))
+    x: (Window.width - self.width) / 2
+    y: dp(152)
+    radius: dp(8)
+    surface_color: theme.SURFACE_STRONG
+    border_color: theme.BORDER_STRONG
+    MoonWrappedLabel:
+        id: snackbar_text
+        text: root.text
+        label_color: theme.TEXT
+        minimum_height: dp(28)
 
-        Image:
-            source: app.icon
-            size_hint: None, None
-            size: dp(72), dp(72)
-            fit_mode: "contain"
-
-        BoxLayout:
+<MoonDialogOverlay>:
+    canvas.before:
+        Color:
+            rgba: theme.SCRIM
+        Rectangle:
+            pos: self.pos
+            size: self.size
+    AnchorLayout:
+        anchor_x: "center"
+        anchor_y: "center"
+        padding: dp(18)
+        MoonSurface:
             orientation: "vertical"
+            spacing: dp(12)
+            padding: dp(20)
+            size_hint: None, None
+            width: min(root.width - dp(36), dp(560))
+            height: min(root.height - dp(48), dialog_content.minimum_height + dp(40))
+            BoxLayout:
+                id: dialog_content
+                orientation: "vertical"
+                spacing: dp(12)
+                size_hint_y: None
+                height: self.minimum_height
+                MoonWrappedLabel:
+                    text: root.title
+                    font_size: sp(20)
+                    bold: True
+                    label_color: theme.TEXT
+                    minimum_height: dp(34)
+                MoonWrappedLabel:
+                    text: root.message
+                    label_color: theme.TEXT_MUTED
+                    minimum_height: dp(48)
+                ScrollView:
+                    do_scroll_x: False
+                    bar_width: dp(3)
+                    size_hint_y: None
+                    height: dp(180) if root.details else 0
+                    opacity: 1 if root.details else 0
+                    disabled: not root.details
+                    MoonWrappedLabel:
+                        text: root.details
+                        font_size: sp(12)
+                        label_color: theme.TEXT_MUTED
+                        padding: dp(12), dp(10)
+                        minimum_height: dp(180)
+                BoxLayout:
+                    orientation: "horizontal"
+                    spacing: dp(10)
+                    size_hint_y: None
+                    height: dp(50)
+                    MoonButton:
+                        text: root.secondary_text
+                        variant: "secondary"
+                        opacity: 1 if root.secondary_text else 0
+                        disabled: not root.secondary_text
+                        on_release: root.invoke_secondary()
+                    MoonButton:
+                        text: root.primary_text
+                        on_release: root.invoke_primary()
+
+MoonTransferRoot:
+    BoxLayout:
+        orientation: "vertical"
+        canvas.before:
+            Color:
+                rgba: theme.BACKGROUND
+            Rectangle:
+                pos: self.pos
+                size: self.size
+
+        MoonSurface:
+            orientation: "horizontal"
+            spacing: dp(11)
+            padding: dp(16), dp(8)
+            size_hint_y: None
+            height: dp(60)
+            radius: 0
+            surface_color: theme.BACKGROUND
+            border_color: theme.TRANSPARENT
+
+            Image:
+                source: app.icon
+                size_hint: None, None
+                size: dp(36), dp(36)
+                pos_hint: {"center_y": 0.5}
+                fit_mode: "contain"
 
             MoonWrappedLabel:
                 text: "MoonTransfer"
-                font_size: sp(25)
-                label_color: app.text_color
-                minimum_height: dp(38)
+                font_size: sp(19)
+                bold: True
+                label_color: theme.TEXT
+                minimum_height: dp(36)
+
+            MoonIconButton:
+                id: build_info_button
+                icon_source: theme.icon_path("info")
+                variant: "quiet"
+                pos_hint: {"center_y": 0.5}
+
+        MoonSurface:
+            id: transport_panel
+            orientation: "horizontal"
+            spacing: dp(8)
+            padding: dp(14), dp(8)
+            size_hint_y: None
+            height: 0
+            opacity: 0
+            disabled: True
+            radius: 0
+            surface_color: theme.WARNING_SOFT
+            border_color: theme.WARNING
 
             MoonWrappedLabel:
-                text: app.build_subtitle
-                minimum_height: dp(40)
+                id: transport_status
+                text: app.initial_transport_status
+                label_color: theme.WARNING
+                minimum_height: dp(32)
 
-        MoonActionButton:
-            id: build_info_button
-            text: "i"
-            button_color: app.secondary_color
-            size_hint: None, None
-            size: dp(42), dp(42)
-            font_size: sp(20)
+            MoonButton:
+                id: probe_button
+                text: "Riprova"
+                icon_source: theme.icon_path("rotate-cw")
+                variant: "quiet"
+                size_hint_x: None
+                width: dp(116)
+                height: dp(40)
 
-    BoxLayout:
-        orientation: "horizontal"
-        spacing: dp(2)
-        size_hint_y: None
-        height: dp(46)
+        ScreenManager:
+            id: view_manager
+            transition: NoTransition()
 
-        MoonActionButton:
-            id: send_mode_button
-            text: "Invia"
-            height: dp(46)
-
-        MoonActionButton:
-            id: receive_mode_button
-            text: "Ricevi"
-            button_color: app.secondary_color
-            height: dp(46)
-
-    ScreenManager:
-        id: view_manager
-        transition: NoTransition()
-
-        Screen:
-            name: "send"
-
-            ScrollView:
-                do_scroll_x: False
-
+            Screen:
+                name: "send"
                 BoxLayout:
                     orientation: "vertical"
-                    spacing: dp(12)
-                    padding: 0, dp(12), 0, dp(24)
-                    size_hint_y: None
-                    height: self.minimum_height
 
-                    MoonWrappedLabel:
-                        text: "Invia file e cartelle a MoonTransfer su un altro dispositivo."
-                        font_size: sp(16)
-                        label_color: app.text_color
-                        minimum_height: dp(40)
-
-                    BoxLayout:
-                        orientation: "horizontal"
-                        spacing: dp(8)
+                    MoonSurface:
                         size_hint_y: None
-                        height: dp(48)
+                        height: max(dp(44), send_status.texture_size[1] + dp(18))
+                        padding: dp(16), dp(7)
+                        radius: 0
+                        surface_color: theme.SURFACE
+                        border_color: theme.BORDER
+                        MoonWrappedLabel:
+                            id: send_status
+                            text: "Seleziona file o cartelle per iniziare."
+                            label_color: theme.TEXT_MUTED
+                            minimum_height: dp(28)
 
-                        MoonActionButton:
-                            id: select_button
-                            text: "Aggiungi file"
+                    ScreenManager:
+                        id: send_stage_manager
+                        transition: FadeTransition(duration=0.12)
 
-                        MoonActionButton:
-                            id: select_directory_button
-                            text: "Aggiungi cartella"
-                            button_color: app.secondary_color
+                        Screen:
+                            name: "send_selection"
+                            BoxLayout:
+                                orientation: "vertical"
 
-                    MoonWrappedLabel:
-                        id: file_status
-                        text: "Nessun elemento selezionato."
+                                ScrollView:
+                                    do_scroll_x: False
+                                    bar_width: dp(3)
+                                    scroll_type: ["bars", "content"]
 
-                    BoxLayout:
-                        id: selection_list
-                        orientation: "vertical"
-                        spacing: dp(6)
-                        size_hint_y: None
-                        height: self.minimum_height
+                                    AnchorLayout:
+                                        size_hint_y: None
+                                        height: send_selection_content.height + dp(32)
+                                        anchor_x: "center"
+                                        anchor_y: "top"
 
-                    MoonActionButton:
-                        id: clear_selection_button
-                        text: "Svuota selezione"
-                        button_color: app.secondary_color
+                                        BoxLayout:
+                                            id: send_selection_content
+                                            orientation: "vertical"
+                                            spacing: dp(14)
+                                            padding: 0, dp(16)
+                                            size_hint: None, None
+                                            width: min(Window.width - dp(32), dp(960))
+                                            height: self.minimum_height
 
-                    MoonActionButton:
-                        id: send_button
-                        text: "Prepara e invia"
+                                            MoonTitleLabel:
+                                                text: "Invia"
 
-                    MoonWrappedLabel:
-                        text: "Codice da comunicare al destinatario"
-                        label_color: app.text_color
-                        minimum_height: dp(30)
+                                            MoonWrappedLabel:
+                                                text: "Prepara la selezione"
+                                                font_size: sp(15)
+                                                minimum_height: dp(28)
 
-                    BoxLayout:
-                        orientation: "horizontal"
-                        spacing: dp(8)
-                        size_hint_y: None
-                        height: dp(48)
+                                            MoonAdaptiveBox:
+                                                spacing: dp(14)
+                                                size_hint_y: None
+                                                height: self.minimum_height
 
-                        TextInput:
-                            id: code_input
-                            readonly: True
-                            multiline: False
-                            hint_text: "Il codice apparirà durante la preparazione"
-                            size_hint: 1, None
-                            height: dp(48)
-                            font_size: sp(14)
+                                                MoonSurface:
+                                                    orientation: "vertical"
+                                                    spacing: dp(12)
+                                                    padding: dp(16)
+                                                    size_hint_y: None
+                                                    height: self.minimum_height
 
-                        MoonActionButton:
-                            id: copy_button
-                            text: "Copia"
-                            button_color: app.secondary_color
-                            size_hint_x: None
-                            width: dp(88)
+                                                    MoonWrappedLabel:
+                                                        text: "Aggiungi contenuto"
+                                                        font_size: sp(16)
+                                                        bold: True
+                                                        label_color: theme.TEXT
+                                                        minimum_height: dp(30)
 
-                    ProgressBar:
-                        id: progress_bar
-                        max: 100
-                        value: 0
-                        size_hint_y: None
-                        height: dp(18)
+                                                    BoxLayout:
+                                                        orientation: "horizontal"
+                                                        spacing: dp(10)
+                                                        size_hint_y: None
+                                                        height: dp(50)
 
-                    MoonWrappedLabel:
-                        id: progress_details
-                        text: "0 B / - | Velocità - | Trascorso - | Rimanente -"
-                        minimum_height: dp(38)
+                                                        MoonButton:
+                                                            id: select_button
+                                                            text: "File"
+                                                            icon_source: theme.icon_path("file")
 
-                    MoonWrappedLabel:
-                        id: send_status
-                        text: "Seleziona file o cartelle per iniziare."
-                        label_color: app.text_color
-                        minimum_height: dp(44)
+                                                        MoonButton:
+                                                            id: select_directory_button
+                                                            text: "Cartella"
+                                                            icon_source: theme.icon_path("folder")
+                                                            variant: "secondary"
 
-                    MoonActionButton:
-                        id: cancel_button
-                        text: "Interrompi"
-                        button_color: app.destructive_color
+                                                    MoonWrappedLabel:
+                                                        id: file_status
+                                                        text: "Nessun elemento selezionato."
+                                                        minimum_height: dp(44)
 
-                    MoonWrappedLabel:
-                        id: transport_status
-                        text: app.initial_transport_status
-                        minimum_height: dp(38)
+                                                MoonSurface:
+                                                    orientation: "vertical"
+                                                    spacing: dp(8)
+                                                    padding: dp(16), dp(12)
+                                                    size_hint_y: None
+                                                    height: dp(342)
 
-                    MoonActionButton:
-                        id: probe_button
-                        text: "Verifica trasporto"
-                        button_color: app.secondary_color
+                                                    BoxLayout:
+                                                        orientation: "horizontal"
+                                                        spacing: dp(8)
+                                                        size_hint_y: None
+                                                        height: dp(42)
 
-        Screen:
-            name: "receive"
+                                                        MoonWrappedLabel:
+                                                            text: "Selezione"
+                                                            font_size: sp(16)
+                                                            bold: True
+                                                            label_color: theme.TEXT
+                                                            minimum_height: dp(32)
 
-            ScrollView:
-                do_scroll_x: False
+                                                        MoonButton:
+                                                            id: clear_selection_button
+                                                            text: "Svuota"
+                                                            icon_source: theme.icon_path("trash-2")
+                                                            variant: "quiet"
+                                                            size_hint_x: None
+                                                            width: dp(112)
+                                                            height: dp(42)
 
+                                                    MoonSelectionList:
+                                                        id: selection_list
+                                                        do_scroll_x: False
+                                                        always_overscroll: False
+                                                        viewclass: "MoonSelectionRow"
+                                                        bar_width: dp(3)
+                                                        scroll_type: ["bars", "content"]
+                                                        RecycleBoxLayout:
+                                                            default_size: None, dp(64)
+                                                            default_size_hint: 1, None
+                                                            size_hint_y: None
+                                                            height: self.minimum_height
+                                                            orientation: "vertical"
+
+                                MoonActionBar:
+                                    Widget:
+                                    MoonButton:
+                                        id: send_button
+                                        text: "Prepara invio"
+                                        icon_source: theme.icon_path("send")
+                                        size_hint_x: None
+                                        width: min(self.parent.width - dp(32), dp(480))
+                                    Widget:
+
+                        Screen:
+                            name: "send_waiting"
+                            BoxLayout:
+                                orientation: "vertical"
+
+                                ScrollView:
+                                    do_scroll_x: False
+                                    AnchorLayout:
+                                        size_hint_y: None
+                                        height: send_waiting_content.height + dp(32)
+                                        anchor_x: "center"
+                                        anchor_y: "top"
+                                        BoxLayout:
+                                            id: send_waiting_content
+                                            orientation: "vertical"
+                                            spacing: dp(14)
+                                            padding: 0, dp(16)
+                                            size_hint: None, None
+                                            width: min(Window.width - dp(32), dp(680))
+                                            height: self.minimum_height
+
+                                            MoonTitleLabel:
+                                                id: send_waiting_title
+                                                text: "Preparazione invio"
+
+                                            MoonSurface:
+                                                orientation: "vertical"
+                                                spacing: dp(12)
+                                                padding: dp(18)
+                                                size_hint_y: None
+                                                height: self.minimum_height
+
+                                                MoonWrappedLabel:
+                                                    text: "Codice da condividere"
+                                                    font_size: sp(13)
+                                                    label_color: theme.TEXT_SUBTLE
+                                                    minimum_height: dp(24)
+
+                                                BoxLayout:
+                                                    orientation: "horizontal"
+                                                    spacing: dp(10)
+                                                    size_hint_y: None
+                                                    height: dp(56)
+
+                                                    MoonTextInput:
+                                                        id: code_input
+                                                        readonly: True
+                                                        hint_text: "Generazione del codice..."
+                                                        font_name: "RobotoMono-Regular"
+                                                        font_size: sp(16)
+                                                        height: dp(56)
+
+                                                    MoonIconButton:
+                                                        id: copy_button
+                                                        icon_source: theme.icon_path("copy")
+                                                        variant: "secondary"
+                                                        size: dp(56), dp(56)
+
+                                                MoonWrappedLabel:
+                                                    id: send_payload_summary
+                                                    text: "Analisi del contenuto in corso..."
+                                                    label_color: theme.TEXT_MUTED
+                                                    minimum_height: dp(52)
+
+                                MoonActionBar:
+                                    Widget:
+                                    MoonButton:
+                                        id: cancel_button
+                                        text: "Interrompi"
+                                        icon_source: theme.icon_path("x")
+                                        variant: "danger"
+                                        size_hint_x: None
+                                        width: min(self.parent.width - dp(32), dp(480))
+                                    Widget:
+
+                        Screen:
+                            name: "send_transfer"
+                            BoxLayout:
+                                orientation: "vertical"
+
+                                ScrollView:
+                                    do_scroll_x: False
+                                    AnchorLayout:
+                                        size_hint_y: None
+                                        height: send_transfer_content.height + dp(32)
+                                        anchor_x: "center"
+                                        anchor_y: "top"
+                                        BoxLayout:
+                                            id: send_transfer_content
+                                            orientation: "vertical"
+                                            spacing: dp(14)
+                                            padding: 0, dp(16)
+                                            size_hint: None, None
+                                            width: min(Window.width - dp(32), dp(760))
+                                            height: self.minimum_height
+
+                                            MoonTitleLabel:
+                                                text: "Invio in corso"
+
+                                            MoonSurface:
+                                                orientation: "vertical"
+                                                spacing: dp(14)
+                                                padding: dp(18)
+                                                size_hint_y: None
+                                                height: self.minimum_height
+
+                                                MoonWrappedLabel:
+                                                    id: send_transfer_summary
+                                                    text: "Contenuto in trasferimento"
+                                                    font_size: sp(16)
+                                                    label_color: theme.TEXT
+                                                    minimum_height: dp(44)
+
+                                                MoonWrappedLabel:
+                                                    id: send_percent
+                                                    text: "0%"
+                                                    font_size: sp(30)
+                                                    bold: True
+                                                    label_color: theme.TEXT
+                                                    minimum_height: dp(46)
+
+                                                MoonProgressBar:
+                                                    id: progress_bar
+                                                    max: 100
+                                                    value: 0
+
+                                                MoonWrappedLabel:
+                                                    id: progress_details
+                                                    text: "0 B / -"
+                                                    minimum_height: dp(30)
+
+                                                GridLayout:
+                                                    cols: 2
+                                                    spacing: dp(10), dp(6)
+                                                    size_hint_y: None
+                                                    height: self.minimum_height
+                                                    MoonMetric:
+                                                        id: send_speed_metric
+                                                        title: "Velocità"
+                                                        value: "-"
+                                                    MoonMetric:
+                                                        id: send_remaining_metric
+                                                        title: "Rimanente"
+                                                        value: "-"
+                                                    MoonMetric:
+                                                        id: send_elapsed_metric
+                                                        title: "Trascorso"
+                                                        value: "-"
+                                                    MoonMetric:
+                                                        id: send_transferred_metric
+                                                        title: "Trasferito"
+                                                        value: "0 B"
+
+                                MoonActionBar:
+                                    Widget:
+                                    MoonButton:
+                                        id: transfer_cancel_button
+                                        text: "Interrompi"
+                                        icon_source: theme.icon_path("x")
+                                        variant: "danger"
+                                        size_hint_x: None
+                                        width: min(self.parent.width - dp(32), dp(480))
+                                    Widget:
+
+                        Screen:
+                            name: "send_result"
+                            BoxLayout:
+                                orientation: "vertical"
+                                AnchorLayout:
+                                    padding: dp(16)
+                                    MoonResultPanel:
+                                        id: send_result_panel
+                                        size_hint_x: None
+                                        width: min(Window.width - dp(32), dp(560))
+                                        title: "Invio terminato"
+                                        message: "Il trasferimento è terminato."
+                                        icon_source: theme.icon_path("circle-check")
+                                MoonActionBar:
+                                    Widget:
+                                    MoonButton:
+                                        id: send_reset_button
+                                        text: "Nuovo invio"
+                                        icon_source: theme.icon_path("plus")
+                                        size_hint_x: None
+                                        width: min(self.parent.width - dp(32), dp(480))
+                                    Widget:
+
+            Screen:
+                name: "receive"
                 BoxLayout:
                     orientation: "vertical"
-                    spacing: dp(12)
-                    padding: 0, dp(12), 0, dp(24)
-                    size_hint_y: None
-                    height: self.minimum_height
 
-                    MoonWrappedLabel:
-                        text: "Ricevi file e cartelle inviati da MoonTransfer."
-                        font_size: sp(16)
-                        label_color: app.text_color
-                        minimum_height: dp(40)
-
-                    MoonWrappedLabel:
-                        text: "Codice comunicato dal mittente"
-                        label_color: app.text_color
-                        minimum_height: dp(30)
-
-                    TextInput:
-                        id: receive_code_input
-                        multiline: False
-                        hint_text: "Codice di trasferimento"
+                    MoonSurface:
                         size_hint_y: None
-                        height: dp(48)
-                        font_size: sp(14)
+                        height: max(dp(44), receive_status.texture_size[1] + dp(18))
+                        padding: dp(16), dp(7)
+                        radius: 0
+                        surface_color: theme.SURFACE
+                        border_color: theme.BORDER
+                        MoonWrappedLabel:
+                            id: receive_status
+                            text: "Inserisci il codice ricevuto dal mittente."
+                            label_color: theme.TEXT_MUTED
+                            minimum_height: dp(28)
 
-                    MoonActionButton:
-                        id: receive_start_button
-                        text: "Ricevi informazioni"
+                    ScreenManager:
+                        id: receive_stage_manager
+                        transition: FadeTransition(duration=0.12)
 
-                    MoonWrappedLabel:
-                        id: receive_proposal
-                        text: "Nessuna proposta ricevuta."
-                        minimum_height: dp(104)
+                        Screen:
+                            name: "receive_code"
+                            BoxLayout:
+                                orientation: "vertical"
 
-                    BoxLayout:
-                        orientation: "horizontal"
-                        spacing: dp(8)
-                        size_hint_y: None
-                        height: dp(48)
+                                ScrollView:
+                                    do_scroll_x: False
+                                    AnchorLayout:
+                                        size_hint_y: None
+                                        height: receive_code_content.height + dp(32)
+                                        anchor_x: "center"
+                                        anchor_y: "top"
+                                        BoxLayout:
+                                            id: receive_code_content
+                                            orientation: "vertical"
+                                            spacing: dp(14)
+                                            padding: 0, dp(16)
+                                            size_hint: None, None
+                                            width: min(Window.width - dp(32), dp(620))
+                                            height: self.minimum_height
 
-                        MoonActionButton:
-                            id: receive_reject_button
-                            text: "Rifiuta"
-                            button_color: app.destructive_color
+                                            MoonTitleLabel:
+                                                text: "Ricevi"
 
-                        MoonActionButton:
-                            id: receive_accept_button
-                            text: "Accetta"
-                            button_color: app.confirm_color
+                                            MoonWrappedLabel:
+                                                text: "Inserisci il codice"
+                                                font_size: sp(15)
+                                                minimum_height: dp(28)
 
-                    ProgressBar:
-                        id: receive_progress_bar
-                        max: 100
-                        value: 0
-                        size_hint_y: None
-                        height: dp(18)
+                                            MoonSurface:
+                                                orientation: "vertical"
+                                                spacing: dp(12)
+                                                padding: dp(18)
+                                                size_hint_y: None
+                                                height: self.minimum_height
 
-                    MoonWrappedLabel:
-                        id: receive_progress_details
-                        text: "0 B / - | Velocità - | Trascorso - | Rimanente -"
-                        minimum_height: dp(38)
+                                                MoonWrappedLabel:
+                                                    text: "Codice di trasferimento"
+                                                    font_size: sp(13)
+                                                    label_color: theme.TEXT_SUBTLE
+                                                    minimum_height: dp(24)
 
-                    MoonWrappedLabel:
-                        id: receive_status
-                        text: "Inserisci il codice per ricevere le informazioni sul contenuto."
-                        label_color: app.text_color
-                        minimum_height: dp(52)
+                                                BoxLayout:
+                                                    orientation: "horizontal"
+                                                    spacing: dp(10)
+                                                    size_hint_y: None
+                                                    height: dp(56)
 
-                    MoonActionButton:
-                        id: receive_save_button
-                        text: "Scegli dove salvare"
+                                                    MoonTextInput:
+                                                        id: receive_code_input
+                                                        hint_text: "32 caratteri esadecimali"
+                                                        font_name: "RobotoMono-Regular"
+                                                        font_size: sp(16)
+                                                        height: dp(56)
 
-                    MoonActionButton:
-                        id: receive_cancel_button
-                        text: "Interrompi"
-                        button_color: app.destructive_color
+                                                    MoonIconButton:
+                                                        id: receive_paste_button
+                                                        icon_source: theme.icon_path("clipboard-paste")
+                                                        variant: "secondary"
+                                                        size: dp(56), dp(56)
+
+                                                MoonWrappedLabel:
+                                                    text: "Il codice identifica questa sessione di trasferimento."
+                                                    font_size: sp(12)
+                                                    label_color: theme.TEXT_SUBTLE
+                                                    minimum_height: dp(38)
+
+                                MoonActionBar:
+                                    Widget:
+                                    MoonButton:
+                                        id: receive_start_button
+                                        text: "Verifica contenuto"
+                                        icon_source: theme.icon_path("download")
+                                        size_hint_x: None
+                                        width: min(self.parent.width - dp(32), dp(480))
+                                    Widget:
+
+                        Screen:
+                            name: "receive_loading"
+                            BoxLayout:
+                                orientation: "vertical"
+                                AnchorLayout:
+                                    padding: dp(16)
+                                    MoonSurface:
+                                        orientation: "vertical"
+                                        spacing: dp(14)
+                                        padding: dp(24)
+                                        size_hint: None, None
+                                        width: min(Window.width - dp(32), dp(520))
+                                        height: self.minimum_height
+                                        Image:
+                                            source: theme.icon_path("clock-3")
+                                            size_hint: None, None
+                                            size: dp(52), dp(52)
+                                            pos_hint: {"center_x": 0.5}
+                                            color: theme.PRIMARY
+                                        MoonWrappedLabel:
+                                            text: "Recupero informazioni"
+                                            font_size: sp(20)
+                                            bold: True
+                                            halign: "center"
+                                            label_color: theme.TEXT
+                                            minimum_height: dp(38)
+                                        MoonWrappedLabel:
+                                            text: "Connessione al mittente in corso..."
+                                            halign: "center"
+                                            minimum_height: dp(40)
+                                MoonActionBar:
+                                    Widget:
+                                    MoonButton:
+                                        id: receive_loading_cancel_button
+                                        text: "Interrompi"
+                                        icon_source: theme.icon_path("x")
+                                        variant: "danger"
+                                        size_hint_x: None
+                                        width: min(self.parent.width - dp(32), dp(480))
+                                    Widget:
+
+                        Screen:
+                            name: "receive_proposal"
+                            BoxLayout:
+                                orientation: "vertical"
+
+                                ScrollView:
+                                    do_scroll_x: False
+                                    AnchorLayout:
+                                        size_hint_y: None
+                                        height: receive_proposal_content.height + dp(32)
+                                        anchor_x: "center"
+                                        anchor_y: "top"
+                                        BoxLayout:
+                                            id: receive_proposal_content
+                                            orientation: "vertical"
+                                            spacing: dp(14)
+                                            padding: 0, dp(16)
+                                            size_hint: None, None
+                                            width: min(Window.width - dp(32), dp(680))
+                                            height: self.minimum_height
+
+                                            MoonTitleLabel:
+                                                text: "Proposta ricevuta"
+
+                                            MoonSurface:
+                                                orientation: "vertical"
+                                                spacing: dp(12)
+                                                padding: dp(18)
+                                                size_hint_y: None
+                                                height: self.minimum_height
+
+                                                Image:
+                                                    source: theme.icon_path("download")
+                                                    size_hint: None, None
+                                                    size: dp(38), dp(38)
+                                                    color: theme.PRIMARY
+                                                    fit_mode: "contain"
+
+                                                MoonWrappedLabel:
+                                                    id: receive_proposal
+                                                    text: "Nessuna proposta ricevuta."
+                                                    label_color: theme.TEXT
+                                                    minimum_height: dp(118)
+
+                                MoonActionBar:
+                                    Widget:
+                                    MoonButton:
+                                        id: receive_reject_button
+                                        text: "Rifiuta"
+                                        icon_source: theme.icon_path("x")
+                                        variant: "danger"
+                                        size_hint_x: None
+                                        width: min(dp(200), (self.parent.width - dp(42)) / 2)
+                                    MoonButton:
+                                        id: receive_accept_button
+                                        text: "Accetta"
+                                        icon_source: theme.icon_path("circle-check")
+                                        size_hint_x: None
+                                        width: min(dp(280), (self.parent.width - dp(42)) / 2)
+                                    Widget:
+
+                        Screen:
+                            name: "receive_transfer"
+                            BoxLayout:
+                                orientation: "vertical"
+
+                                ScrollView:
+                                    do_scroll_x: False
+                                    AnchorLayout:
+                                        size_hint_y: None
+                                        height: receive_transfer_content.height + dp(32)
+                                        anchor_x: "center"
+                                        anchor_y: "top"
+                                        BoxLayout:
+                                            id: receive_transfer_content
+                                            orientation: "vertical"
+                                            spacing: dp(14)
+                                            padding: 0, dp(16)
+                                            size_hint: None, None
+                                            width: min(Window.width - dp(32), dp(760))
+                                            height: self.minimum_height
+
+                                            MoonTitleLabel:
+                                                text: "Ricezione in corso"
+
+                                            MoonSurface:
+                                                orientation: "vertical"
+                                                spacing: dp(14)
+                                                padding: dp(18)
+                                                size_hint_y: None
+                                                height: self.minimum_height
+
+                                                MoonWrappedLabel:
+                                                    id: receive_transfer_summary
+                                                    text: "Contenuto in ricezione"
+                                                    font_size: sp(16)
+                                                    label_color: theme.TEXT
+                                                    minimum_height: dp(44)
+
+                                                MoonWrappedLabel:
+                                                    id: receive_percent
+                                                    text: "0%"
+                                                    font_size: sp(30)
+                                                    bold: True
+                                                    label_color: theme.TEXT
+                                                    minimum_height: dp(46)
+
+                                                MoonProgressBar:
+                                                    id: receive_progress_bar
+                                                    max: 100
+                                                    value: 0
+
+                                                MoonWrappedLabel:
+                                                    id: receive_progress_details
+                                                    text: "0 B / -"
+                                                    minimum_height: dp(30)
+
+                                                GridLayout:
+                                                    cols: 2
+                                                    spacing: dp(10), dp(6)
+                                                    size_hint_y: None
+                                                    height: self.minimum_height
+                                                    MoonMetric:
+                                                        id: receive_speed_metric
+                                                        title: "Velocità"
+                                                        value: "-"
+                                                    MoonMetric:
+                                                        id: receive_remaining_metric
+                                                        title: "Rimanente"
+                                                        value: "-"
+                                                    MoonMetric:
+                                                        id: receive_elapsed_metric
+                                                        title: "Trascorso"
+                                                        value: "-"
+                                                    MoonMetric:
+                                                        id: receive_transferred_metric
+                                                        title: "Trasferito"
+                                                        value: "0 B"
+
+                                MoonActionBar:
+                                    Widget:
+                                    MoonButton:
+                                        id: receive_cancel_button
+                                        text: "Interrompi"
+                                        icon_source: theme.icon_path("x")
+                                        variant: "danger"
+                                        size_hint_x: None
+                                        width: min(self.parent.width - dp(32), dp(480))
+                                    Widget:
+
+                        Screen:
+                            name: "receive_save"
+                            BoxLayout:
+                                orientation: "vertical"
+                                ScrollView:
+                                    do_scroll_x: False
+                                    AnchorLayout:
+                                        size_hint_y: None
+                                        height: receive_save_content.height + dp(32)
+                                        anchor_x: "center"
+                                        anchor_y: "top"
+                                        BoxLayout:
+                                            id: receive_save_content
+                                            orientation: "vertical"
+                                            spacing: dp(14)
+                                            padding: 0, dp(16)
+                                            size_hint: None, None
+                                            width: min(Window.width - dp(32), dp(620))
+                                            height: self.minimum_height
+
+                                            MoonTitleLabel:
+                                                text: "Contenuto verificato"
+
+                                            MoonSurface:
+                                                orientation: "vertical"
+                                                spacing: dp(14)
+                                                padding: dp(20)
+                                                size_hint_y: None
+                                                height: self.minimum_height
+
+                                                Image:
+                                                    source: theme.icon_path("shield-check")
+                                                    size_hint: None, None
+                                                    size: dp(52), dp(52)
+                                                    pos_hint: {"center_x": 0.5}
+                                                    color: theme.SUCCESS
+                                                    fit_mode: "contain"
+
+                                                MoonWrappedLabel:
+                                                    id: receive_save_summary
+                                                    text: "Il contenuto è pronto per il salvataggio."
+                                                    halign: "center"
+                                                    label_color: theme.TEXT
+                                                    minimum_height: dp(58)
+
+                                                MoonProgressBar:
+                                                    id: receive_save_progress_bar
+                                                    max: 100
+                                                    value: 0
+                                                    progress_color: theme.SUCCESS
+
+                                                MoonWrappedLabel:
+                                                    id: receive_save_progress_details
+                                                    text: "Scegli una destinazione per continuare."
+                                                    halign: "center"
+                                                    minimum_height: dp(42)
+
+                                MoonActionBar:
+                                    Widget:
+                                    MoonButton:
+                                        id: receive_save_button
+                                        text: "Scegli destinazione"
+                                        icon_source: theme.icon_path("save")
+                                        size_hint_x: None
+                                        width: min(dp(320), self.parent.width - dp(150))
+                                    MoonIconButton:
+                                        id: receive_save_cancel_button
+                                        icon_source: theme.icon_path("x")
+                                        variant: "danger"
+                                        size: dp(50), dp(50)
+                                    Widget:
+
+                        Screen:
+                            name: "receive_result"
+                            BoxLayout:
+                                orientation: "vertical"
+                                AnchorLayout:
+                                    padding: dp(16)
+                                    MoonResultPanel:
+                                        id: receive_result_panel
+                                        size_hint_x: None
+                                        width: min(Window.width - dp(32), dp(560))
+                                        title: "Ricezione terminata"
+                                        message: "Il trasferimento è terminato."
+                                        icon_source: theme.icon_path("circle-check")
+                                MoonActionBar:
+                                    Widget:
+                                    MoonButton:
+                                        id: receive_reset_button
+                                        text: "Nuova ricezione"
+                                        icon_source: theme.icon_path("plus")
+                                        size_hint_x: None
+                                        width: min(self.parent.width - dp(32), dp(480))
+                                    Widget:
+
+        MoonSurface:
+            orientation: "horizontal"
+            padding: dp(8), dp(4)
+            size_hint_y: None
+            height: dp(68)
+            radius: 0
+            surface_color: theme.SURFACE
+            border_color: theme.BORDER
+
+            MoonNavButton:
+                id: send_mode_button
+                text: "Invia"
+                icon_source: theme.icon_path("send")
+                selected: True
+
+            MoonNavButton:
+                id: receive_mode_button
+                text: "Ricevi"
+                icon_source: theme.icon_path("download")
+
+    MoonSnackbar:
+        id: snackbar
+        text: ""
+        opacity: 0
+        disabled: True
