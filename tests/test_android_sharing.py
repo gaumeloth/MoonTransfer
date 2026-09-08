@@ -22,11 +22,12 @@ CODE = "0123456789abcdef0123456789abcdef"
 OTHER_CODE = "abcdef0123456789abcdef0123456789"
 
 
-def intent(*, action=sharing.ACTION_SEND, streams=(), clip=(), text=None):
+def intent(*, action=sharing.ACTION_SEND, streams=(), clip=(), text=None, texts=None, clip_texts=None):
     result = Mock()
     result.getAction.return_value = action
     result.getParcelableExtra.return_value = _Uri(streams[0]) if streams else None
     result.getParcelableArrayListExtra.return_value = None
+    result.getCharSequenceArrayListExtra.return_value = None
     if action == sharing.ACTION_SEND_MULTIPLE:
         values = Mock()
         values.size.return_value = len(streams)
@@ -34,6 +35,22 @@ def intent(*, action=sharing.ACTION_SEND, streams=(), clip=(), text=None):
         result.getParcelableArrayListExtra.return_value = values
     result.getClipData.return_value = _ClipData(tuple(_Uri(u) for u in clip)) if clip else None
     result.getCharSequenceExtra.return_value = text
+    if texts is not None:
+        values = Mock()
+        values.size.return_value = len(texts)
+        values.get.side_effect = lambda i: texts[i]
+        result.getCharSequenceArrayListExtra.return_value = values
+    if clip_texts is not None:
+        items = []
+        for value in clip_texts:
+            item = Mock()
+            item.getUri.return_value = None
+            item.getText.return_value = value
+            items.append(item)
+        data = Mock()
+        data.getItemCount.return_value = len(items)
+        data.getItemAt.side_effect = lambda i: items[i]
+        result.getClipData.return_value = data
     return result
 
 
@@ -70,6 +87,46 @@ class AndroidSharingTests(unittest.TestCase):
         result = sharing.read_shared_intent(intent(streams=("content://photos/1",), text=CODE))
         self.assertEqual(result.uris, ("content://photos/1",))
         self.assertFalse(result.codes)
+
+    def test_multiple_texts_extract_code_from_instructions_and_code(self):
+        incoming = intent(action=sharing.ACTION_SEND_MULTIPLE, texts=("Codice MoonTransfer:", CODE))
+        self.assertEqual(sharing.read_shared_intent(incoming).codes, (CODE,))
+
+    def test_clipdata_text_and_java_charsequence_are_supported(self):
+        java_text = Mock()
+        java_text.toString.return_value = CODE
+        incoming = intent(clip_texts=("Codice MoonTransfer:", java_text))
+        self.assertEqual(sharing.read_shared_intent(incoming).codes, (CODE,))
+
+    def test_repeated_and_conflicting_codes_across_text_sources(self):
+        for extra in (CODE, OTHER_CODE):
+            with self.subTest(extra=extra):
+                incoming = intent(action=sharing.ACTION_SEND_MULTIPLE, texts=(CODE,), clip_texts=(extra,))
+                expected = (CODE,) if extra == CODE else (CODE, OTHER_CODE)
+                self.assertEqual(sharing.read_shared_intent(incoming).codes, expected)
+
+    def test_multiple_text_limits_apply_to_combined_content_and_item_count(self):
+        for texts in (("a" * 4096, "b" * 4096), (CODE,) * 257):
+            with self.subTest(count=len(texts)), self.assertRaises(sharing.AndroidShareError):
+                sharing.read_shared_intent(intent(action=sharing.ACTION_SEND_MULTIPLE, texts=texts))
+
+    def test_clipdata_cannot_bypass_combined_text_limit(self):
+        incoming = intent(text="a" * 4096, clip_texts=("b" * 4096,))
+        with self.assertRaises(sharing.AndroidShareError):
+            sharing.read_shared_intent(incoming)
+
+    def test_files_take_precedence_over_multiple_and_clipdata_texts(self):
+        incoming = intent(action=sharing.ACTION_SEND_MULTIPLE,
+                          streams=("content://files/1",), texts=(CODE, OTHER_CODE),
+                          clip_texts=("x" * 9000,))
+        result = sharing.read_shared_intent(incoming)
+        self.assertEqual(result.uris, ("content://files/1",))
+        self.assertFalse(result.codes)
+
+    def test_code_fragments_in_separate_items_are_not_joined_into_a_code(self):
+        incoming = intent(action=sharing.ACTION_SEND_MULTIPLE, texts=(CODE[:16], CODE[16:]))
+        with self.assertRaises(sharing.AndroidShareError):
+            sharing.read_shared_intent(incoming)
 
     def test_multiple_streams_and_clipdata_are_deduplicated(self):
         result = sharing.read_shared_intent(intent(

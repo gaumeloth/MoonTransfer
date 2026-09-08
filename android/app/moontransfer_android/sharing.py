@@ -46,7 +46,7 @@ class SharedContent:
 def shared_code_message(code: str) -> str:
     return (
         f"Codice MoonTransfer: {validate_croc_code(code)}\n"
-        "Apri MoonTransfer e inseriscilo in Ricevi."
+        "Copia questo messaggio e incollalo in Ricevi su MoonTransfer."
     )
 
 
@@ -113,12 +113,39 @@ def read_shared_intent(intent: Any) -> SharedContent | None:
                 add_uri(uri)
     if uris:
         return SharedContent(uris=tuple(uris))
-    text = intent.getCharSequenceExtra(EXTRA_TEXT)
-    if text is None:
+    texts: list[str] = []
+    text_size = 0
+
+    def add_text(text: Any) -> None:
+        nonlocal text_size
+        if text is None:
+            return
+        # Java CharSequence may be a SpannableString rather than a Python str.
+        value = text if isinstance(text, str) else str(text.toString())
+        if value in texts:
+            return
+        text_size += len(value) + bool(texts)
+        if text_size > MAX_SHARED_TEXT:
+            raise AndroidShareError("Il testo condiviso supera il limite consentito.")
+        texts.append(value)
+
+    multiple_texts = (
+        intent.getCharSequenceArrayListExtra(EXTRA_TEXT)
+        if action == ACTION_SEND_MULTIPLE else None
+    )
+    if multiple_texts is not None:
+        if int(multiple_texts.size()) > MAX_PAYLOAD_ROOTS:
+            raise AndroidShareError("Troppi testi condivisi. Condividi un solo codice.")
+        for index in range(int(multiple_texts.size())):
+            add_text(multiple_texts.get(index))
+    else:
+        add_text(intent.getCharSequenceExtra(EXTRA_TEXT))
+    if clip is not None:
+        for index in range(int(clip.getItemCount())):
+            add_text(clip.getItemAt(index).getText())
+    if not texts:
         raise AndroidShareError("Nessun file o codice nella condivisione ricevuta.")
-    # CharSequence can be a Java object (for example SpannableString), not a str.
-    value = text if isinstance(text, str) else str(text.toString())
-    return SharedContent(codes=codes_from_shared_text(value))
+    return SharedContent(codes=codes_from_shared_text("\n".join(texts)))
 
 
 def share_code(code: str) -> None:
