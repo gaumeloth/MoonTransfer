@@ -376,7 +376,7 @@ MoonTransferRoot:
                 variant: "quiet"
                 pos_hint: {"center_y": 0.5}
 
-        MoonSurface:
+        MoonTransportPanel:
             id: transport_panel
             orientation: "horizontal"
             spacing: dp(8)
@@ -614,6 +614,12 @@ MoonTransferRoot:
                                                         icon_source: theme.icon_path("copy")
                                                         variant: "secondary"
                                                         size: dp(56), dp(56)
+
+                                                MoonButton:
+                                                    id: share_button
+                                                    text: "Condividi codice"
+                                                    icon_source: theme.icon_path("share-2")
+                                                    variant: "secondary"
 
                                                 MoonWrappedLabel:
                                                     id: send_payload_summary

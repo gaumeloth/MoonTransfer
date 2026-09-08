@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tarfile
 import zipfile
+import xml.etree.ElementTree as ET
 from collections.abc import Callable, Sequence
 from pathlib import Path, PurePosixPath
 
@@ -76,10 +77,12 @@ REQUIRED_PRIVATE_MEMBERS = frozenset(
         "moontransfer_android/assets/icons/plus.png",
         "moontransfer_android/assets/icons/rotate-cw.png",
         "moontransfer_android/assets/icons/save.png",
+        "moontransfer_android/assets/icons/share-2.png",
         "moontransfer_android/assets/icons/send.png",
         "moontransfer_android/assets/icons/shield-check.png",
         "moontransfer_android/assets/icons/trash-2.png",
         "moontransfer_android/assets/icons/upload.png",
+        "moontransfer_android/sharing.pyc",
         "moontransfer_android/assets/icons/x.png",
         "moontransfer_android/licenses/croc.txt",
         "moontransfer_android/moontransfer.kv",
@@ -414,6 +417,43 @@ def _read_private_build_info(
     return build_info, names
 
 
+def validate_share_manifest(manifest_xml: str) -> None:
+    """Check share routing in the XML decoded from the packaged APK."""
+    root = ET.fromstring(manifest_xml)
+    ns = "{http://schemas.android.com/apk/res/android}"
+    application = root.find("application")
+    if application is None or application.get(ns + "enabled") == "false":
+        raise RuntimeError("Android manifest has no enabled application.")
+    activity_name = "io.github.gaumeloth.moontransfer.MoonTransferActivity"
+    activities = [
+        node for node in application.findall("activity")
+        if node.get(ns + "name") == activity_name
+    ]
+    if len(activities) != 1:
+        raise RuntimeError("Android APK must contain one MoonTransferActivity.")
+    activity = activities[0]
+    if activity.get(ns + "enabled") == "false" or activity.get(ns + "exported") != "true":
+        raise RuntimeError("MoonTransferActivity must be enabled and exported.")
+    # apkanalyzer can decode enum attributes as their numeric resource values.
+    if activity.get(ns + "launchMode") not in {"singleTask", "2"}:
+        raise RuntimeError("MoonTransferActivity must use singleTask launch mode.")
+    filters = activity.findall("intent-filter")
+    for action, category, mime_type in (
+        ("android.intent.action.MAIN", "android.intent.category.LAUNCHER", None),
+        ("android.intent.action.SEND", "android.intent.category.DEFAULT", "*/*"),
+        ("android.intent.action.SEND_MULTIPLE", "android.intent.category.DEFAULT", "*/*"),
+    ):
+        if not any(
+            action in {node.get(ns + "name") for node in item.findall("action")}
+            and category in {node.get(ns + "name") for node in item.findall("category")}
+            and (mime_type is None or mime_type in {
+                node.get(ns + "mimeType") for node in item.findall("data")
+            })
+            for item in filters
+        ):
+            raise RuntimeError(f"MoonTransferActivity is missing its {action} intent filter.")
+
+
 def validate_debug_apk(
     apk: Path,
     *,
@@ -538,6 +578,10 @@ def main() -> int:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("doctor", help="Check Android build prerequisites.")
+    subparsers.add_parser(
+        "verify-share-manifest",
+        help="Verify APK share routing from apkanalyzer manifest XML on stdin.",
+    )
     prepare_parser = subparsers.add_parser(
         "prepare",
         help="Generate the Android source tree.",
@@ -569,6 +613,10 @@ def main() -> int:
 
     if args.command == "doctor":
         return int(bool(print_environment_report()))
+    if args.command == "verify-share-manifest":
+        validate_share_manifest(sys.stdin.read())
+        print("Android APK share manifest: verified")
+        return 0
     if args.command == "prepare":
         print(
             prepare_android_source(

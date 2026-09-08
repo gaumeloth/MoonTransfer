@@ -233,7 +233,7 @@ def _application_pending_intent(context: Any) -> Any:
         raise AndroidRuntimeError("Runtime Android non disponibile.") from error
     pending_intent_class = autoclass("android.app.PendingIntent")
     intent_class = autoclass("android.content.Intent")
-    activity_class = autoclass("org.kivy.android.PythonActivity")
+    activity_class = autoclass("io.github.gaumeloth.moontransfer.MoonTransferActivity")
     intent = intent_class(context, activity_class)
     return pending_intent_class.getActivity(
         context,

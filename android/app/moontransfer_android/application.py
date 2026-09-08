@@ -37,6 +37,14 @@ from moontransfer_android.app_state import (
     project_service_snapshot,
 )
 from moontransfer_android.receiver import AndroidReceiveState
+from moontransfer_android.sharing import (
+    AndroidShareError,
+    SharedDirectoryAccessError,
+    codes_from_shared_text,
+    read_shared_intent,
+    share_code,
+    stage_shared_uris,
+)
 from moontransfer_android.sender import AndroidSendState
 from moontransfer_android.service_client import (
     TransferServiceClient,
@@ -112,6 +120,7 @@ VIEW_IDS = (
     "send_button",
     "cancel_button",
     "copy_button",
+    "share_button",
     "file_status",
     "send_status",
     "code_input",
@@ -188,6 +197,7 @@ class MoonTransferAndroidApp(App):
         self.cancel_button: MoonButton | None = None
         self.transfer_cancel_button: MoonButton | None = None
         self.copy_button: MoonIconButton | None = None
+        self.share_button: MoonButton | None = None
         self.file_status: MoonWrappedLabel | None = None
         self.send_status: MoonWrappedLabel | None = None
         self.code_input: MoonTextInput | None = None
@@ -260,6 +270,8 @@ class MoonTransferAndroidApp(App):
         self._send_stage_manager: ScreenManager | None = None
         self._receive_stage_manager: ScreenManager | None = None
         self._service_poll_event: Any = None
+        self._share_poll_event: Any = None
+        self._share_activity: Any = None
         self._snackbar_event: Any = None
         self._dialog_overlay: MoonDialogOverlay | None = None
 
@@ -312,6 +324,7 @@ class MoonTransferAndroidApp(App):
         self.send_button = ids["send_button"]
         self.cancel_button = ids["cancel_button"]
         self.copy_button = ids["copy_button"]
+        self.share_button = ids["share_button"]
         self.file_status = ids["file_status"]
         self.send_status = ids["send_status"]
         self.code_input = ids["code_input"]
@@ -369,12 +382,13 @@ class MoonTransferAndroidApp(App):
         self.clear_selection_button.bind(on_release=self._clear_selection)
         self.send_button.bind(on_release=self._start_send)
         self.copy_button.bind(on_release=self._copy_code)
+        self.share_button.bind(on_release=self._share_code)
         self.cancel_button.bind(on_release=self._cancel_send)
         self.transfer_cancel_button.bind(on_release=self._cancel_send)
         self.send_reset_button.bind(on_release=self._reset_send_view)
         self.probe_button.bind(on_release=self._start_transport_probe)
         self.receive_code_input.bind(
-            text=lambda _widget, _value: self._update_controls()
+            text=self._on_receive_code_changed
         )
         self.receive_paste_button.bind(on_release=self._paste_receive_code)
         self.receive_start_button.bind(on_release=self._start_receive)
@@ -454,8 +468,22 @@ class MoonTransferAndroidApp(App):
         if not service_active:
             self._start_transport_probe()
 
+        try:
+            from jnius import autoclass, cast
+            self._share_activity = cast(
+                "io.github.gaumeloth.moontransfer.MoonTransferActivity",
+                autoclass("org.kivy.android.PythonActivity").mActivity,
+            )
+            self._share_poll_event = Clock.schedule_interval(self._poll_shared_intents, 0.2)
+        except Exception:
+            self._show_error("Condivisione non disponibile", "Impossibile attivare le condivisioni Android.")
+
     def on_stop(self) -> None:
         self._closing = True
+        if self._share_poll_event is not None:
+            self._share_poll_event.cancel()
+            self._share_poll_event = None
+        self._share_activity = None
         self._staging_cancel.set()
         if self._service_poll_event is not None:
             self._service_poll_event.cancel()
@@ -591,6 +619,7 @@ class MoonTransferAndroidApp(App):
         uris: tuple[Any, ...],
         *,
         is_directory: bool,
+        shared: bool = False,
     ) -> None:
         self._staging_cancel.clear()
         self._staging = True
@@ -605,7 +634,7 @@ class MoonTransferAndroidApp(App):
         self._update_controls()
         Thread(
             target=self._run_staging,
-            args=(uris, existing_selection, is_directory),
+            args=(uris, existing_selection, is_directory, shared),
             daemon=True,
         ).start()
 
@@ -614,12 +643,20 @@ class MoonTransferAndroidApp(App):
         uris: tuple[Any, ...],
         existing_selection: StagedSelection | None,
         is_directory: bool,
+        shared: bool = False,
     ) -> None:
         try:
             def progress(copied: int, total: int | None) -> None:
                 self._post(self._show_staging_progress, copied, total)
 
-            if is_directory:
+            if shared:
+                selection = stage_shared_uris(
+                    uris, self._staging_parent,
+                    existing_selection=existing_selection,
+                    cancel_requested=self._staging_cancel.is_set,
+                    on_progress=progress,
+                )
+            elif is_directory:
                 if len(uris) != 1:
                     raise AndroidStorageError(
                         "Android non ha restituito una sola cartella."
@@ -642,6 +679,8 @@ class MoonTransferAndroidApp(App):
                 )
         except OperationCancelled:
             self._post(self._finish_staging_cancelled)
+        except SharedDirectoryAccessError as error:
+            self._post(self._shared_directory_unavailable, str(error))
         except Exception as error:
             self._post(self._finish_staging_error, str(error))
         else:
@@ -1646,6 +1685,91 @@ class MoonTransferAndroidApp(App):
             return None
         return client
 
+    def _poll_shared_intents(self, *_args: object) -> None:
+        if self._closing or self._share_activity is None or self._dialog_overlay is not None:
+            return
+        try:
+            intent = self._share_activity.consumeSharedIntent()
+            if intent is not None:
+                self._handle_shared_intent(intent)
+        except Exception as error:
+            self._show_error("Condivisione non riuscita", str(error))
+
+    def _handle_shared_intent(self, intent: Any) -> None:
+        content = read_shared_intent(intent)
+        if content is None:
+            return
+        if not self._derive_controls().select_file:
+            self._show_error(
+                "MoonTransfer occupato",
+                "Completa o interrompi l'operazione corrente, poi condividi nuovamente il contenuto.",
+            )
+            return
+        if content.uris:
+            self._reset_send_view()
+            self._stage_selected_uri(content.uris, is_directory=False, shared=True)
+            return
+        if len(content.codes) != 1:
+            previous_code = self.receive_code_input.text if self.receive_code_input is not None else ""
+            self._reset_receive_view()
+            if self.receive_code_input is not None:
+                self.receive_code_input.text = previous_code
+            self._show_error(
+                "Più codici ricevuti",
+                "Condividi un solo codice oppure inserisci quello desiderato in Ricevi.\n\n"
+                + "\n".join(content.codes),
+            )
+            return
+        code = content.codes[0]
+        if self.receive_code_input is not None and self.receive_code_input.text.strip():
+            if "".join(self.receive_code_input.text.split()) != code:
+                self._open_dialog(
+                    title="Sostituire il codice?",
+                    message="In Ricevi è già presente un codice. Vuoi usare quello condiviso?",
+                    secondary_text="Usa codice condiviso",
+                    secondary_callback=lambda: self._use_shared_code(code),
+                )
+                return
+        self._use_shared_code(code)
+
+    def _use_shared_code(self, code: str) -> None:
+        if self._dialog_overlay is not None:
+            self._close_dialog(self._dialog_overlay)
+        if not self._derive_controls().select_file:
+            self._show_error("MoonTransfer occupato", "Riprova dopo l'operazione corrente.")
+            return
+        self._reset_receive_view()
+        if self.receive_code_input is not None:
+            self.receive_code_input.text = code
+        self._show_snackbar("Codice ricevuto")
+        self._update_controls()
+
+    def _shared_directory_unavailable(self, message: str) -> None:
+        self._staging = False
+        if self._closing:
+            return
+        self._update_controls()
+        self._open_dialog(
+            title="Seleziona la cartella",
+            message=message,
+            secondary_text="Seleziona cartella",
+            secondary_callback=self._pick_shared_directory,
+        )
+
+    def _pick_shared_directory(self) -> None:
+        if self._dialog_overlay is not None:
+            self._close_dialog(self._dialog_overlay)
+        if self._derive_controls().select_file:
+            self._open_directory_picker()
+
+    def _share_code(self, *_args: object) -> None:
+        if not self._code or platform != "android":
+            return
+        try:
+            share_code(self._code)
+        except Exception:
+            self._show_error("Condivisione non disponibile", "Impossibile condividere il codice con altre app.")
+
     def _copy_code(self, *_args: object) -> None:
         if not self._code:
             return
@@ -1654,13 +1778,33 @@ class MoonTransferAndroidApp(App):
             self.send_status.text = "Codice copiato negli appunti."
         self._show_snackbar("Codice copiato negli appunti")
 
+    def _on_receive_code_changed(self, widget: MoonTextInput, value: str) -> None:
+        try:
+            codes = codes_from_shared_text(value)
+        except AndroidShareError:
+            codes = ()
+        if len(codes) == 1 and value != codes[0]:
+            widget.text = codes[0]
+        self._update_controls()
+
     def _paste_receive_code(self, *_args: object) -> None:
         if self.receive_code_input is None or self.receive_code_input.disabled:
             return
         value = Clipboard.paste()
         if value is None:
             return
-        self.receive_code_input.text = "".join(str(value).split())
+        try:
+            codes = codes_from_shared_text(str(value))
+        except AndroidShareError as error:
+            self._show_error("Codice non valido", str(error))
+            return
+        if len(codes) != 1:
+            self._show_error(
+                "Più codici ricevuti",
+                "Copia un solo codice oppure inserisci quello desiderato in Ricevi.",
+            )
+            return
+        self.receive_code_input.text = codes[0]
         self._show_snackbar("Codice incollato")
 
     @staticmethod
@@ -1744,6 +1888,8 @@ class MoonTransferAndroidApp(App):
             self.transfer_cancel_button.disabled = not controls.cancel_send
         if self.copy_button is not None:
             self.copy_button.disabled = not controls.copy_code
+        if self.share_button is not None:
+            self.share_button.disabled = platform != "android" or not controls.copy_code
         if self.receive_code_input is not None:
             self.receive_code_input.disabled = not controls.edit_receive_code
         if self.receive_paste_button is not None:

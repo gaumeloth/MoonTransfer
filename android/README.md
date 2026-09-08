@@ -52,8 +52,68 @@ The app declares `INTERNET`, the foreground-service permissions required for
 lock-screen public version of that notification is deliberately generic:
 transfer codes, hashes, paths, content URIs and technical errors are never
 displayed there. SAF grants access only to source documents, source folders, or
-destination directories explicitly chosen by the user; no broad storage
+destination directories explicitly chosen by the user. External shares grant
+temporary access to the supplied content URIs; no broad storage
 permission is requested.
+
+## Android system sharing
+
+- **Condividi codice** opens the Android Sharesheet for the current transfer
+  code. Copying the code remains available.
+- In a gallery, file manager, or another app, use **Share > MoonTransfer** to
+  import one or more files into the send selection. Existing selected items
+  are preserved; sending still requires explicit confirmation.
+- Share a received MoonTransfer code or the generated message from a chat to
+  prefill **Ricevi**, provided the chat supports sharing text to other Android
+  apps. Both the raw code and the app's spaced display format
+  are recognized. Multiple distinct codes require sharing just one or entering
+  it manually; replacing an existing code requires confirmation. Text without
+  a recognized code is not imported as a file.
+  Text lists and text in `ClipData` are also supported: duplicate codes are
+  deduplicated, while distinct codes remain ambiguous. Accepted text has a
+  combined limit of 8192 characters; shared files take precedence over any
+  accompanying text.
+- Alternatively, copy the entire message and paste it into **Ricevi**, using
+  the paste button or the field's paste menu. Only the code is kept, including
+  when it contains spaces or uppercase letters. Receiving still requires
+  pressing **Verifica contenuto**. The paste button reports missing or multiple
+  distinct codes and preserves the previous value; pasted directly into the
+  field, these texts remain editable and do not enable verification.
+  MoonTransfer's generated message includes this instruction, which also works
+  in chats that do not support sharing text to other apps.
+- External folders work when the sending provider supplies a readable document
+  tree. A shared subdirectory is imported without including its parent tree.
+  If access is unavailable, use **Seleziona cartella** to grant access through
+  the system picker. File managers may instead share a ZIP or a flat file list;
+  those are imported as supplied, without automatic extraction.
+- New shares arriving during staging, a picker operation, or an active transfer
+  are rejected with a request to retry afterward. They never start a second
+  transfer or replace the active session.
+
+The launcher uses `MoonTransferActivity`, a `singleTask` subclass of Kivy's
+activity. A bounded native inbox captures startup and subsequent share intents
+until Python can consume them. Saved activity state records the remaining inbox
+so consumed shares are not replayed during restoration. Notification taps open
+the same activity. Source access uses temporary URI grants and private staging;
+no broad storage permission or messaging-app SDK is needed. If the process is
+terminated during import, share the content again.
+
+Manual checks on a physical Android device:
+
+1. Share the code to a messaging app, return to MoonTransfer, and complete or
+   cancel the transfer; also reopen it through its notification.
+2. Share single and multiple files with MoonTransfer closed and already open.
+   Verify selection contents and complete a transfer to a PC.
+3. Share a raw code and the generated message; verify receive prefill, explicit
+   start, replacement confirmation, and ambiguous/invalid text handling.
+   Also copy the entire chat message and paste it using both the paste button
+   and the field's paste menu: only the code should remain.
+4. Share a supported folder/subfolder and test the picker fallback with a
+   provider that cannot grant tree access.
+5. Share during another operation, reopen from Recents, and rotate the device:
+   check that no active session is replaced and no old share is imported twice.
+
+QR codes and opening/re-sharing received files are outside this feature.
 
 ## Transport compatibility
 
@@ -173,6 +233,13 @@ pinned versions of `uv`, Python 3.13.14, Java 17, Go 1.25.12, and Rust 1.97.1,
 verifies `android/uv.lock`, installs the locked build dependency group, runs
 every `test_android*.py` test, executes `doctor`, and builds the `arm64-v8a`
 debug APK.
+
+A dedicated step also runs the 21 header, sharing, and scrolling GUI tests with
+Kivy and software rendering, without ADB or an emulator. The decoded APK
+manifest is checked for an enabled, exported share activity, `singleTask`
+launch mode, and launcher, `ACTION_SEND`, and `ACTION_SEND_MULTIPLE` filters.
+These checks do not replace manual testing with document providers and
+messaging apps on a device.
 
 The workflow selects the dedicated Buildozer `ci` profile. That profile accepts
 the configured Android SDK licenses non-interactively while Buildozer installs

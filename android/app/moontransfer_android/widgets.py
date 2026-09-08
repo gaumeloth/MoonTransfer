@@ -141,6 +141,24 @@ class MoonButton(_ButtonPalette, ButtonBehavior, BoxLayout):
     radius = NumericProperty(dp(8))
 
 
+class MoonTransportPanel(MoonSurface):
+    # Collapsing a layout does not shrink its fixed-size children or their hitboxes.
+    def on_touch_down(self, touch):
+        if self.disabled or self.height <= 0 or not self.collide_point(*touch.pos):
+            return False
+        return super().on_touch_down(touch)
+
+    def on_touch_move(self, touch):
+        if self.disabled or self.height <= 0 or not self.collide_point(*touch.pos):
+            return False
+        return super().on_touch_move(touch)
+
+    def on_touch_up(self, touch):
+        if self.disabled or self.height <= 0 or not self.collide_point(*touch.pos):
+            return False
+        return super().on_touch_up(touch)
+
+
 class MoonIconButton(_ButtonPalette, ButtonBehavior, FloatLayout):
     icon_source = StringProperty("")
     radius = NumericProperty(dp(8))
