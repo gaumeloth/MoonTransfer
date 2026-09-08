@@ -53,10 +53,72 @@ architetture non sono implementate. L'app dichiara `INTERNET`, i permessi per
 foreground service richiesti da `dataSync` e il permesso di notifica usato per
 mostrare lo stato del trasferimento. La versione pubblica visibile sulla
 schermata bloccata è volutamente generica: codici di trasferimento, hash,
-percorsi, content URI ed errori tecnici non vengono mai mostrati lì. SAF
+percorsi, content URI ed errori tecnici non vengono mai mostrati lì.
+Le condivisioni esterne concedono accesso temporaneo ai contenuti forniti. SAF
 fornisce accesso solo ai documenti sorgente, alle cartelle sorgente o alle
 directory di destinazione scelte esplicitamente dall'utente; non viene richiesto
 alcun permesso di archiviazione esteso.
+
+## Condivisione con Android
+
+- **Condividi codice** apre il pannello Android per inviare il codice corrente
+  a un'altra app. Rimane disponibile anche la copia negli appunti.
+- Da galleria, file manager o altre app, **Condividi > MoonTransfer** importa
+  uno o più file nella selezione di invio. Gli elementi già selezionati restano
+  disponibili; l'invio richiede sempre la conferma dell'utente.
+- Condividere dalla chat un codice o il messaggio generato da MoonTransfer
+  precompila **Ricevi**, se la chat offre la condivisione del testo verso altre
+  app Android. Sono riconosciuti il codice originale e il formato
+  visualizzato con spazi. Con più codici distinti occorre condividerne uno solo
+  o inserirlo manualmente; sostituire un codice già inserito richiede conferma.
+  Il testo senza un codice riconosciuto non viene importato come file.
+  Sono gestiti anche liste di testi e testo in `ClipData`: copie dello stesso
+  codice vengono unificate, mentre codici distinti restano ambigui. Il testo
+  complessivo accettato ha un limite di 8192 caratteri; i file condivisi hanno
+  precedenza sul testo allegato.
+- In alternativa, copiare l'intero messaggio e incollarlo nel campo di
+  **Ricevi**, tramite il pulsante Incolla o il menu del campo: viene estratto
+  automaticamente il solo codice, anche con spazi o lettere maiuscole.
+  La ricezione parte soltanto premendo **Verifica contenuto**. Il pulsante
+  Incolla segnala testi senza codice o con più codici distinti e conserva il
+  valore precedente; incollati direttamente nel campo, questi testi restano
+  modificabili e non abilitano la verifica.
+  Il messaggio generato da MoonTransfer contiene questa indicazione, utile
+  anche nelle chat che non permettono di condividere testo verso altre app.
+- Le cartelle esterne sono supportate quando il provider concede accesso alla
+  struttura. Condividere una sottocartella non importa la cartella superiore.
+  Se l'accesso manca, **Seleziona cartella** permette di autorizzarlo attraverso
+  il selettore Android. Alcuni file manager condividono invece uno ZIP o un
+  elenco di file: vengono importati così come forniti, senza estrazione automatica.
+- Le condivisioni durante importazione, selezione o trasferimento vengono
+  rifiutate con un messaggio che invita a riprovare dopo. Non avviano un secondo
+  trasferimento e non sostituiscono la sessione attiva.
+
+L'avvio usa `MoonTransferActivity`, sottoclasse `singleTask` dell'activity Kivy.
+Una coda nativa limitata raccoglie gli intent all'avvio e con l'app già aperta
+finché Python può elaborarli. Lo stato salvato dell'activity conserva gli intent
+ancora da elaborare, evitando di ripetere quelli consumati durante il ripristino.
+Anche le notifiche aprono la stessa activity. L'accesso usa permessi temporanei
+sugli URI e copie private, senza permessi generali sullo storage o SDK delle app
+di messaggistica. Se il processo termina durante l'importazione, condividere
+nuovamente il contenuto.
+
+Verifiche manuali su dispositivo Android fisico:
+
+1. Condividere il codice in una chat, tornare a MoonTransfer e completare o
+   interrompere il trasferimento; riaprire l'app anche dalla notifica.
+2. Condividere file singoli e multipli con MoonTransfer chiuso e già aperto;
+   controllare la selezione e completare un trasferimento verso PC.
+3. Condividere il codice e il messaggio generato; verificare precompilazione,
+   avvio esplicito, conferma di sostituzione e testo ambiguo/non valido.
+   Copiare anche l'intero messaggio dalla chat e incollarlo con il pulsante
+   Incolla e con il menu del campo: deve rimanere soltanto il codice.
+4. Condividere cartelle e sottocartelle compatibili e provare l'alternativa del
+   selettore quando il provider non concede accesso alla struttura.
+5. Condividere durante un'altra operazione, riaprire dai Recenti e ruotare il
+   dispositivo: nessuna sessione deve essere sostituita o condivisione duplicata.
+
+QR code e apertura/ricondivisione dei file ricevuti restano fuori da questa modifica.
 
 ## Compatibilità del trasporto
 
@@ -184,6 +246,13 @@ installa versioni fissate di `uv`, Python 3.13.14, Java 17, Go 1.25.12 e Rust
 1.97.1, verifica `android/uv.lock`, installa il gruppo bloccato delle dipendenze
 di build, esegue tutti i test `test_android*.py`, avvia `doctor` e crea l'APK di
 debug `arm64-v8a`.
+
+Un passaggio dedicato esegue inoltre i 21 test GUI di intestazione, condivisione
+e scorrimento con Kivy e rendering software, senza ADB o emulatore. Il manifest
+decodificato dell'APK viene controllato per verificare l'activity di condivisione
+abilitata ed esportata, la modalità `singleTask` e i filtri launcher,
+`ACTION_SEND` e `ACTION_SEND_MULTIPLE`. Questi controlli non sostituiscono le
+verifiche manuali con i provider e le app di messaggistica sul dispositivo.
 
 Il workflow seleziona il profilo Buildozer dedicato `ci`. Questo profilo accetta
 in modo non interattivo le licenze Android SDK configurate mentre Buildozer
