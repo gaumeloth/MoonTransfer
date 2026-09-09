@@ -5,7 +5,7 @@ import sys
 from collections.abc import Iterable
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QSettings
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from moontransfer import croc
+from moontransfer.codes import extract_transfer_code
 from moontransfer.build_info import CURRENT_BUILD
 from moontransfer.desktop import open_folder
 from moontransfer.files import (
@@ -49,6 +50,7 @@ from moontransfer.transfer import (
     ReceiveDecision,
     ReceiveTransferController,
     SendTransferController,
+    TransferState,
 )
 from moontransfer.widgets import (
     DropPathListWidget,
@@ -141,6 +143,9 @@ class SendTab(QWidget):
         )
 
         self.file_info_label = QLabel("Nessun elemento selezionato.")
+        self.container_edit = QLineEdit()
+        self.container_edit.setPlaceholderText("Nome contenitore per piu elementi: MoonTransfer")
+        self.container_edit.setAccessibleName("Nome del contenitore")
         self.file_info_label.setTextFormat(Qt.TextFormat.PlainText)
         self.file_info_label.setWordWrap(True)
         self.file_info_label.setSizePolicy(
@@ -198,6 +203,7 @@ class SendTab(QWidget):
         layout.addWidget(self.source_list)
         layout.addLayout(selection_actions)
         layout.addWidget(self.file_info_label)
+        layout.addWidget(self.container_edit)
         layout.addLayout(control_row)
         layout.addWidget(self.progress)
         add_expandable_output(layout, self.output)
@@ -339,6 +345,7 @@ class SendTab(QWidget):
 
     def _refresh_selection_actions(self) -> None:
         running = self.controller.active
+        self.container_edit.setEnabled(not running and len(self.source_paths) > 1)
         self.remove_button.setEnabled(
             not running and bool(self.source_list.selectedItems())
         )
@@ -401,6 +408,7 @@ class SendTab(QWidget):
         self._refresh_selection_actions()
 
     def _set_running(self, running: bool) -> None:
+        self.start_button.setText("Invia" if running else "Prepara nuovo invio")
         self.start_button.setEnabled(
             False if running else self._has_valid_selection()
         )
@@ -433,7 +441,8 @@ class SendTab(QWidget):
             return
 
         try:
-            self.controller.start(tuple(self.source_paths))
+            name = self.container_edit.text().strip() if len(self.source_paths) > 1 else ""
+            self.controller.start(tuple(self.source_paths), **({"container_name": name} if name else {}))
         except Exception as exc:
             self.status_label.setText("Impossibile avviare il trasferimento.")
             _show_controller_error(
@@ -457,9 +466,20 @@ class ReceiveTab(QWidget):
         self.status_label = StatusLabel("Pronto a ricevere un file.")
         self.code_edit = QLineEdit()
         self.code_edit.setPlaceholderText("Incolla il codice ricevuto")
-        self.dest_edit = QLineEdit(str(Path.home() / "Downloads"))
+        self.settings = QSettings("MoonTransfer", "MoonTransfer")
+        saved_destination = self.settings.value("receive/destination", "", type=str)
+        destination = Path(saved_destination) if saved_destination else Path.home() / "Downloads"
+        if not destination.is_dir():
+            destination = Path.home() / "Downloads"
+        self.dest_edit = QLineEdit(str(destination))
         self.dest_button = QPushButton("Scegli...")
         self.open_dest_button = QPushButton("Apri cartella")
+        self.retry_save_button = QPushButton("Riprova salvataggio")
+        self.retry_save_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
+        self.retry_save_button.setVisible(False)
+        self.result_label = QLabel()
+        self.result_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.result_label.setWordWrap(True)
         self.start_button = QPushButton("Ricevi")
         self.start_button.setEnabled(False)
         self.stop_button = QPushButton("Stop")
@@ -483,6 +503,7 @@ class ReceiveTab(QWidget):
             ),
             parent=self,
         )
+        self.controller.saved.connect(self._received_saved)
         self.controller.status_changed.connect(self.status_label.setText)
         self.controller.active_changed.connect(self._set_running)
         self.controller.terminal_line.connect(self.terminal.append_line)
@@ -504,6 +525,7 @@ class ReceiveTab(QWidget):
         control_row = QHBoxLayout()
         control_row.addWidget(self.start_button)
         control_row.addWidget(self.stop_button)
+        control_row.addWidget(self.retry_save_button)
         control_row.addStretch(1)
 
         layout = QVBoxLayout(self)
@@ -512,18 +534,30 @@ class ReceiveTab(QWidget):
         layout.addLayout(dest_row)
         layout.addLayout(control_row)
         layout.addWidget(self.progress)
+        layout.addWidget(self.result_label)
         add_expandable_output(layout, self.output)
 
-        self.code_edit.textChanged.connect(self._refresh_receive_actions)
+        self.code_edit.textChanged.connect(self._normalize_receive_code)
         self.dest_edit.textChanged.connect(self._refresh_receive_actions)
         self.dest_button.clicked.connect(self._choose_destination)
         self.open_dest_button.clicked.connect(self._open_destination)
         self.start_button.clicked.connect(self._start_receive)
         self.stop_button.clicked.connect(self._stop_receive)
+        self.retry_save_button.clicked.connect(self._retry_save)
         self._refresh_receive_actions()
 
     def stop_active_transfers(self) -> None:
         self.controller.stop()
+
+    def _normalize_receive_code(self, text: str) -> None:
+        try:
+            code = extract_transfer_code(text)
+        except ProtocolError:
+            pass
+        else:
+            if text != code:
+                self.code_edit.setText(code)
+        self._refresh_receive_actions()
 
     def _make_runner(self, croc_path: str) -> CrocRunner:
         return CrocRunner(
@@ -553,9 +587,11 @@ class ReceiveTab(QWidget):
         return bool(destination_text and Path(destination_text).is_dir())
 
     def _can_start_receive(self) -> bool:
-        return bool(
-            self.code_edit.text().strip() and self.dest_edit.text().strip()
-        )
+        try:
+            extract_transfer_code(self.code_edit.text())
+        except ProtocolError:
+            return False
+        return bool(self.dest_edit.text().strip())
 
     def _refresh_receive_actions(self) -> None:
         running = self.controller.active or self.controller.any_running()
@@ -612,14 +648,28 @@ class ReceiveTab(QWidget):
         )
         self.stop_button.setEnabled(running)
         self.code_edit.setEnabled(not running)
-        self.dest_edit.setEnabled(not running)
-        self.dest_button.setEnabled(not running)
+        awaiting_save = self.controller.state == TransferState.AWAITING_SAVE
+        self.retry_save_button.setVisible(awaiting_save)
+        self.retry_save_button.setEnabled(awaiting_save and not self.controller.stopping)
+        self.dest_edit.setEnabled(not running or awaiting_save)
+        self.dest_button.setEnabled(not running or awaiting_save)
         self.open_dest_button.setEnabled(
             not running and self._can_open_destination()
         )
 
     def _stop_receive(self) -> None:
         self.controller.stop()
+
+    def _retry_save(self) -> None:
+        try:
+            self.controller.retry_save(Path(self.dest_edit.text()).expanduser())
+        except Exception as error:
+            _show_controller_error(self, "Salvataggio non avviato", str(error))
+
+    def _received_saved(self, path: Path) -> None:
+        self.result_label.setText(f"Contenuto verificato e salvato in:\n{path}")
+        self.dest_edit.setText(str(path.parent))
+        self.settings.setValue("receive/destination", str(path.parent))
 
     def _start_receive(self) -> None:
         code = self.code_edit.text().strip()
@@ -637,7 +687,7 @@ class ReceiveTab(QWidget):
             return
 
         try:
-            code = validate_croc_code(code)
+            code = extract_transfer_code(code)
         except ProtocolError as exc:
             self.status_label.setText("Il codice inserito non è valido.")
             plain_message_box(
@@ -661,7 +711,9 @@ class ReceiveTab(QWidget):
             return
 
         try:
+            self.result_label.clear()
             self.controller.start(code, Path(destination_text))
+            self.settings.setValue("receive/destination", destination_text)
         except Exception as exc:
             self.status_label.setText(
                 "Impossibile avviare la ricezione."

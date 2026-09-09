@@ -20,6 +20,7 @@ from moontransfer.protocol import (
     TransferProposal,
     generate_session_id,
     portable_name_key,
+    validate_container_name,
     validate_croc_code,
     validate_filename,
     validate_sha256,
@@ -77,6 +78,7 @@ class TransferServiceRequest:
     filename: str | None = None
     size: int | None = None
     documents: tuple[StagedFileReference, ...] = ()
+    container_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -115,6 +117,7 @@ class TransferServiceSnapshot:
     save_copied: int | None = None
     save_total: int | None = None
     command_error: str | None = None
+    saved_uri: str | None = None
 
 
 def service_root(cache_root: Path) -> Path:
@@ -134,6 +137,8 @@ def service_session_dir(cache_root: Path, session_id: str) -> Path:
 def create_send_service_request(
     cache_root: Path,
     selection: StagedSelection | StagedDocument,
+    *,
+    container_name: str | None = None,
 ) -> TransferServiceRequest:
     if isinstance(selection, StagedDocument):
         selection = StagedSelection((selection,))
@@ -160,6 +165,7 @@ def create_send_service_request(
         filename=(first.filename if len(references) == 1 else "MoonTransfer"),
         size=selection.total_size,
         documents=references,
+        container_name=validate_container_name(container_name),
     )
     _create_service_session(cache_root, request)
     return request
@@ -257,6 +263,7 @@ def read_service_request(
         filename=validated_filename,
         size=validated_size,
         documents=documents,
+        container_name=validate_container_name(data.get("container_name")),
     )
 
 
@@ -443,6 +450,7 @@ class TransferServiceStateStore:
             "save_copied": None,
             "save_total": None,
             "command_error": None,
+            "saved_uri": None,
         }
         self._write_locked()
 
@@ -558,6 +566,7 @@ def read_service_snapshot(
             data.get("command_error"),
             "Errore del comando non valido.",
         ),
+        saved_uri=(_validate_destination_uri(data["saved_uri"]) if data.get("saved_uri") is not None else None),
     )
 
 
@@ -793,8 +802,7 @@ def _read_summary(value: Any) -> TransferSummary | None:
         if file_count + directory_count == 0:
             raise TransferServiceError("Riepilogo del contenuto vuoto.")
 
-    expected_filename = roots[0] if len(roots) == 1 else "MoonTransfer"
-    if validated_filename != expected_filename:
+    if len(roots) == 1 and validated_filename != roots[0]:
         raise TransferServiceError("Nome e radici del riepilogo non coerenti.")
     if is_single_file and (
         len(roots) != 1 or file_count != 1 or directory_count != 0

@@ -11,12 +11,16 @@ from kivy.clock import Clock
 from kivy.core.clipboard import Clipboard
 from kivy.core.window import Window
 from kivy.lang import Builder
+from kivy.storage.jsonstore import JsonStore
 from kivy.metrics import dp
 from kivy.uix.recycleview import RecycleView
 from kivy.uix.screenmanager import ScreenManager
 from kivy.utils import platform
 
 from moontransfer.cancellation import OperationCancelled
+from moontransfer.protocol import read_proposal
+from moontransfer_android.documents import document_action
+from moontransfer_android.service_protocol import service_session_dir, staged_selection_from_request
 from moontransfer.build_info import CURRENT_BUILD
 from moontransfer.progress import (
     TransferProgressSample,
@@ -118,6 +122,7 @@ VIEW_IDS = (
     "clear_selection_button",
     "selection_list",
     "send_button",
+    "send_container_input",
     "cancel_button",
     "copy_button",
     "share_button",
@@ -143,6 +148,7 @@ VIEW_IDS = (
     "receive_start_button",
     "receive_loading_cancel_button",
     "receive_proposal",
+    "receive_details_button",
     "receive_accept_button",
     "receive_reject_button",
     "receive_save_button",
@@ -160,6 +166,8 @@ VIEW_IDS = (
     "receive_save_progress_details",
     "receive_save_cancel_button",
     "receive_result_panel",
+    "receive_open_button",
+    "receive_share_button",
     "receive_reset_button",
     "receive_status",
     "snackbar",
@@ -274,6 +282,20 @@ class MoonTransferAndroidApp(App):
         self._share_activity: Any = None
         self._snackbar_event: Any = None
         self._dialog_overlay: MoonDialogOverlay | None = None
+        self._saved_uri: str | None = None
+        self._retained_selection_event: Any = None
+        self._details_loading = False
+
+    def _destination_preference(self, value: str | None = None) -> str | None:
+        try:
+            store = JsonStore(str(Path(self.user_data_dir) / "destination.json"))
+            if value is not None:
+                store.put("last", uri=value)
+                return value
+            saved = store.get("last")["uri"] if store.exists("last") else None
+            return saved if isinstance(saved, str) and saved.startswith("content://") else None
+        except (OSError, ValueError, KeyError):
+            return None
 
     @property
     def _cache_root(self) -> Path:
@@ -399,6 +421,9 @@ class MoonTransferAndroidApp(App):
         self.receive_cancel_button.bind(on_release=self._cancel_receive)
         self.receive_save_cancel_button.bind(on_release=self._cancel_receive)
         self.receive_reset_button.bind(on_release=self._reset_receive_view)
+        ids["receive_open_button"].bind(on_release=lambda *_: self._open_received())
+        ids["receive_share_button"].bind(on_release=lambda *_: self._open_received(share=True))
+        ids["receive_details_button"].bind(on_release=lambda *_: self._show_payload_details())
         self._refresh_selection_view()
 
     def _switch_mode(self, mode: str) -> None:
@@ -480,6 +505,9 @@ class MoonTransferAndroidApp(App):
 
     def on_stop(self) -> None:
         self._closing = True
+        if self._retained_selection_event is not None:
+            self._retained_selection_event.cancel()
+            self._retained_selection_event = None
         if self._share_poll_event is not None:
             self._share_poll_event.cancel()
             self._share_poll_event = None
@@ -495,8 +523,7 @@ class MoonTransferAndroidApp(App):
         if self._save_picker is not None:
             self._save_picker.close()
             self._save_picker = None
-        if self._service_client is None:
-            cleanup_staged_selection(self._selected_selection)
+        cleanup_staged_selection(self._selected_selection)
         self._selected_selection = None
 
     def on_pause(self) -> bool:
@@ -868,11 +895,15 @@ class MoonTransferAndroidApp(App):
             self.send_payload_summary.text = "Analisi del contenuto in corso..."
 
         try:
-            client = TransferServiceClient.for_send(self._cache_root, selection)
+            name = self.root.ids.send_container_input.text.strip() if selection.count > 1 else ""
+            client = TransferServiceClient.for_send(self._cache_root, selection, container_name=name or None)
             client.start()
         except Exception as error:
             self._show_error("Invio non avviato", str(error))
         else:
+            if self._retained_selection_event is not None:
+                self._retained_selection_event.cancel()
+                self._retained_selection_event = None
             self._selected_selection = None
             self._refresh_selection_view()
             self._activate_service(client)
@@ -985,6 +1016,16 @@ class MoonTransferAndroidApp(App):
     ) -> None:
         self._send_state = state
         self._selected_selection = None
+        client = self._service_client
+        if client is not None and state != AndroidSendState.CANCELLED:
+            try:
+                selection = staged_selection_from_request(self._cache_root, client.request)
+                self._selected_selection = selection
+                self._retained_selection_event = Clock.schedule_once(
+                    lambda *_: self._expire_send_selection(selection), 15 * 60,
+                )
+            except (OSError, ValueError, TransferServiceError):
+                pass
         self._code = None
         self._refresh_selection_view()
         if self.code_input is not None:
@@ -1001,7 +1042,16 @@ class MoonTransferAndroidApp(App):
         if state == AndroidSendState.COMPLETED and self.progress_bar is not None:
             self.progress_bar.value = 100
         self._configure_send_result(state, message)
+        if self._selected_selection is not None and self.send_result_panel is not None:
+            self.send_result_panel.message += "\nCopia preparata riutilizzabile per 15 minuti, fino alla chiusura dell'app."
         self._update_controls()
+
+    def _expire_send_selection(self, selection: StagedSelection) -> None:
+        if self._selected_selection is selection:
+            self._selected_selection = None
+            cleanup_staged_selection(selection)
+            self._refresh_selection_view()
+            self._update_controls()
 
     def _set_send_metrics(
         self,
@@ -1068,7 +1118,10 @@ class MoonTransferAndroidApp(App):
         if self.send_percent is not None:
             self.send_percent.text = "0%"
         if self.send_status is not None:
-            self.send_status.text = "Seleziona file o cartelle per iniziare."
+            self.send_status.text = (
+                "Copia precedente selezionata. Verifica la selezione e prepara un nuovo codice."
+                if self._selected_selection else "Seleziona file o cartelle per iniziare."
+            )
             self.send_status.label_color = MUTED_COLOR
         self._refresh_selection_view()
         self._switch_mode("send")
@@ -1283,6 +1336,7 @@ class MoonTransferAndroidApp(App):
             picker.open(
                 proposal.filename if proposal.is_single_file else None,
                 select_directory=not proposal.is_single_file,
+                initial_uri=self._destination_preference(),
                 on_selected=self._save_destination_selected,
                 on_cancelled=self._save_destination_cancelled,
                 on_error=self._save_destination_error,
@@ -1297,6 +1351,7 @@ class MoonTransferAndroidApp(App):
             return
         try:
             client.save_to_uri(str(uri.toString()))
+            self._destination_preference(str(uri.toString()))
             self._on_receive_state(AndroidReceiveState.SAVING)
             self._on_receive_status(
                 "Destinazione inviata al servizio di trasferimento..."
@@ -1409,6 +1464,81 @@ class MoonTransferAndroidApp(App):
         panel.message = message
         panel.icon_source = theme.icon_path(icon)
         panel.tone = receive_result_tone(state).value
+        if state == AndroidReceiveState.COMPLETED and self._receive_proposal is not None:
+            panel.message += (
+                f"\n{self._receive_proposal.filename}\n"
+                f"{format_file_size(self._receive_proposal.size)} | Integrita verificata"
+            )
+        if self.root is not None:
+            self.root.ids.receive_open_button.disabled = not (
+                state == AndroidReceiveState.COMPLETED and self._saved_uri
+            )
+            self.root.ids.receive_share_button.disabled = not (
+                state == AndroidReceiveState.COMPLETED and self._saved_uri
+                and self._receive_proposal and self._receive_proposal.is_single_file
+            )
+
+    def _open_received(self, *, share: bool = False) -> None:
+        if not self._saved_uri or not self._receive_proposal or self._receive_state != AndroidReceiveState.COMPLETED:
+            return
+        try:
+            document_action(self._saved_uri, share=share,
+                            directory=not self._receive_proposal.is_single_file)
+        except Exception as error:
+            self._show_error(
+                "Azione non avviata",
+                "Errore interno nell'integrazione Android. "
+                "Il contenuto salvato non e stato modificato. "
+                f"Dettaglio: {type(error).__name__}",
+            )
+
+    def _show_payload_details(self, offset: int = 0) -> None:
+        client = self._receive_service_client()
+        if client is None or self._details_loading:
+            return
+        self._details_loading = True
+        path = service_session_dir(self._cache_root, client.request.session_id) / "proposal.json"
+
+        def loaded(proposal: Any, error: str | None) -> None:
+            self._details_loading = False
+            if self._closing or self._receive_service_client() is not client:
+                return
+            if error:
+                self._show_error("Dettagli non disponibili", error)
+            else:
+                self._display_payload_details(proposal, offset)
+
+        def worker() -> None:
+            try:
+                proposal = read_proposal(path)
+            except Exception as error:
+                Clock.schedule_once(lambda _, message=str(error): loaded(None, message), 0)
+            else:
+                Clock.schedule_once(lambda _: loaded(proposal, None), 0)
+
+        Thread(target=worker, daemon=True).start()
+
+    def _display_payload_details(self, proposal: Any, offset: int = 0) -> None:
+        try:
+            # Bound the text texture even with deeply nested or unusually long paths.
+            parts = []
+            next_offset = offset
+            for entry in proposal.entries[offset:offset + 20]:
+                part = f"{entry.path}\n" + (f"{format_file_size(entry.size)}\nSHA-256: {entry.sha256}" if entry.is_file else "Cartella")
+                if parts and sum(map(len, parts)) + len(part) > 4000:
+                    break
+                parts.append(part)
+                next_offset += 1
+            details = "\n\n".join(parts)
+            self._open_dialog(
+                title="Contenuto del trasferimento",
+                message=f"{proposal.destination_name} | Elementi {offset + 1}-{next_offset} di {len(proposal.entries)}",
+                details=details,
+                secondary_text="Successivi" if next_offset < len(proposal.entries) else ("Inizio" if offset else ""),
+                secondary_callback=lambda: self._display_payload_details(proposal, next_offset if next_offset < len(proposal.entries) else 0),
+            )
+        except Exception as error:
+            self._show_error("Dettagli non disponibili", str(error))
 
     def _reset_receive_view(self, *_args: object) -> None:
         if self._service_client is not None or self._service_is_releasing():
@@ -1610,6 +1740,7 @@ class MoonTransferAndroidApp(App):
             raise TransferServiceError(
                 "Proiezione dello stato di ricezione non valida."
             )
+        self._saved_uri = snapshot.saved_uri
         self._switch_mode(projection.mode)
         self._on_receive_state(state)
         self._on_receive_status(snapshot.status)
@@ -1880,6 +2011,11 @@ class MoonTransferAndroidApp(App):
             self.clear_selection_button.disabled = not controls.manage_selection
         if self.selection_list is not None:
             self.selection_list.disabled = not controls.manage_selection
+        if self.root is not None:
+            self.root.ids.send_container_input.disabled = not (
+                controls.manage_selection and self._selected_selection
+                and self._selected_selection.count > 1
+            )
         if self.send_button is not None:
             self.send_button.disabled = not controls.start_send
         if self.cancel_button is not None:

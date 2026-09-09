@@ -269,6 +269,7 @@ class AndroidReceiveControllerTests(unittest.TestCase):
                 container_name: str,
                 cancel_requested: object,
                 on_progress: object,
+                on_saved: object,
             ) -> int:
                 destination = root / "saved" / container_name
                 destination.mkdir(parents=True)
@@ -346,6 +347,7 @@ class AndroidReceiveControllerTests(unittest.TestCase):
                 container_name: str,
                 cancel_requested: object,
                 on_progress: object,
+                on_saved: object,
             ) -> int:
                 destination = root / "saved" / container_name
                 shutil.copytree(sources[0], destination)

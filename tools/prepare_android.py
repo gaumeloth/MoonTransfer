@@ -17,6 +17,7 @@ SHARED_MODULES = (
     "__init__.py",
     "build_info.py",
     "cancellation.py",
+    "codes.py",
     "croc.py",
     "files.py",
     "messages.py",

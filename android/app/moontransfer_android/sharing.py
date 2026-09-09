@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
 from moontransfer.cancellation import OperationCancelled
-from moontransfer.protocol import MAX_PAYLOAD_ROOTS, validate_croc_code
+from moontransfer.codes import MAX_SHARED_TEXT, codes_from_shared_text as parse_codes
+from moontransfer.protocol import MAX_PAYLOAD_ROOTS, ProtocolError, validate_croc_code
 from moontransfer_android.storage import (
     AndroidStorageError,
     DIRECTORY_MIME_TYPE,
@@ -23,10 +23,6 @@ ACTION_SEND = "android.intent.action.SEND"
 ACTION_SEND_MULTIPLE = "android.intent.action.SEND_MULTIPLE"
 EXTRA_STREAM = "android.intent.extra.STREAM"
 EXTRA_TEXT = "android.intent.extra.TEXT"
-MAX_SHARED_TEXT = 8192
-CODE_PATTERN = re.compile(
-    r"(?<![\w])(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{8}(?:[ \t]+[0-9a-fA-F]{8}){3})(?![\w])"
-)
 
 
 class AndroidShareError(RuntimeError):
@@ -51,20 +47,10 @@ def shared_code_message(code: str) -> str:
 
 
 def codes_from_shared_text(text: str) -> tuple[str, ...]:
-    if len(text) > MAX_SHARED_TEXT:
-        raise AndroidShareError("Il testo condiviso supera il limite consentito.")
-    codes = tuple(dict.fromkeys(
-        validate_croc_code("".join(match.group().split()).lower())
-        for match in CODE_PATTERN.finditer(text)
-    ))
-    if not codes:
-        raise AndroidShareError(
-            "Nessun codice MoonTransfer riconosciuto. Condividi il codice "
-            "o il messaggio generato dal mittente."
-        )
-    if len(codes) > 8:
-        raise AndroidShareError("Troppi codici nel testo. Condividi un solo codice.")
-    return codes
+    try:
+        return parse_codes(text)
+    except ProtocolError as error:
+        raise AndroidShareError(str(error)) from error
 
 
 def read_shared_intent(intent: Any) -> SharedContent | None:

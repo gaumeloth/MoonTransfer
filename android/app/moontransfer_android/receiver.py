@@ -41,6 +41,7 @@ from moontransfer_android.transport import (
 CONTROL_IDLE_TIMEOUT_SECONDS = 15 * 60.0
 DECISION_TIMEOUT_SECONDS = 15 * 60.0
 MAIN_RECEIVE_DELAY_SECONDS = 0.75
+SAVE_RETENTION_SECONDS = 15 * 60.0
 
 
 class AndroidReceiveState(Enum):
@@ -71,6 +72,7 @@ class AndroidReceiveCallbacks:
     on_progress: Callable[[TransferProgressSample], None] = _ignore
     on_save_ready: Callable[[TransferProposal], None] = _ignore
     on_save_progress: Callable[[int, int], None] = _ignore
+    on_saved: Callable[[Any], None] = _ignore
     on_log: Callable[[str], None] = _ignore
     on_finished: Callable[[AndroidReceiveState, str], None] = _ignore
 
@@ -223,8 +225,22 @@ class AndroidReceiveController:
                 else:
                     self._receive_main_response(session, accepted=True)
                     self._verify_received_payload(session)
-                    self._wait_for_save_destination(session)
-                    self._save_received_payload(session)
+                    deadline = time.monotonic() + SAVE_RETENTION_SECONDS
+                    save_error = None
+                    while True:
+                        self._save_ready.clear()
+                        session.destination_uri = None
+                        self._wait_for_save_destination(session, deadline=deadline, error=save_error)
+                        try:
+                            self._save_received_payload(session)
+                            break
+                        except OperationCancelled:
+                            raise
+                        except Exception as error:
+                            self._raise_if_cancelled()
+                            # A retry is only allowed while the private payload still verifies.
+                            self._verify_received_payload(session)
+                            save_error = str(error)
                     terminal_state = AndroidReceiveState.COMPLETED
                     terminal_message = "Ricezione e salvataggio completati."
         except OperationCancelled:
@@ -397,15 +413,19 @@ class AndroidReceiveController:
             cancel_requested=self._cancel_requested.is_set,
         )
 
-    def _wait_for_save_destination(self, session: AndroidReceiveSession) -> None:
+    def _wait_for_save_destination(self, session: AndroidReceiveSession, *, deadline: float | None = None, error: str | None = None) -> None:
         proposal = self._require_proposal(session)
         self._set_state(AndroidReceiveState.AWAITING_SAVE)
         self.callbacks.on_status(
-            "Contenuto ricevuto e verificato. Scegli dove salvarlo."
+            (f"Salvataggio non riuscito: {error}. La destinazione potrebbe essere incompleta. " if error else "")
+            + "Contenuto verificato conservato per massimo 15 minuti dalla ricezione. "
+            "Scegli una destinazione oppure interrompi per eliminarlo."
         )
         self.callbacks.on_save_ready(proposal)
         while not self._save_ready.wait(0.1):
             self._raise_if_cancelled()
+            if deadline is not None and time.monotonic() >= deadline:
+                raise RuntimeError("Tempo di salvataggio scaduto; copia privata eliminata.")
         self._raise_if_cancelled()
         if session.destination_uri is None:
             raise RuntimeError("Destinazione di salvataggio mancante.")
@@ -423,6 +443,7 @@ class AndroidReceiveController:
                 cancel_requested=self._cancel_requested.is_set,
                 on_progress=self.callbacks.on_save_progress,
             )
+            self._notify_saved(session.destination_uri)
         else:
             self.save_files(
                 tuple(session.main_dir / root for root in proposal.roots),
@@ -430,7 +451,15 @@ class AndroidReceiveController:
                 container_name=proposal.destination_name,
                 cancel_requested=self._cancel_requested.is_set,
                 on_progress=self.callbacks.on_save_progress,
+                on_saved=self._notify_saved,
             )
+
+    def _notify_saved(self, uri: Any) -> None:
+        try:
+            self.callbacks.on_saved(uri)
+        except Exception:
+            # The public copy is already complete; URI reporting must not trigger a second save.
+            self.callbacks.on_log("Contenuto salvato; azioni sul documento non disponibili.")
 
     @staticmethod
     def _guard_directory_size(directory: Path, limit: int, stage: str) -> None:

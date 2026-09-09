@@ -106,12 +106,13 @@ class TransferServiceClient:
         cache_root: Path,
         selection: StagedSelection | StagedDocument,
         *,
+        container_name: str | None = None,
         service_starter: Callable[[str, str], None] = start_transfer_service,
         service_stopper: Callable[[], None] = stop_transfer_service,
     ) -> TransferServiceClient:
         return cls(
             cache_root,
-            create_send_service_request(cache_root, selection),
+            create_send_service_request(cache_root, selection, container_name=container_name),
             service_starter=service_starter,
             service_stopper=service_stopper,
         )

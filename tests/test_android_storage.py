@@ -932,11 +932,13 @@ class AndroidStorageTests(unittest.TestCase):
             contract = _DocumentsContract(destination_dir)
             progress: list[tuple[int, int]] = []
 
+            saved = []
             copied = storage.save_files_to_tree(
                 (first, second),
                 "content://tree/root",
                 resolver=resolver,
                 documents_contract=contract,
+                on_saved=saved.append,
                 on_progress=lambda current, total: progress.append(
                     (current, total)
                 ),
@@ -948,6 +950,8 @@ class AndroidStorageTests(unittest.TestCase):
             self.assertEqual((container / "second.bin").read_bytes(), b"second")
             self.assertEqual(progress[-1], (11, 11))
             self.assertEqual(contract.deleted, [])
+            self.assertEqual(len(saved), 1)
+            self.assertEqual(contract.locations[saved[0]], container)
 
     def test_save_directory_recreates_nested_tree_without_duplicate_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

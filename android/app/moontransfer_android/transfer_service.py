@@ -13,6 +13,7 @@ from moontransfer.progress import (
     format_file_size,
     format_transfer_rate,
 )
+from moontransfer.protocol import write_control_file
 from moontransfer_android.android_runtime import (
     TransferNotification,
     parse_content_uri,
@@ -325,7 +326,8 @@ class TransferServiceRuntime:
             if request.operation is TransferServiceOperation.SEND:
                 assert isinstance(controller, AndroidSendController)
                 controller.start(
-                    staged_selection_from_request(self.cache_root, request)
+                    staged_selection_from_request(self.cache_root, request),
+                    container_name=request.container_name,
                 )
             else:
                 assert isinstance(controller, AndroidReceiveController)
@@ -372,6 +374,7 @@ class TransferServiceRuntime:
         )
         if request.operation is TransferServiceOperation.SEND:
             return AndroidSendController(
+                retain_selection=True,
                 metadata_runner=self.runner_factory(),
                 main_runner=self.runner_factory(),
                 sessions_parent=sessions_parent,
@@ -394,6 +397,7 @@ class TransferServiceRuntime:
             runner=self.runner_factory(),
             sessions_parent=sessions_parent,
             callbacks=AndroidReceiveCallbacks(
+                on_saved=lambda uri: store.update(saved_uri=str(uri.toString())),
                 on_state=lambda state: self._set_state(state.value),
                 on_status=lambda status: self._set_status(status),
                 on_proposal=self._set_proposal,
@@ -474,6 +478,8 @@ class TransferServiceRuntime:
         self._notify(force=True)
 
     def _set_proposal(self, proposal: Any) -> None:
+        # The full manifest is bounded separately; keep heartbeat snapshots small.
+        write_control_file(self._require_store().path.parent / "proposal.json", proposal)
         self._require_store().set_proposal(proposal)
         with self._notification_lock:
             self._notification_filename = proposal.filename
