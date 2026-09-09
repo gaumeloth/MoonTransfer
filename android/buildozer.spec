@@ -17,6 +17,11 @@ version.filename = %(source.dir)s/main.py
 requirements = python3==3.13.14,hostpython3==3.13.14,kivy==2.3.1,chardet==5.2.0,charset_normalizer==3.4.9,croc
 
 icon.filename = %(source.dir)s/moontransfer/assets/icons/moontransfer-icon.png
+
+# Loading screen shown while Python/Kivy is starting.
+presplash.filename = %(source.dir)s/moontransfer/assets/branding/moontransfer-logo.png
+android.presplash_color = #282f41
+
 orientation = all
 fullscreen = 0
 
