@@ -1,0 +1,3 @@
+# Increase before every new distributed Android release (including test releases).
+# Tags use this value; manual builds can override it for testing.
+version_code = 2

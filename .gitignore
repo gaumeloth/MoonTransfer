@@ -18,6 +18,13 @@ release/
 android/.buildozer/
 android/bin/
 
+# Private Android signing material (keep outside the checkout as well)
+*.keystore
+*.jks
+*.p12
+*.pfx
+signing.env
+
 # Cache
 .cache/
 .pytest_cache/
