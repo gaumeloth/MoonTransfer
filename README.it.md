@@ -759,9 +759,48 @@ stimato rimanente quando `croc` fornisce informazioni di progresso sufficienti.
 
 Un singolo file o una singola cartella ricevuti conservano il nome originale
 dell'elemento principale. Una selezione con più elementi principali viene
-salvata in una cartella contenitore `MoonTransfer`. Le cartelle esistenti non
+salvata in una cartella contenitore (`MoonTransfer` per impostazione predefinita,
+oppure il nome portabile scelto dal mittente). Le cartelle esistenti non
 vengono mai unite o sovrascritte ricorsivamente: MoonTransfer propone invece un
 nome univoco come `MoonTransfer (1)`.
+
+### Codici, risultati e recupero
+
+Su desktop e Android puoi incollare in **Ricevi** il codice oppure l'intero
+messaggio MoonTransfer. Il parser condiviso estrae un unico codice esadecimale
+di 32 caratteri, anche nel formato visualizzato con spazi. Un testo ambiguo
+con codici differenti non viene accettato automaticamente. Importare il codice
+non avvia mai un trasferimento.
+
+Il desktop ricorda l'ultima destinazione e mostra il percorso effettivamente
+salvato dopo la verifica. Android riapre il selettore di sistema nell'ultima
+destinazione, quando il provider lo consente; serve comunque la conferma del
+salvataggio. Nel risultato Android trovi **Apri** per il contenuto salvato e
+**Condividi** per un singolo file. Aprire una cartella richiede un gestore
+documenti compatibile. **Dettagli**, nella proposta, mostra percorsi, dimensioni
+e hash dei file in pagine di dimensioni limitate.
+
+Se il salvataggio finale fallisce, puoi scegliere un'altra destinazione senza
+riscaricare il contenuto verificato. Il desktop conserva la copia per massimo
+15 minuti dal primo errore di salvataggio; Android concede 15 minuti dalla
+verifica per scegliere o riprovare una destinazione. Stop, scadenza o
+terminazione del processo responsabile interrompono questa possibilità.
+Un provider Android può lasciare un risultato parziale dopo un errore:
+controlla la destinazione precedente prima di riprovare.
+
+**Prepara nuovo invio** crea un nuovo trasferimento con nuovi codici, non una
+ripresa parziale. Il desktop analizza nuovamente gli originali selezionati.
+Android può riutilizzare le copie preparate per massimo 15 minuti dalla
+visualizzazione del risultato, fino alla chiusura dell'app; per includere
+modifiche agli originali occorre selezionarli di nuovo. Annullare esplicitamente
+l'invio elimina le copie preparate Android. Quelle lasciate da un processo
+terminato vengono pulite al successivo avvio, non riproposte come trasferimenti
+riprendibili.
+
+Il campo facoltativo `container_name` del manifest non modifica il protocollo 2
+né la compatibilità del trasporto. I destinatari precedenti lo ignorano e usano
+`MoonTransfer` per più radici. Un singolo file o una singola cartella mantengono
+sempre il nome originale.
 
 ### Limiti attuali dei payload
 
@@ -803,9 +842,6 @@ Possibili miglioramenti futuri, in ordine indicativo:
 - aggiungere firma e notarizzazione dove opportuno, quindi valutare formati di
   distribuzione più nativi come AppImage, un installer Windows e un'immagine
   disco macOS;
-- permettere al mittente di scegliere il nome del contenitore per payload con
-  più elementi principali;
-- ricordare l'ultima cartella di destinazione usata;
 - aggiungere impostazioni avanzate per relay custom di `croc`;
 - ridurre i moduli di orchestrazione desktop e Android ancora grandi quando un
   confine concreto di responsabilità giustifica la separazione;

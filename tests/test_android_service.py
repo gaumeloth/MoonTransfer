@@ -759,7 +759,9 @@ class AndroidTransferServiceRuntimeTests(unittest.TestCase):
             self.assertTrue(snapshot.service_done)
             self.assertIsNotNone(snapshot.code)
             self.assertEqual(snapshot.progress.percent, 100)  # type: ignore[union-attr]
-            self.assertFalse(document.staging_dir.exists())
+            # The UI can reclaim this prepared copy for an explicit new send.
+            self.assertTrue(document.staging_dir.exists())
+            self.assertTrue((service_session_dir(cache_root, request.session_id) / "proposal.json").is_file())
             self.assertTrue(
                 any(item.title == "Invio completato" for item in notifications)
             )

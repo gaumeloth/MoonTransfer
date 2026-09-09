@@ -504,6 +504,16 @@ MoonTransferRoot:
                                                         text: "Nessun elemento selezionato."
                                                         minimum_height: dp(44)
 
+                                                    MoonWrappedLabel:
+                                                        text: "Contenitore (selezioni multiple)"
+                                                        font_size: sp(13)
+                                                        minimum_height: dp(24)
+                                                    MoonTextInput:
+                                                        id: send_container_input
+                                                        hint_text: "MoonTransfer"
+                                                        disabled: True
+                                                        height: dp(48)
+
                                                 MoonSurface:
                                                     orientation: "vertical"
                                                     spacing: dp(8)
@@ -744,7 +754,7 @@ MoonTransferRoot:
                                     Widget:
                                     MoonButton:
                                         id: send_reset_button
-                                        text: "Nuovo invio"
+                                        text: "Prepara nuovo invio"
                                         icon_source: theme.icon_path("plus")
                                         size_hint_x: None
                                         width: min(self.parent.width - dp(32), dp(480))
@@ -933,6 +943,14 @@ MoonTransferRoot:
                                                     text: "Nessuna proposta ricevuta."
                                                     label_color: theme.TEXT
                                                     minimum_height: dp(118)
+
+                                                MoonButton:
+                                                    id: receive_details_button
+                                                    text: "Dettagli contenuto"
+                                                    icon_source: theme.icon_path("file")
+                                                    variant: "secondary"
+                                                    size_hint_y: None
+                                                    height: dp(48)
 
                                 MoonActionBar:
                                     Widget:
@@ -1125,6 +1143,23 @@ MoonTransferRoot:
                                         title: "Ricezione terminata"
                                         message: "Il trasferimento è terminato."
                                         icon_source: theme.icon_path("circle-check")
+                                BoxLayout:
+                                    spacing: dp(12)
+                                    padding: dp(16), 0
+                                    size_hint_y: None
+                                    height: dp(48)
+                                    MoonButton:
+                                        id: receive_open_button
+                                        text: "Apri"
+                                        icon_source: theme.icon_path("folder")
+                                        variant: "secondary"
+                                        disabled: True
+                                    MoonButton:
+                                        id: receive_share_button
+                                        text: "Condividi"
+                                        icon_source: theme.icon_path("share-2")
+                                        variant: "secondary"
+                                        disabled: True
                                 MoonActionBar:
                                     Widget:
                                     MoonButton:

@@ -1,6 +1,9 @@
 package io.github.gaumeloth.moontransfer;
 
+import android.content.ActivityNotFoundException;
+import android.content.ClipData;
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
 import android.widget.Toast;
 import java.util.ArrayList;
@@ -52,6 +55,41 @@ public class MoonTransferActivity extends PythonActivity {
                 startActivity(Intent.createChooser(intent, null));
             } catch (Exception error) {
                 Toast.makeText(this, "Condivisione del codice non disponibile", Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
+    public void openSavedDocument(String value, boolean share, boolean directory) {
+        runOnUiThread(() -> {
+            try {
+                Uri document = Uri.parse(value);
+                if (!"content".equals(document.getScheme())
+                        || document.getAuthority() == null
+                        || document.getAuthority().isEmpty()
+                        || (share && directory)) {
+                    throw new IllegalArgumentException("Invalid document action");
+                }
+                String mime = getContentResolver().getType(document);
+                if (mime == null) {
+                    mime = directory ? "vnd.android.document/directory" : "application/octet-stream";
+                }
+                Intent intent = new Intent(share ? Intent.ACTION_SEND : Intent.ACTION_VIEW);
+                if (share) {
+                    intent.setType(mime);
+                    intent.putExtra(Intent.EXTRA_STREAM, document);
+                } else {
+                    intent.setDataAndType(document, mime);
+                }
+                intent.setClipData(ClipData.newRawUri("MoonTransfer", document));
+                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                // Keep overloaded Android calls on the Java side of the bridge.
+                startActivity(Intent.createChooser(intent, null));
+            } catch (ActivityNotFoundException error) {
+                Toast.makeText(this, "Nessuna app compatibile per questo contenuto", Toast.LENGTH_LONG).show();
+            } catch (SecurityException error) {
+                Toast.makeText(this, "Accesso al documento non disponibile o revocato", Toast.LENGTH_LONG).show();
+            } catch (Exception error) {
+                Toast.makeText(this, "Impossibile aprire o condividere il documento salvato", Toast.LENGTH_LONG).show();
             }
         });
     }

@@ -742,9 +742,42 @@ current speed, elapsed time, and estimated remaining time when `croc` provides
 enough progress information.
 
 A single received file or folder keeps its original root name. A selection
-with multiple roots is stored in a `MoonTransfer` container folder. Existing
+with multiple roots is stored in a container folder (`MoonTransfer` by default,
+or the portable name chosen by the sender). Existing
 folders are never merged or recursively overwritten; MoonTransfer proposes a
 unique name such as `MoonTransfer (1)` instead.
+
+### Codes, results and recovery
+
+On desktop and Android, paste the code or the complete MoonTransfer message
+into **Ricevi**. The shared parser extracts one distinct 32-hexadecimal code,
+including its spaced display format. Ambiguous text containing different codes
+is not accepted automatically. Importing a code never starts a transfer.
+
+Desktop remembers the last destination and shows the actual saved path after
+verification. Android reopens the system picker at the last destination when
+the provider supports it; saving still requires confirmation. The Android
+result offers **Apri** for saved content and **Condividi** for a single file.
+Opening a folder requires a compatible document handler. The proposal's
+**Dettagli** view lists paths, sizes and file hashes in bounded pages.
+
+If final saving fails, the verified copy can be saved to another destination
+without downloading again. Desktop retains it for up to 15 minutes after the
+first save failure; Android allows 15 minutes from verification to choose or
+retry a destination. Stop, timeout or termination of the owning process ends
+this opportunity. Android document providers may leave partial output after
+a failed write; inspect the previous destination before retrying.
+
+**Prepara nuovo invio** starts a new transfer with new codes, not a partial
+resume. Desktop rescans the selected originals. Android can reuse the prepared
+copies for up to 15 minutes after the result is displayed, until app closure;
+changes to originals require selecting them again. Explicit cancellation
+discards the prepared Android copies. Copies left by a killed process are
+cleaned on the next startup, not offered as resumable transfers.
+
+The optional `container_name` manifest field does not change protocol 2 or
+transport compatibility. Older receivers ignore it and use `MoonTransfer` for
+multiple roots. A single file or folder always keeps its original name.
 
 ### Current payload limits
 
@@ -783,8 +816,6 @@ Possible future improvements, in indicative order:
 - add signing and notarization where appropriate, then evaluate more native
   distribution formats such as AppImage, a Windows installer, and a macOS disk
   image;
-- let the sender choose the container name for multi-root payloads;
-- remember the last destination folder used;
 - add advanced settings for custom `croc` relays;
 - reduce the remaining large desktop and Android orchestration modules when a
   concrete ownership boundary justifies the split;

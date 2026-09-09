@@ -63,10 +63,11 @@ class SourcePayload:
     def directory_count(self) -> int:
         return sum(entry.is_directory for entry in self.entries)
 
-    def create_proposal(self) -> TransferProposal:
+    def create_proposal(self, container_name: str | None = None) -> TransferProposal:
         return create_payload_proposal(
             roots=self.roots,
             entries=self.entries,
+            container_name=container_name,
         )
 
 

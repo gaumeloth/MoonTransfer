@@ -80,6 +80,7 @@ class AndroidSendSession:
     proposal: TransferProposal | None = None
     metadata_code: str | None = None
     rejected_by_receiver: bool = False
+    container_name: str | None = None
 
 
 class AndroidSendController:
@@ -91,12 +92,14 @@ class AndroidSendController:
         sessions_parent: Path,
         callbacks: AndroidSendCallbacks | None = None,
         idle_timeout: float = CONTROL_IDLE_TIMEOUT_SECONDS,
+        retain_selection: bool = False,
     ) -> None:
         self.metadata_runner = metadata_runner
         self.main_runner = main_runner
         self.sessions_parent = sessions_parent
         self.callbacks = callbacks or AndroidSendCallbacks()
         self.idle_timeout = idle_timeout
+        self.retain_selection = retain_selection
         self.state = AndroidSendState.IDLE
         self.session: AndroidSendSession | None = None
         self._cancel_requested = Event()
@@ -115,7 +118,7 @@ class AndroidSendController:
         with self._lock:
             return self._thread is not None and self._thread.is_alive()
 
-    def start(self, selection: StagedSelection | StagedDocument) -> None:
+    def start(self, selection: StagedSelection | StagedDocument, *, container_name: str | None = None) -> None:
         if isinstance(selection, StagedDocument):
             selection = StagedSelection((selection,))
         with self._lock:
@@ -133,7 +136,7 @@ class AndroidSendController:
             self._main_stop_requested.clear()
             self._main_result = None
             self._main_error = None
-            self.session = AndroidSendSession(selection=selection)
+            self.session = AndroidSendSession(selection=selection, container_name=container_name)
             thread = Thread(target=self._run, daemon=True)
             self._thread = thread
 
@@ -192,7 +195,7 @@ class AndroidSendController:
             terminal_message = f"Invio non completato: {error}"
         finally:
             self._stop_processes()
-            self._cleanup_session(session)
+            self._cleanup_session(session, cancelled=terminal_state == AndroidSendState.CANCELLED)
             self._set_state(terminal_state)
             self.callbacks.on_status(terminal_message)
             self.callbacks.on_finished(terminal_state, terminal_message)
@@ -205,7 +208,7 @@ class AndroidSendController:
             session.selection.root_paths,
             cancel_requested=self._cancel_requested.is_set,
         )
-        proposal = payload.create_proposal()
+        proposal = payload.create_proposal(session.container_name)
         metadata_code = generate_croc_code()
 
         self.sessions_parent.mkdir(parents=True, exist_ok=True)
@@ -434,8 +437,8 @@ class AndroidSendController:
             raise RuntimeError("Sessione di invio non disponibile.")
         return session
 
-    @staticmethod
-    def _cleanup_session(session: AndroidSendSession) -> None:
+    def _cleanup_session(self, session: AndroidSendSession, *, cancelled: bool = False) -> None:
         if session.root is not None:
             shutil.rmtree(session.root, ignore_errors=True)
-        cleanup_staged_selection(session.selection)
+        if not self.retain_selection or cancelled:
+            cleanup_staged_selection(session.selection)

@@ -78,6 +78,7 @@ class TransferProposal:
     directory_count: int
     hash_algorithm: str
     main_code: str
+    container_name: str | None = None
 
     @property
     def size(self) -> int:
@@ -87,7 +88,7 @@ class TransferProposal:
     def filename(self) -> str:
         if len(self.roots) == 1:
             return self.roots[0]
-        return "MoonTransfer"
+        return self.container_name or "MoonTransfer"
 
     @property
     def is_single_file(self) -> bool:
@@ -106,7 +107,7 @@ class TransferProposal:
 
     @property
     def destination_name(self) -> str:
-        return self.roots[0] if len(self.roots) == 1 else "MoonTransfer"
+        return self.filename
 
     @property
     def file_sizes(self) -> tuple[int, ...]:
@@ -237,6 +238,7 @@ def create_payload_proposal(
     *,
     roots: tuple[str, ...],
     entries: tuple[PayloadEntry, ...],
+    container_name: str | None = None,
 ) -> TransferProposal:
     validated_roots, validated_entries = _validate_payload(roots, entries)
     total_size, file_count, directory_count = _payload_totals(validated_entries)
@@ -251,7 +253,16 @@ def create_payload_proposal(
         directory_count=directory_count,
         hash_algorithm=HASH_ALGORITHM,
         main_code=generate_croc_code(),
+        container_name=validate_container_name(container_name),
     )
+
+
+def validate_container_name(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ProtocolError("Nome del contenitore non valido.")
+    return validate_filename(value)
 
 
 def create_proposal(
@@ -334,6 +345,7 @@ def read_proposal(path: Path) -> TransferProposal:
         main_code=validate_croc_code(
             _validate_text("main_code", data.get("main_code"))
         ),
+        container_name=validate_container_name(data.get("container_name")),
     )
 
 

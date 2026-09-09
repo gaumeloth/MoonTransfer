@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, PropertyMock, patch
 
 from tests.test_android_sharing import CODE, OTHER_CODE, intent
 from moontransfer_android.service_protocol import TransferServiceOperation
@@ -44,6 +45,60 @@ class AndroidSharingUiTests(unittest.TestCase):
         self.assertEqual(self.app._view_manager.current, "receive")
         self.assertIsNone(self.app._service_client)
         self.app._start_receive.assert_not_called()
+
+    def test_received_document_actions_require_completed_saved_content(self):
+        from moontransfer_android.receiver import AndroidReceiveState
+        self.app._receive_proposal = SimpleNamespace(filename="file.txt", size=12, is_single_file=True)
+        self.app._saved_uri = "content://provider/document/1"
+        self.app._receive_state = AndroidReceiveState.COMPLETED
+        self.app._configure_receive_result(AndroidReceiveState.COMPLETED, "Salvato")
+        self.assertFalse(self.app.root.ids.receive_open_button.disabled)
+        self.assertFalse(self.app.root.ids.receive_share_button.disabled)
+        with patch("moontransfer_android.application.document_action") as action:
+            self.app.root.ids.receive_share_button.dispatch("on_release")
+            action.assert_called_once_with(self.app._saved_uri, share=True, directory=False)
+        self.app._receive_proposal.is_single_file = False
+        self.app._configure_receive_result(AndroidReceiveState.COMPLETED, "Salvato")
+        self.assertTrue(self.app.root.ids.receive_share_button.disabled)
+        self.assertFalse(self.app.root.ids.receive_open_button.disabled)
+        self.app._configure_receive_result(AndroidReceiveState.FAILED, "Errore")
+        self.assertTrue(self.app.root.ids.receive_open_button.disabled)
+
+    def test_destination_preference_is_private_and_rejects_non_content_uri(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(type(self.app), "user_data_dir", new_callable=PropertyMock, return_value=tmp):
+            self.assertIsNone(self.app._destination_preference())
+            self.app._destination_preference("content://provider/document/1")
+            self.assertEqual(self.app._destination_preference(), "content://provider/document/1")
+            self.app._destination_preference("file:///private/file")
+            self.assertIsNone(self.app._destination_preference())
+
+    def test_document_bridge_error_is_not_reported_as_missing_handler(self):
+        from moontransfer_android.receiver import AndroidReceiveState
+        self.app._receive_proposal = SimpleNamespace(is_single_file=False)
+        self.app._saved_uri = "content://provider/folder/1"
+        self.app._receive_state = AndroidReceiveState.COMPLETED
+        with patch("moontransfer_android.application.document_action", side_effect=RuntimeError("JNI overload error")):
+            self.app._open_received()
+        self.assertEqual(self.app._dialog_overlay.title, "Azione non avviata")
+        self.assertIn("Errore interno", self.app._dialog_overlay.message)
+        self.assertNotIn("Nessuna app compatibile", self.app._dialog_overlay.message)
+        self.assertEqual(self.app._saved_uri, "content://provider/folder/1")
+
+    def test_manifest_details_are_paged_and_can_return_to_start(self):
+        from moontransfer.protocol import PayloadEntry, create_payload_proposal
+        proposal = create_payload_proposal(
+            roots=("folder",),
+            entries=(PayloadEntry(path="folder", type="directory"),) + tuple(
+                PayloadEntry(path=f"folder/{index}.txt", type="file", size=0, sha256="a" * 64)
+                for index in range(30)
+            ),
+        )
+        self.app._display_payload_details(proposal)
+        self.assertIn("1-20", self.app._dialog_overlay.message)
+        self.app._dialog_overlay.invoke_secondary()
+        self.assertIn("21-31", self.app._dialog_overlay.message)
+        self.app._dialog_overlay.invoke_secondary()
+        self.assertIn("1-20", self.app._dialog_overlay.message)
 
     def test_existing_receive_code_requires_confirmation(self):
         self.app.receive_code_input.text = OTHER_CODE

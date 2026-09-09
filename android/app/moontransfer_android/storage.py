@@ -818,6 +818,7 @@ def save_files_to_tree(
     documents_contract: Any | None = None,
     cancel_requested: Callable[[], bool] | None = None,
     on_progress: Callable[[int, int], None] | None = None,
+    on_saved: Callable[[Any], None] | None = None,
 ) -> int:
     source_paths = tuple(sources)
     if not source_paths:
@@ -921,6 +922,8 @@ def save_files_to_tree(
                 on_progress(copied_total, total_size)
         if on_progress and total_size == 0:
             on_progress(0, 0)
+        if on_saved:
+            on_saved(container_uri)
         return copied_total
     except (AndroidStorageError, OperationCancelled):
         _delete_document_quietly(contract, content_resolver, container_uri)
@@ -1190,6 +1193,7 @@ class AndroidSavePicker:
         filename: str | None,
         *,
         select_directory: bool = False,
+        initial_uri: str | None = None,
         on_selected: Callable[[Any], None],
         on_cancelled: Callable[[], None],
         on_error: Callable[[Exception], None],
@@ -1215,6 +1219,7 @@ class AndroidSavePicker:
             if select_directory
             else SAVE_FILE_REQUEST_CODE
         )
+        self._initial_uri = initial_uri
         try:
             action = (
                 self._intent_class.ACTION_OPEN_DOCUMENT_TREE
@@ -1233,6 +1238,12 @@ class AndroidSavePicker:
                 self._intent_class.FLAG_GRANT_READ_URI_PERMISSION
                 | self._intent_class.FLAG_GRANT_WRITE_URI_PERMISSION
             )
+            if initial_uri:
+                from jnius import autoclass, cast
+                intent.putExtra(
+                    "android.provider.extra.INITIAL_URI",
+                    cast("android.os.Parcelable", autoclass("android.net.Uri").parse(initial_uri)),
+                )
             self._activity.startActivityForResult(intent, self._request_code)
         except Exception:
             self._clear_callbacks()
@@ -1267,6 +1278,17 @@ class AndroidSavePicker:
                 raise AndroidStorageError(
                     "Android non ha restituito la destinazione scelta."
                 )
+            try:
+                flags = int(intent.getFlags()) & 3
+                resolver = self._activity.getContentResolver()
+                resolver.takePersistableUriPermission(uri, flags)
+                if self._initial_uri and self._initial_uri != str(uri.toString()):
+                    from jnius import autoclass
+                    previous = autoclass("android.net.Uri").parse(self._initial_uri)
+                    resolver.releasePersistableUriPermission(previous, 3)
+            except Exception:
+                # Some providers only grant access for the current device session.
+                pass
             if on_selected:
                 on_selected(uri)
         except Exception as error:

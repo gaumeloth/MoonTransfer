@@ -115,6 +115,38 @@ Manual checks on a physical Android device:
 
 QR codes and opening/re-sharing received files are outside this feature.
 
+## Results and recovery
+
+After a verified save, **Apri** opens the saved document through Android and
+**Condividi** shares a single saved file. Both use the public document URI with
+a read grant, never a private staging path. Folder opening requires a compatible
+document handler. Missing handlers or revoked access produce an error instead
+of starting another transfer. The system save picker remembers its last URI
+as an initial location, subject to provider support; it still asks for confirmation.
+
+**Dettagli** in the incoming proposal lists paths, sizes and file hashes in
+bounded pages. For multiple selected roots, the sender can set a portable
+container name; an empty field uses `MoonTransfer`. Single roots keep their
+original names. Older protocol-2 receivers ignore the optional container name.
+
+A failed final save can be retried without receiving again, while the verified
+private copy is retained for up to 15 minutes from verification in the active
+service. Cancellation, timeout or service-process termination discards this
+opportunity. Providers can leave partial destination documents after an error.
+
+After sending, **Prepara nuovo invio** reuses the prepared copies with freshly
+calculated hashes and new codes. Copies remain selectable for up to 15 minutes
+after displaying the result, until app closure; originals are not re-imported.
+Reselect them to include later edits. Explicit cancellation deletes the copies;
+stale copies from killed processes are removed at the next startup. There is no
+transfer history, queue or partial-download resume.
+
+Manual checks: paste a full message on both platforms; send mixed roots with a
+custom name; inspect proposal details; save/open/share a file; open a saved
+folder; retry a failed provider save and confirm no second network reception;
+prepare another send and check that its code differs. Repeat after cancelling
+and reopening the save picker and after restarting the app.
+
 ## Transport compatibility
 
 > [!IMPORTANT]
@@ -374,7 +406,8 @@ cases with a small, non-sensitive payload:
    an active or blocked session.
 
 If the save picker is cancelled, the verified private copy remains available
-while the foreground transfer service remains active. Press **Scegli dove
+for up to 15 minutes from verification while the foreground transfer service
+remains active. Press **Scegli dove
 salvare** (Choose where to save) to retry, or **Interrompi** (Stop) to discard
 it.
 
@@ -418,8 +451,9 @@ portable paths, collisions, cycles, and the protocol entry limit, rejects
 virtual documents, then recreates the snapshot privately with `0700`
 directories and `0600` files. These private copies are the controlled sources
 used for hashing and by `croc`; their fingerprints and exact tree are checked
-again before the main sender starts. They are removed after completion,
-rejection, failure, or cancellation. Stale app-owned staging and session
+again before the main sender starts. Cancellation removes them immediately;
+other outcomes can hand them back to the UI for an explicit new send within
+the bounded retention window described above. Stale app-owned staging and session
 directories are removed on the next start only when no foreground transfer is
 active.
 
@@ -495,12 +529,14 @@ The Android receiver follows the inverse flow:
 7. only after verification, launch Android's `ACTION_CREATE_DOCUMENT` picker
    for one file, or `ACTION_OPEN_DOCUMENT_TREE` for a folder or multiple roots;
    a single folder is recreated with its root name, while multiple roots use a
-   dedicated `MoonTransfer` child directory;
+   dedicated child directory named by the sender (`MoonTransfer` by default);
 8. remove the manifest and private payload after completion, rejection,
-   cancellation or failure.
+   cancellation or terminal failure. A recoverable save failure waits for a
+   new destination within the 15-minute deadline.
 
 Cancelling the system save picker does not discard the verified private copy;
-the user can reopen it while the service remains active, or cancel the transfer
+the user can reopen it within 15 minutes of verification while the service
+remains active, or cancel the transfer
 to discard it. This ordering avoids touching an existing destination before
 integrity checks have passed. For a single file, the system document provider
 remains responsible for final name conflicts and overwrite confirmation. For a

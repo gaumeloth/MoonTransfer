@@ -54,6 +54,7 @@ class TransferState(Enum):
     TRANSFERRING_PAYLOAD = auto()
     TRANSFERRING_FILE = TRANSFERRING_PAYLOAD
     VERIFYING = auto()
+    AWAITING_SAVE = auto()
     COMPLETED = auto()
     REJECTED = auto()
     CANCELLED = auto()
@@ -163,10 +164,12 @@ RECEIVE_TRANSITIONS: Mapping[TransferState, frozenset[TransferState]] = {
     TransferState.VERIFYING: frozenset(
         {
             TransferState.COMPLETED,
+            TransferState.AWAITING_SAVE,
             TransferState.CANCELLED,
             TransferState.FAILED,
         }
     ),
+    TransferState.AWAITING_SAVE: frozenset({TransferState.VERIFYING, TransferState.CANCELLED, TransferState.FAILED}),
     **{
         state: frozenset({TransferState.PREPARING})
         for state in TERMINAL_STATES
@@ -176,6 +179,11 @@ RECEIVE_TRANSITIONS: Mapping[TransferState, frozenset[TransferState]] = {
 
 class InvalidStateTransition(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class SaveFailure:
+    message: str
 
 
 @dataclass
@@ -219,6 +227,7 @@ class ReceiveDecision:
 @dataclass
 class SendSession:
     source_paths: tuple[Path, ...]
+    container_name: str | None = None
     payload: SourcePayload | None = None
     paths: SessionPaths | None = None
     proposal: TransferProposal | None = None
@@ -512,7 +521,7 @@ class SendTransferController(BaseTransferController):
         )
         self.session: SendSession | None = None
 
-    def start(self, source_paths: Path | Iterable[Path]) -> None:
+    def start(self, source_paths: Path | Iterable[Path], *, container_name: str | None = None) -> None:
         if self.busy:
             raise RuntimeError("Un trasferimento è già in corso.")
 
@@ -522,7 +531,7 @@ class SendTransferController(BaseTransferController):
             else tuple(source_paths)
         )
         self._cleanup_session()
-        self.session = SendSession(source_paths=selected)
+        self.session = SendSession(source_paths=selected, container_name=container_name)
         self._transition(TransferState.PREPARING)
         self.code_changed.emit(None)
         self.status_changed.emit(
@@ -556,7 +565,7 @@ class SendTransferController(BaseTransferController):
 
         session = self._require_session()
         try:
-            proposal = result.create_proposal()
+            proposal = result.create_proposal(session.container_name)
             metadata_code = generate_croc_code()
             paths = create_session_paths()
 
@@ -842,6 +851,7 @@ class SendTransferController(BaseTransferController):
 
 
 class ReceiveTransferController(BaseTransferController):
+    saved = Signal(object)
     MAIN_RECEIVE_DELAY_MS = 750
 
     def __init__(
@@ -865,6 +875,9 @@ class ReceiveTransferController(BaseTransferController):
         self.acceptance_provider = acceptance_provider
         self.conflict_resolver = conflict_resolver
         self.session: ReceiveSession | None = None
+        self._save_expiry = QTimer(self)
+        self._save_expiry.setSingleShot(True)
+        self._save_expiry.timeout.connect(self.stop)
 
         self.receive_size_timer = QTimer(self)
         self.receive_size_timer.setInterval(250)
@@ -1227,22 +1240,36 @@ class ReceiveTransferController(BaseTransferController):
         target_path: Path,
         target_overwrite: bool,
         cancel_requested: Callable[[], bool],
-    ) -> Path:
+    ) -> Path | SaveFailure:
         verify_received_payload(
             staging,
             proposal,
             cancel_requested=cancel_requested,
         )
-        return publish_received_payload(
-            staging,
-            proposal,
-            target_path,
-            overwrite=target_overwrite,
-            cancel_requested=cancel_requested,
-        )
+        try:
+            return publish_received_payload(
+                staging,
+                proposal,
+                target_path,
+                overwrite=target_overwrite,
+                cancel_requested=cancel_requested,
+            )
+        except OSError as error:
+            return SaveFailure(str(error))
 
     def _on_received_payload_stored(self, result: object) -> None:
         if not self.active or self.state != TransferState.VERIFYING:
+            return
+        if isinstance(result, SaveFailure):
+            self._transition(TransferState.AWAITING_SAVE)
+            self.status_changed.emit(
+                f"Salvataggio non riuscito: {result.message}. Contenuto verificato conservato "
+                "per massimo 15 minuti. Cambia destinazione e premi Riprova salvataggio, "
+                "oppure Stop per eliminarlo."
+            )
+            if not self._save_expiry.isActive():
+                self._save_expiry.start(15 * 60 * 1000)
+            self.active_changed.emit(True)
             return
         if not isinstance(result, Path):
             self._abort_session(
@@ -1252,9 +1279,29 @@ class ReceiveTransferController(BaseTransferController):
             return
 
         self.progress_finished.emit(True)
+        self._save_expiry.stop()
+        self.saved.emit(result)
         self._cleanup_session()
         self._transition(TransferState.COMPLETED)
         self.status_changed.emit(f"Ricezione completata: {result}")
+
+    def retry_save(self, destination: Path) -> None:
+        if self.state != TransferState.AWAITING_SAVE or self.stopping or self._task is not None:
+            raise RuntimeError("Nessun salvataggio da riprovare.")
+        session = self._require_session()
+        if not destination.is_dir():
+            raise ValueError("Scegli una cartella esistente.")
+        session.destination = destination
+        from moontransfer.files import unique_destination_path, unique_directory_path
+        proposed = destination / session.proposal.destination_name
+        session.target_path = (
+            unique_destination_path(proposed) if session.proposal.is_single_file
+            else unique_directory_path(proposed)
+        )
+        session.target_overwrite = False
+        self._transition(TransferState.VERIFYING)
+        self.active_changed.emit(True)
+        self._handle_main_received()
 
     def _abort_session(
         self,
@@ -1346,6 +1393,7 @@ class ReceiveTransferController(BaseTransferController):
 
     def _cleanup_session(self) -> None:
         self._stop_receive_size_monitor()
+        self._save_expiry.stop()
         if self.session:
             cleanup_session_paths(self.session.paths)
         self.session = None
