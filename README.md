@@ -1280,8 +1280,9 @@ application's diagnostic summary.
 #### Android test artifacts
 
 `.github/workflows/android-build.yml` provides a separate native Linux build for
-the Android prototype. It runs for pull requests, pushes to `main`, pre-release
-tags, and manual dispatches. The job uses pinned versions of `uv`, Python
+the Android prototype. Its debug path runs for pull requests, pushes to `main`,
+and normal manual dispatches. Pre-release tags call its signed path from the
+main release workflow. The job uses pinned versions of `uv`, Python
 3.13.14, Java 17, Go 1.25.12, and Rust 1.97.1; checks the Android lock file;
 installs the locked Android build environment; runs the Android-specific tests
 and host diagnostics; and builds the ARM64 debug APK. Android SDK/NDK and Gradle
@@ -1306,7 +1307,7 @@ and GitHub-hosted runners. Android may therefore refuse to install one over the
 other; uninstalling the existing prototype first resolves that signature
 mismatch but also removes its private application data.
 
-#### Desktop release publication
+#### Desktop and Android release publication
 
 Release publication is deliberately more restrictive:
 
@@ -1314,8 +1315,11 @@ Release publication is deliberately more restrictive:
   trigger the release job;
 - the numeric base of the tag must match `[project].version` in
   `pyproject.toml`;
-- every desktop platform build must complete before the release job starts;
-- the workflow generates `SHA256SUMS`;
+- the tag commit must already belong to `main`;
+- every desktop build and the signed Android build must complete before the
+  release job starts; missing signing configuration blocks the draft;
+- the workflow requires four desktop archives and the signed ARM64 APK, then
+  generates one `SHA256SUMS` covering all five;
 - GitHub creates a draft marked as a pre-release, never an immediately
   published release;
 - a rerun may refresh an existing draft but refuses to overwrite a published
@@ -1330,16 +1334,22 @@ intentionally not accepted by the current workflow.
 To prepare an alpha or beta release:
 
 1. make sure the intended commit is on `main` and all normal checks pass;
-2. update `[project].version` and `uv.lock` if the numeric base version changes;
+2. configure and test [Android signing](android/SIGNING.md), increase
+   `android/release.toml`'s versionCode for each new distributed Android release,
+   and update `[project].version` and `uv.lock` if the numeric base version changes;
 3. create an annotated pre-release tag, for example
    `git tag -a v0.1.0-alpha.1 -m "MoonTransfer 0.1.0 alpha 1"`;
 4. push that exact tag with `git push origin v0.1.0-alpha.1`;
-5. wait for every native desktop build and the draft-release job to finish;
-6. download each archive from the draft and test it on the corresponding
-   operating system;
+5. wait for the desktop builds, Android build/signature and draft-release job;
+6. download every desktop archive and the APK from the draft and test them on
+   the corresponding operating systems;
 7. compare downloaded files with `SHA256SUMS` and inspect release notes and
    bundled documents;
 8. publish the draft manually only after the required tests pass.
+
+To rehearse without creating a tag or release, manually run **Build release
+artifacts** on `main` with `signed_android` enabled. It produces all five
+artifacts with the same version and commit. Normal manual runs remain desktop-only.
 
 Do not move or reuse a tag that may already have been fetched. If a release
 candidate is defective, fix the problem and create the next pre-release tag,
@@ -1516,10 +1526,16 @@ applications does not abort `croc`; a private state-aware notification reports
 phase and available progress metrics and provides a session-bound stop action,
 then leaves a dismissible result. The service handles Android 15 `dataSync`
 timeouts and invalid sticky restarts, but interrupted sessions still cannot be
-resumed. Signed Android release distribution is not implemented.
+resumed. Signed Android APKs are now included in tag-driven draft releases,
+after the signing environment has been configured.
 The dedicated Android CI workflow nevertheless creates a structurally validated
 ARM64 debug APK for testing; it is deliberately kept separate from published
 GitHub Releases.
+
+An opt-in manual run on `main` can also build a release APK and sign it in a
+separate protected job, using the same key as local release builds. Tag builds
+join the desktop packages in one draft release. This requires explicit key setup
+and a coordinated versionCode; see [Android signing](android/SIGNING.md).
 
 Setup, diagnostics, build commands, design details, and manual compatibility
 tests are documented in [android/README.md](android/README.md).
