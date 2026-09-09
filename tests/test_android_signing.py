@@ -38,6 +38,7 @@ class AndroidSigningTests(unittest.TestCase):
             legacy.parent.mkdir(parents=True)
             legacy.touch(mode=0o700)
             with patch.dict(os.environ, {"ANDROID_HOME": str(root)}, clear=True), \
+                    patch.object(signing.Path, "home", return_value=root / "home"), \
                     patch.object(signing.shutil, "which", return_value=None):
                 self.assertEqual(signing.sdk_tool("apkanalyzer"), str(legacy))
                 modern = root / "cmdline-tools/latest/bin/apkanalyzer"
