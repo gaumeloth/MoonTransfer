@@ -120,6 +120,43 @@ Verifiche manuali su dispositivo Android fisico:
 
 QR code e apertura/ricondivisione dei file ricevuti restano fuori da questa modifica.
 
+## Risultati e recupero
+
+Dopo il salvataggio verificato, **Apri** apre il documento tramite Android e
+**Condividi** condivide un singolo file salvato. Entrambe le azioni usano l'URI
+pubblico con un permesso di lettura, mai un percorso di staging privato.
+Per aprire una cartella serve un gestore documenti compatibile. Se manca o se
+l'accesso è stato revocato viene mostrato un errore, senza avviare altri
+trasferimenti. Il selettore di salvataggio ricorda l'ultimo URI come posizione
+iniziale, se il provider lo supporta; richiede comunque conferma.
+
+**Dettagli**, nella proposta ricevuta, elenca percorsi, dimensioni e hash dei
+file in pagine limitate. Per più elementi principali il mittente può scegliere
+un nome portabile per il contenitore; il campo vuoto usa `MoonTransfer`.
+Un singolo elemento mantiene il proprio nome. I destinatari precedenti con
+protocollo 2 ignorano il nome facoltativo del contenitore.
+
+Un salvataggio finale fallito può essere riprovato senza una nuova ricezione,
+conservando la copia privata verificata per massimo 15 minuti dalla verifica
+nel servizio attivo. Annullamento, scadenza o terminazione del processo del
+servizio interrompono questa possibilità. I provider possono lasciare documenti
+parziali nella destinazione dopo un errore.
+
+Dopo l'invio, **Prepara nuovo invio** riusa le copie preparate con hash calcolati
+nuovamente e nuovi codici. Restano selezionabili per massimo 15 minuti dalla
+visualizzazione del risultato, fino alla chiusura dell'app; gli originali non
+vengono reimportati. Riselezionali per includere modifiche successive.
+L'annullamento esplicito elimina le copie; quelle lasciate da processi terminati
+vengono pulite al successivo avvio. Non sono introdotte cronologia, coda o
+ripresa parziale dei download.
+
+Controlli manuali: incolla un messaggio completo su entrambe le piattaforme;
+invia una selezione mista con nome personalizzato; consulta i dettagli della
+proposta; salva/apri/condividi un file; apri una cartella salvata; riprova un
+salvataggio fallito verificando che non parta una seconda ricezione; prepara
+un altro invio e controlla che il codice cambi. Ripeti dopo l'annullamento e
+la riapertura del selettore di salvataggio e dopo il riavvio dell'app.
+
 ## Compatibilità del trasporto
 
 > [!IMPORTANT]
@@ -399,7 +436,8 @@ questi casi con un payload piccolo e non sensibile:
    visibile; non deve lasciare silenziosamente una sessione attiva o bloccata.
 
 Se il selettore di salvataggio viene annullato, la copia privata verificata
-rimane disponibile finché il foreground service del trasferimento resta attivo.
+rimane disponibile per massimo 15 minuti dalla verifica, finché il foreground
+service del trasferimento resta attivo.
 Premi **Scegli dove salvare** per riprovare oppure **Interrompi** per eliminarla.
 
 Premere Home o passare a un'altra applicazione non annulla un'operazione attiva:
@@ -445,8 +483,9 @@ collisioni, cicli e limite di elementi del protocollo, rifiuta i documenti
 virtuali e ricrea lo snapshot nell'area privata con directory `0700` e file
 `0600`. Le copie private sono le sorgenti controllate usate per gli hash e da
 `croc`; fingerprint e albero esatto vengono verificati nuovamente prima di
-avviare il mittente principale. Vengono eliminate dopo completamento, rifiuto,
-errore o annullamento. Le directory di staging e sessione residue, ma
+avviare il mittente principale. L'annullamento le elimina subito; gli altri
+esiti possono restituirle alla GUI per un nuovo invio esplicito entro il periodo
+limitato descritto sopra. Le directory di staging e sessione residue, ma
 appartenenti all'app, vengono eliminate all'avvio successivo solo quando non è
 attivo alcun trasferimento foreground.
 
@@ -528,12 +567,14 @@ Il ricevitore Android segue il flusso inverso:
    `ACTION_CREATE_DOCUMENT` per un file oppure `ACTION_OPEN_DOCUMENT_TREE` per
    una cartella o più radici; una cartella singola viene ricreata con il proprio
    nome radice, mentre più radici usano una directory figlia dedicata
-   `MoonTransfer`;
+   con il nome scelto dal mittente (`MoonTransfer` se non specificato);
 8. elimina manifest e payload privato dopo completamento, rifiuto, annullamento
-   o errore.
+   o errore terminale. Un errore di salvataggio recuperabile attende una nuova
+   destinazione entro la scadenza di 15 minuti.
 
 Annullare il selettore di salvataggio non elimina la copia privata verificata:
-l'utente può riaprirlo mentre il servizio resta attivo oppure annullare il
+l'utente può riaprirlo entro 15 minuti dalla verifica mentre il servizio resta
+attivo oppure annullare il
 trasferimento per eliminarla. Questo ordine evita di modificare una destinazione
 esistente prima del superamento dei controlli di integrità. Per un file il
 provider di documenti di sistema rimane responsabile dei conflitti sul nome
