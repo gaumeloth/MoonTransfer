@@ -1337,8 +1337,9 @@ nel riepilogo diagnostico dell'applicazione.
 #### Artefatti Android di test
 
 `.github/workflows/android-build.yml` fornisce una build Linux nativa separata
-per il prototipo Android. Viene eseguito per pull request, push su `main`, tag di
-pre-release e avvii manuali. Il job usa versioni fissate di `uv`, Python 3.13.14,
+per il prototipo Android. Il percorso debug viene eseguito per pull request,
+push su `main` e normali avvii manuali. Sui tag di prerelease il workflow principale
+delle release richiama invece il percorso firmato. Il job usa versioni fissate di `uv`, Python 3.13.14,
 Java 17, Go 1.25.12 e Rust 1.97.1; controlla il lock file Android; installa
 l'ambiente di build Android bloccato; esegue i test specifici Android e la
 diagnostica dell'host; quindi crea l'APK ARM64 di debug. I download di Android
@@ -1366,7 +1367,7 @@ l'installazione di una sopra l'altra; disinstallare prima il prototipo esistente
 risolve la mancata corrispondenza della firma, ma elimina anche i dati privati
 dell'applicazione.
 
-#### Pubblicazione delle release desktop
+#### Pubblicazione delle release desktop e Android
 
 La pubblicazione è intenzionalmente più restrittiva:
 
@@ -1374,9 +1375,11 @@ La pubblicazione è intenzionalmente più restrittiva:
   job di release;
 - la base numerica del tag deve corrispondere a `[project].version` in
   `pyproject.toml`;
-- tutte le build delle piattaforme desktop devono terminare prima di avviare il
-  job di release;
-- il workflow genera `SHA256SUMS`;
+- il commit del tag deve essere già incluso in `main`;
+- tutte le build desktop e la build Android firmata devono terminare prima del
+  job di release; una configurazione di firma mancante blocca la bozza;
+- il workflow richiede i quattro archivi desktop e l'APK ARM64 firmato, quindi
+  genera un unico `SHA256SUMS` per tutti e cinque;
 - GitHub crea una bozza marcata come pre-release, mai una release pubblicata
   immediatamente;
 - una nuova esecuzione può aggiornare una bozza esistente ma si rifiuta di
@@ -1393,18 +1396,22 @@ Per preparare una release alpha o beta:
 
 1. assicurati che il commit previsto sia su `main` e che tutti i controlli
    normali passino;
-2. aggiorna `[project].version` e `uv.lock` se cambia la versione numerica di
-   base;
+2. configura e verifica la [firma Android](android/SIGNING.it.md), incrementa
+   il versionCode in `android/release.toml` per ogni nuova release Android
+   distribuita e aggiorna `[project].version` e `uv.lock` se cambia la base numerica;
 3. crea un tag annotato di pre-release, per esempio
    `git tag -a v0.1.0-alpha.1 -m "MoonTransfer 0.1.0 alpha 1"`;
 4. invia quel tag esatto con `git push origin v0.1.0-alpha.1`;
-5. attendi il completamento di tutte le build native desktop e del job che crea
-   la bozza;
-6. scarica ogni archivio dalla bozza e provalo sul sistema operativo
-   corrispondente;
+5. attendi tutte le build desktop, la build/firma Android e il job della bozza;
+6. scarica tutti gli archivi desktop e l'APK dalla bozza e provali sui sistemi
+   operativi corrispondenti;
 7. confronta i file scaricati con `SHA256SUMS` e controlla note di release e
    documenti inclusi;
 8. pubblica manualmente la bozza solo dopo il superamento dei test richiesti.
+
+Per provare senza creare tag o release, avvia **Build release artifacts** su
+`main` con `signed_android` abilitato: produce tutti e cinque gli artefatti con
+identiche versione e revisione. Gli avvii manuali normali restano solo desktop.
 
 Non spostare o riutilizzare un tag che potrebbe essere già stato scaricato. Se
 una release candidata è difettosa, correggi il problema e crea il tag di
@@ -1595,10 +1602,17 @@ privata legata allo stato mostra fase e metriche di avanzamento disponibili e
 fornisce un'azione di arresto legata alla sessione, quindi lascia un risultato
 dismissibile. Il servizio gestisce i timeout `dataSync` di Android 15 e i
 riavvii sticky non validi, ma le sessioni interrotte non possono ancora essere
-riprese. La distribuzione di release Android firmate non è implementata. Il
+riprese. Gli APK firmati sono ora inclusi nelle bozze di release avviate dai tag,
+dopo la configurazione dell'environment di firma. Il
 workflow CI Android dedicato crea comunque un APK ARM64 di
 debug validato strutturalmente per i test; viene mantenuto intenzionalmente
 separato dalle GitHub Release pubblicate.
+
+Un avvio manuale dedicato su `main` può anche compilare un APK release e firmarlo
+in un job protetto separato con la stessa chiave usata in locale. Le build da tag
+confluiscono nella stessa bozza dei pacchetti desktop. Richiede la
+configurazione della chiave e un versionCode coordinato; vedi
+[Firma Android](android/SIGNING.it.md).
 
 Configurazione, diagnostica, comandi di build, dettagli
 progettuali e test manuali di compatibilità sono documentati in

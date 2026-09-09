@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tomllib
 import zipfile
 import xml.etree.ElementTree as ET
 from collections.abc import Callable, Sequence
@@ -306,33 +307,58 @@ def run_local_prototype() -> int:
     ).returncode
 
 
-def buildozer_debug_command(
+def buildozer_apk_command(
     buildozer: str,
     *,
     profile: str | None = None,
+    release_unsigned: bool = False,
 ) -> list[str]:
     command = [buildozer]
     if profile is not None:
         if profile not in SUPPORTED_BUILDOZER_PROFILES:
             raise ValueError(f"Unsupported Buildozer profile: {profile}")
         command.extend(("--profile", profile))
-    command.extend(("--verbose", "android", "debug"))
+    command.extend(("--verbose", "android", "release" if release_unsigned else "debug"))
     return command
 
 
-def android_build_environment() -> dict[str, str]:
-    environment = os.environ.copy()
+def validate_version_code(value: int | None) -> int:
+    if type(value) is not int or not 2 <= value <= 2_100_000_000:
+        raise ValueError("Release versionCode must be an integer from 2 to 2100000000.")
+    return value
+
+
+def release_version_code(path: Path = ANDROID_DIR / "release.toml") -> int:
+    with path.open("rb") as stream:
+        settings = tomllib.load(stream)
+    return validate_version_code(settings.get("version_code"))
+
+
+def android_build_environment(*, version_code: int | None = None) -> dict[str, str]:
+    # Buildozer/p4a must never inherit the release signing credentials.
+    environment = {
+        key: value for key, value in os.environ.items()
+        if not key.startswith(("P4A_RELEASE_", "MOONTRANSFER_ANDROID_"))
+    }
     # p4a strips inline versions from pure-Python requirements before install.
     environment["VERSION_charset_normalizer"] = CHARSET_NORMALIZER_VERSION
+    environment["APP_ANDROID_NUMERIC_VERSION"] = str(version_code or 1)
+    environment["APP_ANDROID_RELEASE_ARTIFACT"] = "apk"
     return environment
 
 
-def build_debug_apk(
+def build_apk(
     *,
     version: str | None = None,
     commit: str | None = None,
     buildozer_profile: str | None = None,
+    release_unsigned: bool = False,
+    version_code: int | None = None,
 ) -> int:
+    if release_unsigned:
+        validate_version_code(version_code)
+    elif version_code is not None:
+        raise ValueError("--version-code is only supported with --release-unsigned.")
     issues = print_environment_report()
     if issues:
         return 1
@@ -342,9 +368,11 @@ def build_debug_apk(
     buildozer = shutil.which("buildozer")
     assert buildozer is not None
     result = subprocess.run(
-        buildozer_debug_command(buildozer, profile=buildozer_profile),
+        buildozer_apk_command(
+            buildozer, profile=buildozer_profile, release_unsigned=release_unsigned,
+        ),
         cwd=ANDROID_DIR,
-        env=android_build_environment(),
+        env=android_build_environment(version_code=version_code if release_unsigned else None),
         check=False,
     )
     if result.returncode == 0:
@@ -456,7 +484,7 @@ def validate_share_manifest(manifest_xml: str) -> None:
             raise RuntimeError(f"MoonTransferActivity is missing its {action} intent filter.")
 
 
-def validate_debug_apk(
+def validate_apk(
     apk: Path,
     *,
     expected: BuildMetadata,
@@ -528,12 +556,14 @@ def validate_debug_apk(
         )
 
 
-def package_debug_apk(
+def package_apk(
     metadata: BuildMetadata,
     *,
     dist_dir: Path = ANDROID_DIST_DIR,
     release_dir: Path = ANDROID_RELEASE_DIR,
+    release_unsigned: bool = False,
 ) -> Path:
+    mode = "release-unsigned" if release_unsigned else "debug"
     if not VERSION_RE.fullmatch(metadata.version):
         raise RuntimeError(
             f"Unsafe Android artifact version: {metadata.version!r}."
@@ -543,16 +573,16 @@ def package_debug_apk(
     release_dir = release_dir.expanduser().absolute()
     source = (
         dist_dir
-        / f"moontransfer-{metadata.version}-{ANDROID_ARCHITECTURE}-debug.apk"
+        / f"moontransfer-{metadata.version}-{ANDROID_ARCHITECTURE}-{mode}.apk"
     )
-    validate_debug_apk(source, expected=metadata)
+    validate_apk(source, expected=metadata)
 
     if release_dir.is_symlink():
         raise RuntimeError(f"Refusing symbolic release directory: {release_dir}")
     release_dir.mkdir(parents=True, exist_ok=True)
     destination = (
         release_dir
-        / f"MoonTransfer-{metadata.version}-android-arm64-debug.apk"
+        / f"MoonTransfer-{metadata.version}-android-arm64-{mode}.apk"
     )
     if destination.is_symlink() or (
         destination.exists() and not destination.is_file()
@@ -566,11 +596,11 @@ def package_debug_apk(
     temporary.unlink(missing_ok=True)
     try:
         shutil.copy2(source, temporary)
-        validate_debug_apk(temporary, expected=metadata)
+        validate_apk(temporary, expected=metadata)
         temporary.replace(destination)
     finally:
         temporary.unlink(missing_ok=True)
-    validate_debug_apk(destination, expected=metadata)
+    validate_apk(destination, expected=metadata)
     return destination
 
 
@@ -580,6 +610,10 @@ def main() -> int:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("doctor", help="Check Android build prerequisites.")
+    code_parser = subparsers.add_parser(
+        "release-version-code", help="Read the versioned Android release versionCode.",
+    )
+    code_parser.add_argument("--override", type=int, help="Override for a coordinated manual test build.")
     subparsers.add_parser(
         "verify-share-manifest",
         help="Verify APK share routing from apkanalyzer manifest XML on stdin.",
@@ -591,11 +625,20 @@ def main() -> int:
     subparsers.add_parser("run", help="Run the Kivy scaffold on the host.")
     build_parser = subparsers.add_parser(
         "build",
-        help="Build an arm64 debug APK.",
+        help="Build an arm64 APK (debug by default).",
     )
     package_parser = subparsers.add_parser(
         "package",
-        help="Validate and stage the arm64 debug APK as a CI artifact.",
+        help="Validate and stage an arm64 APK as a CI artifact.",
+    )
+    for command_parser in (build_parser, package_parser):
+        command_parser.add_argument(
+            "--release-unsigned", action="store_true",
+            help="Produce a release APK for the separate signing step (no private key).",
+        )
+    build_parser.add_argument(
+        "--version-code", type=int,
+        help="Required for release: increasing Android versionCode, shared with CI.",
     )
     for command_parser in (prepare_parser, build_parser, package_parser):
         command_parser.add_argument(
@@ -615,6 +658,9 @@ def main() -> int:
 
     if args.command == "doctor":
         return int(bool(print_environment_report()))
+    if args.command == "release-version-code":
+        print(release_version_code() if args.override is None else validate_version_code(args.override))
+        return 0
     if args.command == "verify-share-manifest":
         validate_share_manifest(sys.stdin.read())
         print("Android APK share manifest: verified")
@@ -630,10 +676,12 @@ def main() -> int:
     if args.command == "run":
         return run_local_prototype()
     if args.command == "build":
-        return build_debug_apk(
+        return build_apk(
             version=args.version,
             commit=args.commit,
             buildozer_profile=args.buildozer_profile,
+            release_unsigned=args.release_unsigned,
+            version_code=args.version_code,
         )
     if args.command == "package":
         metadata = create_build_metadata(
@@ -641,7 +689,7 @@ def main() -> int:
             version=args.version,
             commit=args.commit,
         )
-        print(package_debug_apk(metadata))
+        print(package_apk(metadata, release_unsigned=args.release_unsigned))
         return 0
     parser.error(f"Unknown command: {args.command}")
     return 2

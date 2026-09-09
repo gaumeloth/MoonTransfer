@@ -3,8 +3,9 @@
 Versione inglese: [README.md](README.md)
 
 Questa directory contiene un ambiente Kivy e Buildozer isolato per il prototipo
-di fattibilità Android. Non sostituisce l'applicazione desktop PySide6 e non fa
-parte degli artefatti delle release desktop.
+di fattibilità Android. Non sostituisce l'applicazione desktop PySide6: le
+dipendenze di build restano isolate, mentre l'APK firmato è un asset separato
+nella stessa bozza di release dei pacchetti desktop.
 
 ## Ambito attuale
 
@@ -48,8 +49,11 @@ Rimane un client di trasferimento sperimentale. Può costruire una selezione
 mista con più operazioni del selettore di sistema, mostrare ogni file o cartella
 principale preparata, rimuovere singoli elementi o svuotare la selezione. Non può
 riprendere un trasferimento interrotto. Le build automatizzate producono
-attualmente solamente un APK ARM64 di debug; release Android firmate e altre
-architetture non sono implementate. L'app dichiara `INTERNET`, i permessi per
+normalmente un APK ARM64 di debug; un avvio manuale dedicato permette di creare
+un APK release firmato dopo la [configurazione della chiave condivisa](SIGNING.it.md).
+I tag di prerelease includono l'APK firmato nella stessa bozza dei pacchetti desktop.
+Altre architetture non sono implementate.
+L'app dichiara `INTERNET`, i permessi per
 foreground service richiesti da `dataSync` e il permesso di notifica usato per
 mostrare lo stato del trasferimento. La versione pubblica visibile sulla
 schermata bloccata è volutamente generica: codici di trasferimento, hash,
@@ -278,7 +282,8 @@ o committati.
 ## Artefatto di integrazione continua
 
 `.github/workflows/android-build.yml` viene eseguito per pull request, push su
-`main`, tag di pre-release e avvii manuali del workflow. Il job Ubuntu 24.04
+`main` e normali avvii manuali; sui tag di prerelease viene richiamato dal workflow
+delle release per la build firmata. Il job Ubuntu 24.04
 installa versioni fissate di `uv`, Python 3.13.14, Java 17, Go 1.25.12 e Rust
 1.97.1, verifica `android/uv.lock`, installa il gruppo bloccato delle dipendenze
 di build, esegue tutti i test `test_android*.py`, avvia `doctor` e crea l'APK di
@@ -324,9 +329,15 @@ della firma, ma elimina anche i dati privati dell'app.
 La versione completa della build e il commit sono incorporati in
 `build-info.json`, mentre la versione completa viene usata come `versionName` di
 Android. Durante la fase di prototipo il `versionCode` di Buildozer resta fissato
-a `1`. Prima di pubblicare artefatti Android di release, un flusso di
-distribuzione firmato dovrà sostituire questo valore provvisorio con una politica
-di codici versione monotonicamente crescenti.
+a `1` per il debug. Le build release richiedono un versionCode esplicito tra 2
+e 2100000000, coordinato tra distribuzione locale e CI.
+
+Per firmare in locale e CI con la stessa chiave permanente, consulta
+[Firma delle release Android](SIGNING.it.md). L'opzione manuale `signed_release`
+su `main` compila una release non firmata e la firma in un job protetto separato.
+Gli avvii manuali producono un artefatto firmato senza creare release. Le build
+da tag sono richiamate dal workflow desktop e confluiscono nella sua bozza e nei
+checksum condivisi. Gli avvii normali restano debug: vedi [configurazione firma e release](SIGNING.it.md).
 
 ## Testare i trasferimenti con l'applicazione desktop
 
@@ -597,7 +608,7 @@ separato di 15 minuti per la decisione rifiuta automaticamente una proposta
 senza risposta invece di lasciare il mittente desktop in attesa indefinita. Può
 essere attiva una sola operazione di invio o ricezione alla volta.
 
-## Isolamento dalle release desktop
+## Isolamento dalle build desktop
 
 Le dipendenze Android si trovano nel `pyproject.toml` e nell'`uv.lock` dedicati
 di questa directory. Il progetto principale mantiene PySide6 come unica GUI
@@ -663,9 +674,9 @@ invece di riutilizzare silenziosamente un vecchio eseguibile.
   il tempo disponibile non viene ripristinato;
 - i trasferimenti interrotti non possono ancora riprendere da un payload
   parziale;
-- CI e packaging locale producono solamente un APK di debug `arm64-v8a`; non
-  esistono una chiave di release del progetto, pubblicazione Android firmata o
-  artefatti per architetture diverse da ARM64;
+- gli APK debug ARM64 restano il comportamento predefinito; artefatti firmati e
+  bozze complete richiedono configurazione esplicita di chiave ed environment.
+  Architetture diverse da ARM64 non sono implementate;
 - le identità di firma debug possono variare tra gli host di build e rendere
   necessario disinstallare un prototipo esistente prima di installare un'altra
   build di test;

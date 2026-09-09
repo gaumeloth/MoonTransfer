@@ -46,7 +46,7 @@ android.numeric_version = 1
 android.allow_backup = False
 android.enable_androidx = True
 android.debug_artifact = apk
-android.release_artifact = aab
+android.release_artifact = apk
 
 p4a.branch = v2026.05.09
 p4a.bootstrap = sdl2

@@ -316,8 +316,8 @@ class AndroidApkPackagingTests(unittest.TestCase):
     def test_validates_and_stages_a_versioned_debug_apk(self) -> None:
         _write_test_apk(self.apk, self.metadata)
 
-        android_tool.validate_debug_apk(self.apk, expected=self.metadata)
-        staged = android_tool.package_debug_apk(
+        android_tool.validate_apk(self.apk, expected=self.metadata)
+        staged = android_tool.package_apk(
             self.metadata,
             dist_dir=self.dist,
             release_dir=self.release,
@@ -336,7 +336,7 @@ class AndroidApkPackagingTests(unittest.TestCase):
         _write_test_apk(self.apk, self.metadata, omit=croc_member)
 
         with self.assertRaisesRegex(RuntimeError, "libcroc.so"):
-            android_tool.validate_debug_apk(
+            android_tool.validate_apk(
                 self.apk,
                 expected=self.metadata,
             )
@@ -349,7 +349,7 @@ class AndroidApkPackagingTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(RuntimeError, "x86_64"):
-            android_tool.validate_debug_apk(
+            android_tool.validate_apk(
                 self.apk,
                 expected=self.metadata,
             )
@@ -361,7 +361,7 @@ class AndroidApkPackagingTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(RuntimeError, "does not match"):
-            android_tool.validate_debug_apk(
+            android_tool.validate_apk(
                 self.apk,
                 expected=self.metadata,
             )
@@ -370,7 +370,7 @@ class AndroidApkPackagingTests(unittest.TestCase):
         unsafe = _android_build_metadata(version="../outside")
 
         with self.assertRaisesRegex(RuntimeError, "Unsafe Android artifact"):
-            android_tool.package_debug_apk(
+            android_tool.package_apk(
                 unsafe,
                 dist_dir=self.dist,
                 release_dir=self.release,
@@ -770,7 +770,7 @@ class AndroidDoctorTests(unittest.TestCase):
 
     def test_buildozer_debug_command_applies_the_ci_profile_before_target(self) -> None:
         self.assertEqual(
-            android_tool.buildozer_debug_command(
+            android_tool.buildozer_apk_command(
                 "/usr/bin/buildozer",
                 profile="ci",
             ),
@@ -786,7 +786,7 @@ class AndroidDoctorTests(unittest.TestCase):
 
     def test_buildozer_debug_command_rejects_unknown_profiles(self) -> None:
         with self.assertRaisesRegex(ValueError, "Unsupported Buildozer profile"):
-            android_tool.buildozer_debug_command(
+            android_tool.buildozer_apk_command(
                 "/usr/bin/buildozer",
                 profile="unknown",
             )

@@ -4,7 +4,8 @@ Italian version: [README.it.md](README.it.md)
 
 This directory contains an isolated Kivy and Buildozer environment for the
 Android feasibility prototype. It does not replace the PySide6 desktop
-application and is not part of desktop release artifacts.
+application. Build dependencies remain isolated, while the signed APK is a
+separate asset in the same draft releases as the desktop packages.
 
 ## Current scope
 
@@ -44,9 +45,11 @@ The prototype currently provides:
 This remains an experimental transfer client. It can build a mixed send
 selection over multiple system-picker operations, display every staged
 top-level file or folder, remove individual items, or clear the selection. It
-cannot resume an interrupted transfer. Automated builds currently produce only
-an ARM64 debug APK; signed Android releases and other architectures are not
-implemented.
+cannot resume an interrupted transfer. Automatic builds produce ARM64 debug APKs;
+an opt-in manual workflow can produce a signed release APK after the
+[shared signing key is configured](SIGNING.md). Pre-release tags include the
+signed APK in the same draft release as desktop builds. Other architectures
+are not implemented.
 The app declares `INTERNET`, the foreground-service permissions required for
 `dataSync`, and the notification permission used to show transfer status. The
 lock-screen public version of that notification is deliberately generic:
@@ -260,7 +263,8 @@ archives. Generated source and build output must not be edited or committed.
 ## Continuous integration artifact
 
 `.github/workflows/android-build.yml` runs on pull requests, pushes to `main`,
-pre-release tags, and manual workflow dispatches. Its Ubuntu 24.04 job installs
+normal manual workflow dispatches, and reusable calls from the release workflow
+(signed builds on pre-release tags). Its Ubuntu 24.04 job installs
 pinned versions of `uv`, Python 3.13.14, Java 17, Go 1.25.12, and Rust 1.97.1,
 verifies `android/uv.lock`, installs the locked build dependency group, runs
 every `test_android*.py` test, executes `doctor`, and builds the `arm64-v8a`
@@ -302,9 +306,15 @@ first resolves the signature mismatch, but also deletes its private app data.
 
 The full build version and commit are embedded in `build-info.json`, and the
 full version is used as Android's `versionName`. During the prototype phase the
-Buildozer `versionCode` is fixed at `1`. A signed distribution workflow must
-replace that placeholder with a monotonically increasing version-code policy
-before Android release artifacts are published.
+debug `versionCode` stays at `1`. Release builds require an explicit versionCode
+from 2 to 2100000000, coordinated across local and CI distribution.
+
+For local and CI APKs signed with the same permanent key, see
+[Android release signing](SIGNING.md). The manual `signed_release` option on
+`main` builds an unsigned release and signs it in a separate protected job.
+Manual runs upload a signed Actions artifact without creating a release. Tag builds
+are called by the desktop workflow and join its draft release and shared checksums.
+Normal runs remain debug. See [signing and combined release setup](SIGNING.md).
 
 ## Test transfers with the desktop application
 
@@ -557,7 +567,7 @@ not impose a fixed maximum duration on an active transfer. A separate
 instead of leaving the desktop sender waiting indefinitely. Only one send or
 receive operation can run at a time.
 
-## Isolation from desktop releases
+## Isolation from desktop builds
 
 Android dependencies live in this directory's own `pyproject.toml` and
 `uv.lock`. The root project keeps PySide6 as its only GUI runtime. Buildozer
@@ -618,8 +628,8 @@ silently reusing an old executable.
   allowance while the app is in the background; reaching it cancels the active
   transfer, and starting another one may be refused until the allowance resets;
 - interrupted transfers cannot yet be resumed from a partial payload;
-- CI and local packaging produce only a debug `arm64-v8a` APK; there is no
-  project release key, signed Android publication, or non-ARM64 artifact;
+- debug ARM64 APKs remain the default; signed artifacts and complete draft
+  releases require explicit key/environment setup. Non-ARM64 artifacts are not implemented;
 - debug signing identities can differ between build hosts, which may require
   uninstalling an existing prototype before installing another test build;
 - send readiness and transfer status still depend partly on human-readable

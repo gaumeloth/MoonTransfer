@@ -5,11 +5,24 @@ on:
   push:
     branches:
       - main
-    tags:
-      - "v[0-9]*-alpha.*"
-      - "v[0-9]*-beta.*"
-      - "v[0-9]*-rc.*"
+  workflow_call:
+    inputs:
+      signed_release:
+        type: boolean
+        default: false
+      version_code:
+        type: string
+        default: ""
   workflow_dispatch:
+    inputs:
+      signed_release:
+        description: Build a signed release APK (main only; requires android-signing environment)
+        type: boolean
+        default: false
+      version_code:
+        description: Optional manual versionCode override; blank uses android/release.toml
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -27,15 +40,45 @@ env:
 
 jobs:
   build:
-    name: Build android-arm64 debug APK
+    name: Build android-arm64 ${{ inputs.signed_release && 'unsigned release' || 'debug' }} APK
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    outputs:
+      version: ${{ steps.package-version.outputs.version }}
+      version_code: ${{ steps.release-request.outputs.version_code }}
+    env:
+      SIGNED_RELEASE: ${{ inputs.signed_release == true }}
+      VERSION_CODE: ${{ inputs.version_code }}
 
     steps:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: ${{ inputs.signed_release && 0 || 1 }}
+
+      - name: Validate trusted release request and versionCode
+        id: release-request
+        if: env.SIGNED_RELEASE == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = workflow_dispatch ] && [ "${GITHUB_REF}" = refs/heads/main ]; then
+            :
+          elif [ "${GITHUB_EVENT_NAME}" = push ] && [ "${GITHUB_REF_TYPE}" = tag ]; then
+            python3 -m tools.release_assets validate-tag "${GITHUB_REF_NAME}"
+            git merge-base --is-ancestor "${GITHUB_SHA}" refs/remotes/origin/main
+            test -z "${VERSION_CODE}"
+          else
+            echo 'Signing is allowed only for manual main builds or approved pre-release tags.' >&2
+            exit 1
+          fi
+          args=()
+          if [ -n "${VERSION_CODE}" ]; then
+            args=(--override "${VERSION_CODE}")
+          fi
+          code="$(python3 -m tools.android release-version-code "${args[@]}")"
+          printf 'version_code=%s\n' "${code}" >> "${GITHUB_OUTPUT}"
 
       - name: Install uv and Python
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
@@ -151,6 +194,7 @@ jobs:
           printf 'version=%s\n' "${version}" >> "${GITHUB_OUTPUT}"
 
       - name: Build the Android debug APK
+        if: env.SIGNED_RELEASE != 'true'
         run: >-
           ./scripts/android.sh build
           --buildozer-profile ci
@@ -158,12 +202,25 @@ jobs:
           --commit "${{ github.sha }}"
 
       - name: Validate and stage the Android debug APK
+        if: env.SIGNED_RELEASE != 'true'
         run: >-
           ./scripts/android.sh package
           --version "${{ steps.package-version.outputs.version }}"
           --commit "${{ github.sha }}"
 
+      - name: Build and stage the unsigned release APK (no signing secrets)
+        if: env.SIGNED_RELEASE == 'true'
+        env:
+          PACKAGE_VERSION: ${{ steps.package-version.outputs.version }}
+          VERSION_CODE: ${{ steps.release-request.outputs.version_code }}
+        run: |
+          ./scripts/android.sh build --release-unsigned --buildozer-profile ci \
+            --version-code "${VERSION_CODE}" --version "${PACKAGE_VERSION}" --commit "${GITHUB_SHA}"
+          ./scripts/android.sh package --release-unsigned \
+            --version "${PACKAGE_VERSION}" --commit "${GITHUB_SHA}"
+
       - name: Verify the Android manifest
+        if: env.SIGNED_RELEASE != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -192,9 +249,90 @@ jobs:
             uv run --project android --frozen --group build python -m tools.android verify-share-manifest
 
       - name: Upload the testable Android artifact
+        if: env.SIGNED_RELEASE != 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           path: release/MoonTransfer-*-android-arm64-debug.apk
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload unsigned release for the isolated signing job
+        if: env.SIGNED_RELEASE == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-release-unsigned
+          path: release/MoonTransfer-*-android-arm64-release-unsigned.apk
+          if-no-files-found: error
+          retention-days: 1
+
+  sign:
+    name: Sign android-arm64 release APK
+    needs: build
+    if: >-
+      inputs.signed_release &&
+      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'push' && github.ref_type == 'tag'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: android-signing
+    env:
+      PACKAGE_VERSION: ${{ needs.build.outputs.version }}
+      VERSION_CODE: ${{ needs.build.outputs.version_code }}
+    steps:
+      - name: Check out the trusted revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Java
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Download only this run's unsigned APK
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: android-release-unsigned
+          path: unsigned
+
+      - name: Sign and verify (no build or dependency installation)
+        env:
+          MOONTRANSFER_ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          MOONTRANSFER_ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          MOONTRANSFER_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ vars.ANDROID_KEY_ALIAS }}
+          CERTIFICATE_SHA256: ${{ vars.ANDROID_CERTIFICATE_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          keydir="$(mktemp -d "${RUNNER_TEMP}/moontransfer-signing.XXXXXX")"
+          trap 'rm -rf -- "${keydir}"' EXIT
+          printf '%s' "${MOONTRANSFER_ANDROID_KEYSTORE_BASE64:?Missing keystore secret}" | base64 --decode > "${keydir}/release.p12"
+          unset MOONTRANSFER_ANDROID_KEYSTORE_BASE64
+          python3 -m tools.android_signing sign \
+            --apk "unsigned/MoonTransfer-${PACKAGE_VERSION}-android-arm64-release-unsigned.apk" \
+            --output "signed/MoonTransfer-${PACKAGE_VERSION}-android-arm64.apk" \
+            --keystore "${keydir}/release.p12" \
+            --alias "${KEY_ALIAS:?Missing alias variable}" \
+            --expected-sha256 "${CERTIFICATE_SHA256:?Missing certificate fingerprint variable}" \
+            --version "${PACKAGE_VERSION}" --commit "${GITHUB_SHA}" --version-code "${VERSION_CODE}"
+          (cd signed && sha256sum "MoonTransfer-${PACKAGE_VERSION}-android-arm64.apk" > SHA256SUMS)
+
+      - name: Upload the signed APK (not a GitHub Release)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          path: signed/MoonTransfer-*-android-arm64.apk
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload checksum
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          path: signed/SHA256SUMS
           archive: false
           if-no-files-found: error
           retention-days: 14
