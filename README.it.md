@@ -43,7 +43,7 @@ solo l'interfaccia grafica e include il binario `croc` nell'app buildata.
 
 ### Canali di distribuzione
 
-- **Release pubblicate:** usa gli asset della pagina Releases. La release pubblica `alpha.3` contiene archivi desktop, non un APK; le funzionalità descritte qui si riferiscono ai sorgenti correnti e possono essere più recenti.
+- **Release pubblicate:** usa gli asset della pagina Releases. La release pubblica corrente `alpha.4` contiene quattro archivi desktop e un APK ARM64 firmato; le funzionalità descritte qui si riferiscono ai sorgenti correnti e possono essere più recenti.
 - **Artefatti Actions:** build di prova con versione e commit identificabili. Android normalmente produce un APK debug; gli avvii manuali dedicati possono produrre APK firmati con la chiave del progetto, senza pubblicare release.
 - **Nuovi tag di pre-release:** il workflow prepara una bozza con quattro archivi desktop e un APK ARM64 firmato. La pubblicazione rimane manuale; configurare la firma è un prerequisito.
 
@@ -76,11 +76,12 @@ MoonTransfer è in fase iniziale. Il flusso principale è già funzionante:
 - artefatti `onedir` automatizzati e testabili per Linux x86_64, Windows
   x86_64, macOS Intel e macOS Apple Silicon.
 
-L'alpha pubblica attuale, `v0.1.0-alpha.3`, viene distribuita dalla
+L'alpha pubblica attuale, `v0.1.0-alpha.4`, viene distribuita dalla
 [pagina GitHub Releases](https://github.com/gaumeloth/MoonTransfer/releases)
-come archivi `onedir` pre-buildati. Le build non sono firmate né notarizzate e
-sono destinate ai primi test, non all'uso in produzione. Non sono ancora
-disponibili installer nativi.
+come archivi `onedir` pre-buildati e un APK Android ARM64 firmato. Le build
+desktop non sono firmate né notarizzate e tutti gli artefatti sono destinati ai
+primi test, non all'uso in produzione. Non sono ancora disponibili installer
+nativi.
 
 Su Linux e Windows l'archivio contiene una cartella portabile `MoonTransfer`: va
 mantenuta interamente, non soltanto il suo eseguibile. Su macOS contiene invece
@@ -109,10 +110,10 @@ Il confine di compatibilità è il seguente:
 | --- | --- | --- |
 | `v0.1.0-alpha.1` | `10.4.13` | No |
 | `v0.1.0-alpha.2` | `10.7.0` | No |
-| `v0.1.0-alpha.3` e sorgente attuale | `11.0.1` | Sì |
+| `v0.1.0-alpha.3`, `v0.1.0-alpha.4` e sorgente attuale | `11.0.1` | Sì |
 
 Gli archivi `alpha.1` e `alpha.2` restano utilizzabili soltanto con altre build
-precedenti a `croc 11`. Usa `alpha.3` o una build successiva su entrambi i
+precedenti a `croc 11`. Usa `alpha.4` o una build successiva su entrambi i
 dispositivi. Si tratta di un'incompatibilità del protocollo di trasporto, non
 del sistema operativo: le build desktop e Android attuali restano compatibili
 quando usano `croc 11` e la stessa versione del protocollo MoonTransfer.
@@ -153,10 +154,10 @@ Quando usi un archivio pre-buildato non devi installare Python, `uv` o `croc`.
 I file delle release hanno nomi come:
 
 ```text
-MoonTransfer-0.1.0-alpha.3-linux-x86_64.tar.gz
-MoonTransfer-0.1.0-alpha.3-windows-x86_64.zip
-MoonTransfer-0.1.0-alpha.3-macos-x86_64.tar.gz
-MoonTransfer-0.1.0-alpha.3-macos-arm64.tar.gz
+MoonTransfer-0.1.0-alpha.4-linux-x86_64.tar.gz
+MoonTransfer-0.1.0-alpha.4-windows-x86_64.zip
+MoonTransfer-0.1.0-alpha.4-macos-x86_64.tar.gz
+MoonTransfer-0.1.0-alpha.4-macos-arm64.tar.gz
 ```
 
 Il numero di versione potrebbe essere più recente rispetto all'esempio. Scarica

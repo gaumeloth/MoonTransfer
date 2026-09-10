@@ -44,7 +44,7 @@ application.
 
 ### Distribution channels
 
-- **Published releases:** use assets on the Releases page. The public `alpha.3` release contains desktop archives, not an APK; features described here refer to current source and may be newer.
+- **Published releases:** use assets on the Releases page. The current `alpha.4` release contains four desktop archives and a signed ARM64 APK; features described here refer to current source and may be newer.
 - **Actions artifacts:** test builds with an identifiable version and commit. Android normally produces a debug APK; dedicated manual runs can produce APKs signed with the project key without publishing releases.
 - **New pre-release tags:** the workflow prepares a draft containing four desktop archives and one signed ARM64 APK. Publication remains manual; signing setup is a prerequisite.
 
@@ -74,11 +74,11 @@ MoonTransfer is in an early stage. The main flow is already working:
 - automated testable `onedir` artifacts for Linux x86_64, Windows x86_64,
   macOS Intel, and macOS Apple Silicon.
 
-The current public alpha, `v0.1.0-alpha.3`, is distributed from the
+The current public alpha, `v0.1.0-alpha.4`, is distributed from the
 [GitHub Releases page](https://github.com/gaumeloth/MoonTransfer/releases) as
-pre-built `onedir` archives. The builds are not signed or notarized and are
-intended for early testing rather than production use. Native installers are
-not available yet.
+pre-built `onedir` archives and a signed ARM64 Android APK. The desktop builds
+are not signed or notarized and all artifacts are intended for early testing
+rather than production use. Native installers are not available yet.
 
 On Linux and Windows, the archive contains a portable `MoonTransfer` folder:
 keep the entire folder, not just its executable. On macOS, it contains a
@@ -104,10 +104,10 @@ The compatibility boundary is:
 | --- | --- | --- |
 | `v0.1.0-alpha.1` | `10.4.13` | No |
 | `v0.1.0-alpha.2` | `10.7.0` | No |
-| `v0.1.0-alpha.3` and current source | `11.0.1` | Yes |
+| `v0.1.0-alpha.3`, `v0.1.0-alpha.4` and current source | `11.0.1` | Yes |
 
 The `alpha.1` and `alpha.2` archives remain useful only with other pre-`croc
-11` builds. Use `alpha.3` or a newer build at both endpoints. This is a
+11` builds. Use `alpha.4` or a newer build at both endpoints. This is a
 transport-protocol incompatibility, not an operating-system incompatibility:
 current desktop and Android builds remain compatible when they use `croc 11`
 and the same MoonTransfer protocol version.
@@ -146,10 +146,10 @@ archive.
 Release files use names such as:
 
 ```text
-MoonTransfer-0.1.0-alpha.3-linux-x86_64.tar.gz
-MoonTransfer-0.1.0-alpha.3-windows-x86_64.zip
-MoonTransfer-0.1.0-alpha.3-macos-x86_64.tar.gz
-MoonTransfer-0.1.0-alpha.3-macos-arm64.tar.gz
+MoonTransfer-0.1.0-alpha.4-linux-x86_64.tar.gz
+MoonTransfer-0.1.0-alpha.4-windows-x86_64.zip
+MoonTransfer-0.1.0-alpha.4-macos-x86_64.tar.gz
+MoonTransfer-0.1.0-alpha.4-macos-arm64.tar.gz
 ```
 
 The version number may be newer than the example. Download only files attached
