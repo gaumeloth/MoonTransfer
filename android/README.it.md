@@ -30,7 +30,7 @@ nella stessa bozza di release dei pacchetti desktop.
 
 - Gli APK attuali sono **ARM64** (`arm64-v8a`) e richiedono almeno **Android 7.0 / API 24**. Questo è il minimo dichiarato, non una garanzia di test su ogni dispositivo.
 - Usa un dispositivo fisico ARM64 per verificare trasferimenti e integrazione nativa. Un emulatore x86_64 che dichiara ARM64 tramite traduzione non equivale a esecuzione nativa: croc può fallire anche se la GUI si avvia.
-- Scarica un APK dal canale scelto nella [guida principale](../README.it.md#canali-di-distribuzione). La release pubblica `alpha.3` non contiene APK. Negli artefatti Actions scegli `*-debug.apk` per il debug oppure `*-android-arm64.apk` per la build firmata, mai `*-release-unsigned.apk`.
+- Scarica `MoonTransfer-0.1.0-alpha.4-android-arm64.apk` dalla [release GitHub `alpha.4`](https://github.com/gaumeloth/MoonTransfer/releases), insieme a `SHA256SUMS`, e verifica il checksum prima dell'installazione. Negli artefatti Actions scegli `*-debug.apk` per il debug oppure `*-android-arm64.apk` per la build firmata, mai `*-release-unsigned.apk`.
 - Apri l'APK sul telefono e autorizza l'installazione dalla sorgente utilizzata solo se ti fidi del download. Per passare da debug a firma definitiva leggi prima [Passaggio sul dispositivo](SIGNING.it.md#passaggio-sul-dispositivo): la disinstallazione elimina i dati privati.
 - Al primo avvio verifica che non rimanga l'avviso di trasporto non disponibile. Il pulsante informazioni in alto a destra mostra versione, commit, croc e protocollo.
 - Consenti le notifiche quando richiesto per seguire e interrompere il trasferimento in background. File e destinazioni si scelgono con il selettore Android; non occorre concedere accesso indiscriminato a tutto lo storage.
@@ -209,7 +209,7 @@ Le versioni rilevanti sono:
 | --- | --- | --- |
 | Desktop `v0.1.0-alpha.1` | `10.4.13` | No |
 | Desktop `v0.1.0-alpha.2` e APK precedenti del prototipo | `10.7.0` | No |
-| Desktop `v0.1.0-alpha.3`, sorgente e recipe Android attuali | `11.0.1` | Sì |
+| Desktop `v0.1.0-alpha.3`, `v0.1.0-alpha.4`, sorgente e recipe Android attuali | `11.0.1` | Sì |
 
 Per i test di compatibilità ricrea l'APK dalla revisione desiderata e controlla
 nel dialogo informazioni che il trasporto incluso sia `croc 11.0.1`. Non usare un vecchio APK

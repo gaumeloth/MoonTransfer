@@ -149,7 +149,7 @@ inattese sono rifiutati. Crea o aggiorna una bozza di prerelease; non sovrascriv
 release già pubblicate. Una build/firma fallita o una chiave mancante blocca la
 bozza, invece di generare una release incompleta con il solo desktop.
 
-Prima del primo tag configura `android-signing`, prova l'avvio manuale congiunto,
+Prima di ogni nuovo tag configura `android-signing`, prova l'avvio manuale congiunto,
 aggiorna se necessario `android/release.toml` e integra il lavoro tramite PR.
 Il commit del tag deve essere già incluso in `main` e la sua versione numerica
 deve coincidere con `pyproject.toml`. I tag e le release esistenti non cambiano.

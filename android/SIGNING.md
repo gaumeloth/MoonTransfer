@@ -145,7 +145,7 @@ versions are rejected. It creates or refreshes a draft pre-release and refuses t
 overwrite an already published release. A failed build/signature or missing key
 blocks the draft, instead of silently producing a desktop-only release.
 
-Before the first tag, configure `android-signing`, test the manual combined run,
+Before each new tag, configure `android-signing`, test the manual combined run,
 update `android/release.toml` if necessary, and merge through a PR. Tags must point
 to a commit already included in `main`; the numeric tag version must match
 `pyproject.toml`. Existing tags/releases are not modified by this change.

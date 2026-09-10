@@ -30,7 +30,7 @@ separate asset in the same draft releases as the desktop packages.
 
 - Current APKs are **ARM64** (`arm64-v8a`) and require at least **Android 7.0 / API 24**. This is the declared minimum, not a claim of testing on every device.
 - Use a physical ARM64 device to validate transfers and native integration. An x86_64 emulator advertising ARM64 through translation is not native execution: croc can fail even if the GUI starts.
-- Download an APK from the channel selected in the [main guide](../README.md#distribution-channels). Public release `alpha.3` has no APK. In Actions artifacts choose `*-debug.apk` for debug or `*-android-arm64.apk` for a signed build, never `*-release-unsigned.apk`.
+- Download `MoonTransfer-0.1.0-alpha.4-android-arm64.apk` from the `alpha.4` [GitHub Release](https://github.com/gaumeloth/MoonTransfer/releases), together with `SHA256SUMS`, and verify the checksum before installing. In Actions artifacts choose `*-debug.apk` for debug or `*-android-arm64.apk` for a signed build, never `*-release-unsigned.apk`.
 - Open the APK on the phone and allow installation from that source only if you trust the download. Before switching from debug to permanent signing, read [Installation transition](SIGNING.md#installation-transition): uninstalling deletes private data.
 - At first start, check that no transport-unavailable warning remains. The top-right information button shows version, commit, croc and protocol.
 - Allow notifications when prompted to monitor and stop background transfers. Files and destinations use Android's picker; unrestricted access to all storage is not required.
@@ -198,7 +198,7 @@ The relevant versions are:
 | --- | --- | --- |
 | Desktop `v0.1.0-alpha.1` | `10.4.13` | No |
 | Desktop `v0.1.0-alpha.2` and older prototype APKs | `10.7.0` | No |
-| Desktop `v0.1.0-alpha.3`, current source, and Android recipe | `11.0.1` | Yes |
+| Desktop `v0.1.0-alpha.3`, `v0.1.0-alpha.4`, current source, and Android recipe | `11.0.1` | Yes |
 
 For compatibility tests, rebuild the APK from the intended revision and check
 in its information dialog that the bundled transport is `croc 11.0.1`. Do not use an old debug

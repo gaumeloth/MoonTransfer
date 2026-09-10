@@ -29,13 +29,13 @@ MoonTransfer è in una fase di sviluppo iniziale attiva. Offre già un flusso
 grafico di invio/ricezione, include nella build un binario `croc` fissato e
 verificato tramite checksum, contiene test unitari per la logica non-GUI e
 pubblica archivi alpha nativi pre-buildati per le piattaforme principali. La
-linea pubblica attuale è `v0.1.0-alpha.3`. Android è un target con build debug e firmate,
+linea pubblica attuale è `v0.1.0-alpha.4`. Android è un target con build debug e firmate,
 funzionante ma sperimentale per file, cartelle e selezioni miste, non una release
 supportata per l'utente finale.
 
 Possibili miglioramenti futuri, in ordine indicativo:
 
-- raccogliere feedback su `alpha.3` e continuare a validare gli artefatti
+- raccogliere feedback su `alpha.4` e continuare a validare gli artefatti
   `onedir` automatizzati sui rispettivi sistemi;
 - continuare a consolidare il target Android basato su Kivy, in particolare
   casi limite del ciclo di vita, payload grandi o molto annidati, copertura di
