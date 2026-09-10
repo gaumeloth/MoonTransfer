@@ -39,6 +39,7 @@ jobs:
     with:
       signed_release: true
       version_code: ${{ inputs.android_version_code || '' }}
+    secrets: inherit
 
   build:
     name: Build ${{ matrix.target }}

@@ -297,6 +297,29 @@ jobs:
           name: android-release-unsigned
           path: unsigned
 
+      - name: Verify signing configuration is available
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ vars.ANDROID_KEY_ALIAS }}
+          CERTIFICATE_SHA256: ${{ vars.ANDROID_CERTIFICATE_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for variable in KEYSTORE_BASE64 STORE_PASSWORD KEY_PASSWORD; do
+            if [ -z "${!variable}" ]; then
+              echo "Signing configuration is missing: ${variable}. Check the android-signing environment." >&2
+              exit 1
+            fi
+          done
+          for variable in KEY_ALIAS CERTIFICATE_SHA256; do
+            if [ -z "${!variable}" ]; then
+              echo "Signing configuration is missing: ${variable}. Check the android-signing environment variable." >&2
+              exit 1
+            fi
+          done
+
       - name: Sign and verify (no build or dependency installation)
         env:
           MOONTRANSFER_ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
