@@ -90,6 +90,24 @@ RELEASE_DOCUMENT_NAMES = (
     "THIRD_PARTY_NOTICES.md",
     "README.md",
     "README.it.md",
+    "CONTRIBUTING.md",
+    "CONTRIBUTING.it.md",
+    "docs/BUILD.md",
+    "docs/BUILD.it.md",
+    "docs/ARCHITECTURE.md",
+    "docs/ARCHITECTURE.it.md",
+    "docs/RELEASING.md",
+    "docs/RELEASING.it.md",
+    "docs/TROUBLESHOOTING.md",
+    "docs/TROUBLESHOOTING.it.md",
+    "android/README.md",
+    "android/README.it.md",
+    "android/SIGNING.md",
+    "android/SIGNING.it.md",
+    "android/recipes/README.md",
+    "android/app/moontransfer_android/assets/icons/LICENSE-lucide.txt",
+    "android/app/moontransfer_android/licenses/croc.txt",
+    "src/moontransfer/assets/branding/moontransfer-logo.png",
 )
 
 LINUX_QT_XCB_RUNTIME_LIBRARIES = (
@@ -265,6 +283,8 @@ def archive_entries(
     source: Path,
     archive_root: str,
     documents: tuple[Path, ...],
+    *,
+    documentation_root: Path,
 ) -> tuple[tuple[Path, Path], ...]:
     if source.name == "MoonTransfer":
         bundle_entries = tuple(
@@ -275,7 +295,8 @@ def archive_entries(
         bundle_entries = ((source, Path(archive_root) / source.name),)
 
     document_entries = tuple(
-        (path, Path(archive_root) / path.name) for path in documents
+        (path, Path(archive_root) / path.relative_to(documentation_root))
+        for path in documents
     )
     return (*bundle_entries, *document_entries)
 
@@ -336,6 +357,7 @@ def create_release_package(
         bundle,
         archive_root,
         release_documents(root),
+        documentation_root=root,
     )
     temporary = destination.with_name(f".{destination.name}.tmp")
     temporary.unlink(missing_ok=True)

@@ -13,6 +13,26 @@ from tools import package_release
 
 
 class PackageReleaseTests(unittest.TestCase):
+    def test_release_documents_reject_missing_nested_guide(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._create_bundle(root, package_release.TARGETS["windows-x86_64"])
+            (root / "docs/RELEASING.md").unlink()
+            with self.assertRaisesRegex(FileNotFoundError, "RELEASING.md"):
+                package_release.release_documents(root)
+
+    def test_documentation_allowlist_excludes_private_and_source_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._create_bundle(root, package_release.TARGETS["windows-x86_64"])
+            for name in ("android/release.p12", "docs/private.txt", "android/main.py"):
+                (root / name).write_text("not documentation", encoding="utf-8")
+            paths = package_release.release_documents(root)
+            self.assertEqual(
+                {path.relative_to(root).as_posix() for path in paths},
+                set(package_release.RELEASE_DOCUMENT_NAMES),
+            )
+
     def test_normalize_architecture(self) -> None:
         self.assertEqual(package_release.normalize_architecture("AMD64"), "x86_64")
         self.assertEqual(package_release.normalize_architecture("aarch64"), "arm64")
@@ -147,6 +167,10 @@ class PackageReleaseTests(unittest.TestCase):
                     "MoonTransfer-0.1.0-alpha.1/LICENSE",
                     archive.getnames(),
                 )
+                for name in package_release.RELEASE_DOCUMENT_NAMES:
+                    self.assertIn(
+                        f"MoonTransfer-0.1.0-alpha.1/{name}", archive.getnames()
+                    )
             self.assertEqual(bundle.name, "MoonTransfer")
 
     def test_create_windows_package_contains_the_complete_bundle(self) -> None:
@@ -164,6 +188,10 @@ class PackageReleaseTests(unittest.TestCase):
             )
 
             with zipfile.ZipFile(package) as archive:
+                for name in package_release.RELEASE_DOCUMENT_NAMES:
+                    self.assertIn(
+                        f"MoonTransfer-0.1.0-alpha.1/{name}", archive.namelist()
+                    )
                 self.assertIn(
                     "MoonTransfer-0.1.0-alpha.1/MoonTransfer.exe",
                     archive.namelist(),
@@ -226,6 +254,7 @@ class PackageReleaseTests(unittest.TestCase):
             encoding="utf-8",
         )
         for name in package_release.RELEASE_DOCUMENT_NAMES:
+            (root / name).parent.mkdir(parents=True, exist_ok=True)
             (root / name).write_text(name, encoding="utf-8")
         return bundle
 
