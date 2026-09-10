@@ -9,6 +9,16 @@ Pre-release tags now request a signed APK alongside desktop builds; a single
 publisher attaches all five packages to one **draft** GitHub Release. No permanent
 key is generated automatically, and nothing is published without manual approval.
 
+## Contents
+
+- [One-time setup](#one-time-setup)
+- [Local signed build](#local-signed-build)
+- [CI signed build](#ci-signed-build)
+- [Desktop and Android together](#desktop-and-android-together)
+- [Installation transition](#installation-transition)
+- [Test without the permanent key](#test-without-the-permanent-key)
+- [Verify GitHub setup](#verify-github-setup)
+
 ## One-time setup
 
 Use Java 17 and Python 3.11+ (the Android environment also works). From the project root:
@@ -101,7 +111,7 @@ be converted to a release by merely running the signing command.
 
 ## CI signed build
 
-After this workflow is merged, open **Actions > Build Android artifact > Run workflow**:
+Open **Actions > Build Android artifact > Run workflow**:
 select `main`, enable `signed_release`; leave `version_code` blank to use
 `android/release.toml`, or supply a coordinated override for a manual test.
 The build job runs tests and builds an unsigned release **without secrets**.
@@ -165,3 +175,33 @@ python3 -m unittest tests.test_android_signing -v
 References: [Android app signing](https://developer.android.com/studio/publish/app-signing),
 [apksigner](https://developer.android.com/tools/apksigner),
 [GitHub environment protection](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments).
+
+## Verify GitHub setup
+
+Variable names and values must have no leading/trailing whitespace:
+`ANDROID_KEY_ALIAS` must be exactly `moontransfer`, without quotes.
+The fingerprint is public; passwords and the keystore are not.
+
+```sh
+gh secret list --env android-signing --repo gaumeloth/MoonTransfer
+gh variable list --env android-signing --repo gaumeloth/MoonTransfer
+gh variable get ANDROID_KEY_ALIAS --env android-signing --repo gaumeloth/MoonTransfer
+```
+
+These commands do not display secret values. A listed secret can still contain
+an incorrect value: signing is the actual validation.
+With one maintainer as reviewer, enabling `Prevent self-review` prevents that
+person from approving their own runs; choose deliberately between independent
+review and personal approval. Disable administrator bypass if configured
+approval must be mandatory.
+
+A waiting run needs environment approval from the Actions summary.
+If signing fails, read the first job error, correct the alias/secrets as needed
+and rerun failed jobs. If workflow or code changed, start a new run on the
+correct revision: rerunning the old one does not automatically use new commits.
+
+Before distributing, also test restoring the key backup to a separate private
+location and verify its fingerprint with local tools.
+Never upload backups or passwords as artifacts. For APK and checksum verification,
+see [Troubleshooting](../docs/TROUBLESHOOTING.md#verify-downloads);
+for the full sequence use the [release procedure](../docs/RELEASING.md#publication-procedure).

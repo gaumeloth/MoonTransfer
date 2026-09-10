@@ -9,10 +9,14 @@ MoonTransfer uses the `croc` command-line tool as its transfer engine.
 Project: <https://github.com/schollz/croc>  
 License: MIT License
 
-The `croc` binary is downloaded during the build process by `tools/fetch_croc.py`
+For desktop, the `croc` binary is downloaded during the build process by `tools/fetch_croc.py`
 and bundled into the final application package. The bundled version and the
 expected SHA-256 hashes for supported release archives are declared in
 `pyproject.toml` under `[tool.moontransfer.croc]`.
+
+Android instead builds the pinned, checksum-verified release source with the
+local [python-for-android recipe](android/recipes/README.md). Its MIT license is
+included in the APK and in the [bundled license text](android/app/moontransfer_android/licenses/croc.txt).
 
 ## PySide6 / Qt for Python
 
@@ -22,6 +26,7 @@ Project: <https://doc.qt.io/qtforpython/>
 Package: <https://pypi.org/project/PySide6/>
 
 PySide6 is distributed under the licensing terms provided by Qt/PySide6.
+It is used by desktop builds, not by the Android runtime.
 
 ## Kivy
 
@@ -52,3 +57,11 @@ Projects: <https://github.com/kivy/buildozer> and
 <https://github.com/kivy/python-for-android>
 
 License: MIT License
+
+## Scope of this document
+
+This overview distinguishes application dependencies from build tools; it is
+not an exhaustive inventory of every transitive or native library in a bundle.
+When changing packaging, review the actual bundled components and their license
+texts, including the Python runtime and native Android dependencies. Preserve
+upstream copyright notices; do not translate or replace their license texts.

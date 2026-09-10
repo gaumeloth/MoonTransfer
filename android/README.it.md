@@ -1,4 +1,4 @@
-# Esperimento Android di MoonTransfer
+# MoonTransfer per Android
 
 Versione inglese: [README.md](README.md)
 
@@ -6,6 +6,39 @@ Questa directory contiene un ambiente Kivy e Buildozer isolato per il prototipo
 di fattibilità Android. Non sostituisce l'applicazione desktop PySide6: le
 dipendenze di build restano isolate, mentre l'APK firmato è un asset separato
 nella stessa bozza di release dei pacchetti desktop.
+
+[Torna alla guida principale](../README.it.md) | [Problemi comuni](../docs/TROUBLESHOOTING.it.md) | [Firma APK](SIGNING.it.md)
+
+## Indice
+
+- [Installazione e primo avvio](#installazione-e-primo-avvio)
+- [Ambito attuale](#ambito-attuale)
+- [Condivisione con Android](#condivisione-con-android)
+- [Risultati e recupero](#risultati-e-recupero)
+- [Compatibilità del trasporto](#compatibilità-del-trasporto)
+- [Prerequisiti del sistema host](#prerequisiti-del-sistema-host)
+- [Comandi](#comandi)
+- [Artefatto di integrazione continua](#artefatto-di-integrazione-continua)
+- [Testare i trasferimenti con l'applicazione desktop](#testare-i-trasferimenti-con-lapplicazione-desktop)
+- [Progettazione del trasferimento Android](#progettazione-del-trasferimento-android)
+- [Isolamento dalle build desktop](#isolamento-dalle-build-desktop)
+- [Build nativa di croc](#build-nativa-di-croc)
+- [Limitazioni note](#limitazioni-note)
+- [Test GUI locali](#test-gui-locali)
+
+## Installazione e primo avvio
+
+- Gli APK attuali sono **ARM64** (`arm64-v8a`) e richiedono almeno **Android 7.0 / API 24**. Questo è il minimo dichiarato, non una garanzia di test su ogni dispositivo.
+- Usa un dispositivo fisico ARM64 per verificare trasferimenti e integrazione nativa. Un emulatore x86_64 che dichiara ARM64 tramite traduzione non equivale a esecuzione nativa: croc può fallire anche se la GUI si avvia.
+- Scarica un APK dal canale scelto nella [guida principale](../README.it.md#canali-di-distribuzione). La release pubblica `alpha.3` non contiene APK. Negli artefatti Actions scegli `*-debug.apk` per il debug oppure `*-android-arm64.apk` per la build firmata, mai `*-release-unsigned.apk`.
+- Apri l'APK sul telefono e autorizza l'installazione dalla sorgente utilizzata solo se ti fidi del download. Per passare da debug a firma definitiva leggi prima [Passaggio sul dispositivo](SIGNING.it.md#passaggio-sul-dispositivo): la disinstallazione elimina i dati privati.
+- Al primo avvio verifica che non rimanga l'avviso di trasporto non disponibile. Il pulsante informazioni in alto a destra mostra versione, commit, croc e protocollo.
+- Consenti le notifiche quando richiesto per seguire e interrompere il trasferimento in background. File e destinazioni si scelgono con il selettore Android; non occorre concedere accesso indiscriminato a tutto lo storage.
+
+Per iniziare, scegli **Invia > File / Cartella > Prepara invio**; comunica il codice
+con **Copia** o **Condividi**. Sul destinatario scegli **Ricevi**, incolla il codice
+o il messaggio e premi **Verifica contenuto**. Controlla il contenuto prima di
+accettare; dopo la verifica finale scegli la destinazione di salvataggio.
 
 ## Ambito attuale
 
@@ -24,7 +57,7 @@ Il prototipo attualmente fornisce:
   fissato;
 - un probe runtime Android che individua l'eseguibile incluso e ne controlla la
   versione senza esporre un segreto di trasferimento;
-- identità della build incorporata e mostrata nell'intestazione e in un dialogo
+- identità della build incorporata e disponibile in un dialogo
   informativo copiabile, con commit sorgente, `croc` incluso, protocollo,
   runtime Python e piattaforma ma senza codici di trasferimento o percorsi
   locali;
@@ -122,7 +155,7 @@ Verifiche manuali su dispositivo Android fisico:
 5. Condividere durante un'altra operazione, riaprire dai Recenti e ruotare il
    dispositivo: nessuna sessione deve essere sostituita o condivisione duplicata.
 
-QR code e apertura/ricondivisione dei file ricevuti restano fuori da questa modifica.
+I QR code non sono ancora implementati. Per apertura e ricondivisione dei contenuti ricevuti vedi la sezione successiva.
 
 ## Risultati e recupero
 
@@ -179,7 +212,7 @@ Le versioni rilevanti sono:
 | Desktop `v0.1.0-alpha.3`, sorgente e recipe Android attuali | `11.0.1` | Sì |
 
 Per i test di compatibilità ricrea l'APK dalla revisione desiderata e controlla
-che il probe verde del trasporto riporti `croc 11.0.1`. Non usare un vecchio APK
+nel dialogo informazioni che il trasporto incluso sia `croc 11.0.1`. Non usare un vecchio APK
 di debug con una build desktop attuale, né un APK attuale con le alpha desktop
 precedenti a `croc 11`. Questo confine non dipende dal sistema operativo o
 dall'architettura della CPU.
@@ -272,7 +305,7 @@ diagnostico completo e copiabile.
 
 Quando l'APK viene avviato su Android, individua `libcroc.so` nella directory
 delle librerie native dell'applicazione ed esegue `croc --version` in un thread
-di lavoro. Uno stato verde conferma che l'eseguibile del trasporto può essere
+di lavoro. La verifica riuscita conferma che l'eseguibile del trasporto può essere
 avviato sul dispositivo.
 
 La prima esecuzione può scaricare pacchetti Python, strumenti Android e archivi
@@ -289,7 +322,7 @@ installa versioni fissate di `uv`, Python 3.13.14, Java 17, Go 1.25.12 e Rust
 di build, esegue tutti i test `test_android*.py`, avvia `doctor` e crea l'APK di
 debug `arm64-v8a`.
 
-Un passaggio dedicato esegue inoltre i 21 test GUI di intestazione, condivisione
+Un passaggio dedicato esegue inoltre i test GUI per intestazione, condivisione
 e scorrimento con Kivy e rendering software, senza ADB o emulatore. Il manifest
 decodificato dell'APK viene controllato per verificare l'activity di condivisione
 abilitata ed esportata, la modalità `singleTask` e i filtri launcher,
@@ -354,9 +387,9 @@ procedura di release per l'utente finale.
 
 1. Avvia MoonTransfer sul desktop, apri **Ricevi** e scegli una cartella di
    destinazione.
-2. Avvia l'app Android e attendi lo stato verde del trasporto `croc`.
-3. In **Invia**, premi **Aggiungi file** e scegli uno o più documenti piccoli e
-   non sensibili. Premi **Aggiungi cartella** per scegliere una cartella piccola
+2. Avvia l'app Android. La verifica riuscita mostra brevemente `Trasporto croc pronto` e nasconde il pannello di avviso; non è previsto un indicatore verde permanente.
+3. In **Invia**, premi **File** e scegli uno o più documenti piccoli e
+   non sensibili. Premi **Cartella** per scegliere una cartella piccola
    contenente file annidati e una sottocartella vuota.
 4. Ripeti una delle due azioni per creare una selezione con più radici o mista.
    Controlla che le radici precedenti rimangano e che i nuovi file o cartelle
@@ -365,7 +398,7 @@ procedura di release per l'utente finale.
    riepilogo della selezione. Usa **Rimuovi** su un elemento oppure **Svuota
    selezione** per verificare che la selezione possa essere corretta, quindi
    prepara quella prevista per il test.
-6. Premi **Prepara e invia**. L'app calcola l'hash di ogni copia privata e mostra
+6. Premi **Prepara invio**. L'app calcola l'hash di ogni copia privata e mostra
    un codice di 32 caratteri.
    Il codice viene anche copiato negli appunti Android.
 7. Passa all'applicazione di messaggistica usata per comunicare il codice. Lascia
@@ -391,7 +424,7 @@ procedura di release per l'utente finale.
    o una selezione mista piccola e non sensibile. Includi un file annidato e una
    cartella vuota quando verifichi la conservazione delle directory.
 2. Avvia l'app Android, apri **Ricevi**, inserisci il codice mostrato
-   dall'applicazione desktop e premi **Ricevi informazioni**.
+   dall'applicazione desktop e premi **Verifica contenuto**.
 3. Per un solo file controlla nome, dimensione e SHA-256. Per una cartella o un
    payload con più radici controlla numero di file e cartelle, dimensione totale,
    nomi principali elencati e l'indicazione che ogni file include un SHA-256.
@@ -430,7 +463,7 @@ questi casi con un payload piccolo e non sensibile:
    Ripeti dopo aver preparato almeno una radice e verifica che l'annullamento
    conservi la selezione esistente. Separatamente, annulla il selettore di
    salvataggio dopo
-   una ricezione verificata, quindi riaprilo con **Scegli dove salvare**. Tutti i
+   una ricezione verificata, quindi riaprilo con **Scegli destinazione**. Tutti i
    percorsi devono restituire controlli utilizzabili.
 5. Annulla un trasferimento attivo con **Interrompi** nell'app e un altro con
    l'azione della notifica. Entrambe devono arrestare la stessa sessione corrente
@@ -449,7 +482,7 @@ questi casi con un payload piccolo e non sensibile:
 Se il selettore di salvataggio viene annullato, la copia privata verificata
 rimane disponibile per massimo 15 minuti dalla verifica, finché il foreground
 service del trasferimento resta attivo.
-Premi **Scegli dove salvare** per riprovare oppure **Interrompi** per eliminarla.
+Premi **Scegli destinazione** per riprovare oppure **Interrompi** per eliminarla.
 
 Premere Home o passare a un'altra applicazione non annulla un'operazione attiva:
 il foreground service la continua e la GUI si ricollega alla sessione persistita
@@ -684,3 +717,15 @@ invece di riutilizzare silenziosamente un vecchio eseguibile.
   dall'output leggibile di `croc`, che non espone un'API strutturata per stato o
   avanzamento; MoonTransfer fissa quindi la versione di `croc` supportata e
   verifica tramite test il messaggio di preparazione atteso.
+
+## Test GUI locali
+
+Dalla radice del checkout su Linux, con l'ambiente Android installato. Il rendering software non richiede ADB o emulatore; non sostituisce i test su dispositivo.
+
+```sh
+PYTHONPATH="$PWD/src:$PWD/android/app" \
+MOONTRANSFER_KIVY_TOUCH_TESTS=1 KIVY_NO_ARGS=1 KIVY_NO_FILELOG=1 \
+SDL_VIDEODRIVER=offscreen LIBGL_ALWAYS_SOFTWARE=1 \
+uv run --project android --frozen --group build python -m unittest \
+  tests.test_android_header tests.test_android_sharing_ui tests.test_android_scroll -v
+```

@@ -1,5 +1,7 @@
 # Private python-for-android recipes
 
+[Android guide](../README.md) | [Architecture](../../docs/ARCHITECTURE.md)
+
 This directory contains dependencies that need Android-specific build logic.
 The `croc` recipe downloads the versioned source asset attached to the upstream
 release, verifies its published SHA-256 checksum, builds against its vendored Go
