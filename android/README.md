@@ -1,4 +1,4 @@
-# MoonTransfer Android experiment
+# MoonTransfer for Android
 
 Italian version: [README.it.md](README.it.md)
 
@@ -6,6 +6,39 @@ This directory contains an isolated Kivy and Buildozer environment for the
 Android feasibility prototype. It does not replace the PySide6 desktop
 application. Build dependencies remain isolated, while the signed APK is a
 separate asset in the same draft releases as the desktop packages.
+
+[Main guide](../README.md) | [Troubleshooting](../docs/TROUBLESHOOTING.md) | [APK signing](SIGNING.md)
+
+## Contents
+
+- [Installation and first start](#installation-and-first-start)
+- [Current scope](#current-scope)
+- [Android system sharing](#android-system-sharing)
+- [Results and recovery](#results-and-recovery)
+- [Transport compatibility](#transport-compatibility)
+- [Host prerequisites](#host-prerequisites)
+- [Commands](#commands)
+- [Continuous integration artifact](#continuous-integration-artifact)
+- [Test transfers with the desktop application](#test-transfers-with-the-desktop-application)
+- [Android transfer design](#android-transfer-design)
+- [Isolation from desktop builds](#isolation-from-desktop-builds)
+- [Native croc build](#native-croc-build)
+- [Known limitations](#known-limitations)
+- [Local GUI tests](#local-gui-tests)
+
+## Installation and first start
+
+- Current APKs are **ARM64** (`arm64-v8a`) and require at least **Android 7.0 / API 24**. This is the declared minimum, not a claim of testing on every device.
+- Use a physical ARM64 device to validate transfers and native integration. An x86_64 emulator advertising ARM64 through translation is not native execution: croc can fail even if the GUI starts.
+- Download an APK from the channel selected in the [main guide](../README.md#distribution-channels). Public release `alpha.3` has no APK. In Actions artifacts choose `*-debug.apk` for debug or `*-android-arm64.apk` for a signed build, never `*-release-unsigned.apk`.
+- Open the APK on the phone and allow installation from that source only if you trust the download. Before switching from debug to permanent signing, read [Installation transition](SIGNING.md#installation-transition): uninstalling deletes private data.
+- At first start, check that no transport-unavailable warning remains. The top-right information button shows version, commit, croc and protocol.
+- Allow notifications when prompted to monitor and stop background transfers. Files and destinations use Android's picker; unrestricted access to all storage is not required.
+
+To start, choose **Invia > File / Cartella > Prepara invio**; communicate the code
+with **Copia** or **Condividi**. On the receiver choose **Ricevi**, paste the code
+or message and press **Verifica contenuto**. Inspect the contents before accepting;
+after final verification choose where to save. Labels here match the Italian UI.
 
 ## Current scope
 
@@ -23,7 +56,7 @@ The prototype currently provides:
 - a private recipe that verifies and cross-compiles the pinned `croc` source;
 - an Android runtime probe that locates the packaged executable and checks its
   version without exposing a transfer secret;
-- an embedded build identity shown in the header and in a copyable information
+- an embedded build identity available in a copyable information
   dialog, including the source commit, bundled `croc`, protocol, Python runtime,
   and platform without transfer codes or local paths;
 - file and folder source selection, recursive private staging, and verified
@@ -116,7 +149,8 @@ Manual checks on a physical Android device:
 5. Share during another operation, reopen from Recents, and rotate the device:
    check that no active session is replaced and no old share is imported twice.
 
-QR codes and opening/re-sharing received files are outside this feature.
+QR codes are not implemented yet. See the next section for opening and
+resharing received content.
 
 ## Results and recovery
 
@@ -167,7 +201,7 @@ The relevant versions are:
 | Desktop `v0.1.0-alpha.3`, current source, and Android recipe | `11.0.1` | Yes |
 
 For compatibility tests, rebuild the APK from the intended revision and check
-that its green transport probe reports `croc 11.0.1`. Do not use an old debug
+in its information dialog that the bundled transport is `croc 11.0.1`. Do not use an old debug
 APK with a current desktop build, or a current APK with the pre-`croc 11`
 desktop alphas. This boundary is independent of the operating system and CPU
 architecture.
@@ -254,8 +288,8 @@ development version with the current commit prefix. The information button in
 the header opens the full copyable diagnostic summary.
 
 When the APK starts on Android, it resolves `libcroc.so` from the application's
-native library directory and runs `croc --version` in a worker thread. A green
-status confirms that the transport executable can be started on the device.
+native library directory and runs `croc --version` in a worker thread.
+A successful check confirms that the transport executable can start on the device.
 
 The first invocation can download Python packages, Android tooling and source
 archives. Generated source and build output must not be edited or committed.
@@ -270,8 +304,8 @@ verifies `android/uv.lock`, installs the locked build dependency group, runs
 every `test_android*.py` test, executes `doctor`, and builds the `arm64-v8a`
 debug APK.
 
-A dedicated step also runs the 21 header, sharing, and scrolling GUI tests with
-Kivy and software rendering, without ADB or an emulator. The decoded APK
+A dedicated step also runs header, sharing, and scrolling GUI regression tests
+with Kivy and software rendering, without ADB or an emulator. The decoded APK
 manifest is checked for an enabled, exported share activity, `singleTask`
 launch mode, and launcher, `ACTION_SEND`, and `ACTION_SEND_MULTIPLE` filters.
 These checks do not replace manual testing with document providers and
@@ -330,17 +364,17 @@ release procedure.
 
 1. Start MoonTransfer on the desktop, open **Ricevi** (Receive), and choose a
    destination directory.
-2. Start the Android app and wait for the green `croc` transport status.
-3. In **Invia** (Send), press **Aggiungi file** (Add files) to choose one or
-   more small, non-sensitive documents. Press **Aggiungi cartella** (Add folder)
+2. Start the Android app. A successful transport check briefly shows `Trasporto croc pronto` and hides the warning panel; a persistent green indicator is not expected.
+3. In **Invia** (Send), press **File** (Add files) to choose one or
+   more small, non-sensitive documents. Press **Cartella** (Add folder)
    to choose one small folder containing nested files and an empty subfolder.
 4. Repeat either action to create a multi-root or mixed selection. Check that
    previous roots remain and new files or folders are appended.
 5. Review each staged root, its type, aggregate size, and the selection summary.
-   Use **Rimuovi** (Remove) on one item or **Svuota selezione** (Clear selection)
+   Use **Rimuovi** (Remove) on one item or **Svuota** (Clear selection)
    to verify that the selection can be corrected, then prepare the intended
    test selection.
-6. Press **Prepara e invia** (Prepare and send). The app hashes every private
+6. Press **Prepara invio** (Prepare and send). The app hashes every private
    staged copy and displays a 32-character code.
    The code is also copied to the Android clipboard.
 7. Switch to the messaging application used to communicate the code. Leave
@@ -363,7 +397,7 @@ release procedure.
    non-sensitive file, folder, or mixed selection. Include a nested file and an
    empty folder when testing directory preservation.
 2. Start the Android app, open **Ricevi** (Receive), enter the code shown by the
-   desktop application, and press **Ricevi informazioni** (Receive information).
+   desktop application, and press **Verifica contenuto** (Receive information).
 3. For one file, check its name, size, and SHA-256. For any folder or multi-root
    payload, check the file and folder counts, total size, listed top-level names,
    and the indication that a SHA-256 is included for each file.
@@ -399,7 +433,7 @@ cases with a small, non-sensitive payload:
 4. Cancel the source picker before choosing a file or folder. Repeat after
    staging at least one root and verify that cancellation preserves the existing
    selection. Separately, cancel the save picker after a verified receive, then
-   reopen it with **Scegli dove salvare** (Choose where to save). All paths must
+   reopen it with **Scegli destinazione** (Choose where to save). All paths must
    return to usable controls.
 5. Cancel one active transfer with the in-app **Interrompi** action and another
    with the notification action. Both must stop the same current session and
@@ -417,8 +451,7 @@ cases with a small, non-sensitive payload:
 
 If the save picker is cancelled, the verified private copy remains available
 for up to 15 minutes from verification while the foreground transfer service
-remains active. Press **Scegli dove
-salvare** (Choose where to save) to retry, or **Interrompi** (Stop) to discard
+remains active. Press **Scegli destinazione** (Choose where to save) to retry, or **Interrompi** (Stop) to discard
 it.
 
 Pressing Home or switching applications does not cancel an active operation:
@@ -636,3 +669,15 @@ silently reusing an old executable.
   `croc` output because `croc` does not expose a structured status or progress
   API; MoonTransfer therefore pins the supported `croc` version and tests the
   expected preparation message.
+
+## Local GUI tests
+
+From the checkout root on Linux with the Android environment installed. Software rendering requires neither ADB nor an emulator; it does not replace device testing.
+
+```sh
+PYTHONPATH="$PWD/src:$PWD/android/app" \
+MOONTRANSFER_KIVY_TOUCH_TESTS=1 KIVY_NO_ARGS=1 KIVY_NO_FILELOG=1 \
+SDL_VIDEODRIVER=offscreen LIBGL_ALWAYS_SOFTWARE=1 \
+uv run --project android --frozen --group build python -m unittest \
+  tests.test_android_header tests.test_android_sharing_ui tests.test_android_scroll -v
+```
